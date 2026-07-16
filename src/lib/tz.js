@@ -61,6 +61,34 @@
     return Date.UTC(y, m - 1, d);
   };
 
+  /**
+   * The inverse of ymd/hm: wall-clock fields -> the instant TimeTree stores.
+   *
+   * all_day events are the UTC-midnight convention, so the date alone is the
+   * answer and `tz` is irrelevant — that's what start_timezone "UTC" means.
+   *
+   * For a timed event we know the wall clock but need the instant, while
+   * tzOffset() wants an instant to answer with. Seed it with the naive value
+   * and refine once: the first pass is exact unless the guess landed on the
+   * far side of a DST transition, and the second pass corrects that. In a
+   * fixed-offset zone like JST both passes agree immediately.
+   */
+  function toEpoch(dateKey, time, allDay, tz = 'Asia/Tokyo') {
+    const [y, m, d] = dateKey.split('-').map(Number);
+    if (allDay) return Date.UTC(y, m - 1, d);
+    const [hh, mm] = (time || '00:00').split(':').map(Number);
+    const naive = Date.UTC(y, m - 1, d, hh, mm);
+    const guess = naive - tzOffset(tz, naive);
+    return naive - tzOffset(tz, guess);
+  }
+
+  /** Advance a (YYYY-MM-DD, HH:MM) wall-clock pair by `mins`, rolling the date. */
+  function shiftWall(dateKey, time, mins) {
+    const [hh, mm] = (time || '00:00').split(':').map(Number);
+    const t = parseYmd(dateKey) + (hh * 60 + mm + mins) * 60000;
+    return [ymd(t, 'UTC'), hm(t, 'UTC')];
+  }
+
   /** Add `n` days to a YYYY-MM-DD string. */
   const addDays = (s, n) => ymd(parseYmd(s) + n * DAY, 'UTC');
 
@@ -79,5 +107,8 @@
   const WEEKDAY_JA = ['日', '月', '火', '水', '木', '金', '土'];
   const weekdayOf = (key) => new Date(parseYmd(key)).getUTCDay();
 
-  TTX.tz = { DAY, tzOffset, toLocal, ymd, hm, parseYmd, addDays, daysBetween, WEEKDAY_JA, weekdayOf };
+  TTX.tz = {
+    DAY, tzOffset, toLocal, ymd, hm, parseYmd, toEpoch, shiftWall,
+    addDays, daysBetween, WEEKDAY_JA, weekdayOf,
+  };
 })();

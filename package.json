@@ -8,7 +8,8 @@
     "build": "node build-userscript.js",
     "client": "npm --prefix client start",
     "client:dev": "npm --prefix client run dev",
-    "smoke": "cd client && node ../scripts/smoke-client.js"
+    "smoke": "cd client && node ../scripts/smoke-client.js",
+    "verify:form": "node scripts/verify-form.js"
   },
   "engines": {
     "node": ">=20"

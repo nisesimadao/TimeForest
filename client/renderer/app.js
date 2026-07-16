@@ -11,9 +11,13 @@
  */
 (() => {
   const TTX = globalThis.TTX;
-  const { DAY, ymd, addDays, parseYmd, WEEKDAY_JA, weekdayOf, tzOffset } = TTX.tz;
+  const { DAY, ymd, hm, addDays, parseYmd, WEEKDAY_JA, weekdayOf, tzOffset } = TTX.tz;
   const TZ = 'Asia/Tokyo';
   const $ = (sel, root = document) => root.querySelector(sel);
+
+  /** Name the modifier the keyboard in front of the user actually has. */
+  const MOD = /mac/i.test(navigator.userAgentData?.platform || navigator.platform || '')
+    ? '⌘' : 'Ctrl';
 
   function el(tag, cls, text) {
     const n = document.createElement(tag);
@@ -33,6 +37,9 @@
     palette: null,
     detail: null,
     menu: null,
+    form: null,
+    formClose: null,
+    confirm: false,
     accounts: [],
     activeId: null,
     cellCap: 4,
@@ -204,6 +211,12 @@
 
     t.appendChild(el('div', 'tb-spacer'));
 
+    const add = el('button', 'new-btn');
+    add.append(el('span', null, '＋'), el('span', null, '予定'));
+    add.title = '新しい予定 (N)';
+    add.onclick = () => openForm();
+    t.appendChild(add);
+
     const seg = el('div', 'seg');
     for (const [key, label] of [['agenda', 'アジェンダ'], ['week', '週'], ['month', '月']]) {
       const b = el('button', ui.view === key ? 'on' : '', label);
@@ -214,7 +227,7 @@
 
     const search = el('button', 'search-hint');
     search.append(el('span', null, '⌕'), el('span', null, ui.query || '検索・移動'));
-    search.appendChild(el('kbd', null, 'Ctrl K'));
+    search.appendChild(el('kbd', null, MOD + ' K'));
     search.onclick = () => openPalette();
     t.appendChild(search);
 
@@ -445,7 +458,12 @@
 
       const evs = el('div', 'ag-events');
       if (!list.length) {
-        evs.appendChild(el('div', 'none', '—'));
+        // An empty day is the most natural place to start one. The dash is the
+        // reading state; hovering turns the same spot into the writing one.
+        const add = el('button', 'ag-add');
+        add.append(el('span', 'ag-dash', '—'), el('span', 'ag-plus', '＋ 予定を追加'));
+        add.onclick = () => openForm({ dateKey: key });
+        evs.appendChild(add);
       } else {
         for (const o of list) {
           count++;
@@ -546,10 +564,13 @@
       // TimeTree just clips here and says nothing. Say something.
       if (list.length > shown.length) {
         const more = el('button', 'm-more', `+${list.length - shown.length} 件`);
-        more.onclick = () => jumpTo(key, 'agenda');
+        more.onclick = (e) => { e.stopPropagation(); jumpTo(key, 'agenda'); };
         evs.appendChild(more);
       }
       cell.appendChild(evs);
+      // Anywhere the chips aren't is free space on that day — clicking it means
+      // "put something here".
+      cell.onclick = () => openForm({ dateKey: key });
       grid.appendChild(cell);
     }
     wrap.appendChild(grid);
@@ -598,9 +619,10 @@
           const c = el('div', 'w-ad', o.title);
           c.style.background = railColor(o);
           c.title = o.title;
-          c.onclick = () => openDetail(o, c);
+          c.onclick = (e) => { e.stopPropagation(); openDetail(o, c); };
           cell.appendChild(c);
         }
+        cell.onclick = () => openForm({ dateKey: key, allDay: true });
         strip.appendChild(cell);
       }
       wrap.appendChild(strip);
@@ -634,9 +656,20 @@
         box.style.background = railColor(o);
         box.append(el('div', 'w-ev-t', o.startTime), el('div', 'w-ev-n', o.title));
         box.title = `${o.startTime}〜${o.endTime} ${o.title}`;
-        box.onclick = () => openDetail(o, box);
+        box.onclick = (e) => { e.stopPropagation(); openDetail(o, box); };
         col.appendChild(box);
       }
+      // Click an empty slot to create at that hour — the one gesture a time
+      // grid earns that an agenda can't. Snapped to 30 minutes, because
+      // pixel-accurate minutes are a lie at 44px/hour.
+      col.onclick = (e) => {
+        const y = e.clientY - col.getBoundingClientRect().top;
+        const mins = Math.min(23 * 60 + 30, Math.max(0, Math.round(y / HOUR_H * 2) * 30));
+        openForm({
+          dateKey: key,
+          time: String(Math.floor(mins / 60)).padStart(2, '0') + ':' + (mins % 60 ? '30' : '00'),
+        });
+      };
       grid.appendChild(col);
     }
     scroll.appendChild(grid);
@@ -773,6 +806,16 @@
       card.appendChild(n);
     }
 
+    if (canEdit(o)) {
+      const acts = el('div', 'd-acts');
+      const edit = el('button', 'btn', '編集');
+      edit.onclick = () => { closeDetail(); openForm({ occ: o }); };
+      const del = el('button', 'btn danger', '削除');
+      del.onclick = () => { closeDetail(); removeEvent(o); };
+      acts.append(edit, del);
+      card.appendChild(acts);
+    }
+
     scrim.appendChild(card);
     document.body.appendChild(scrim);
 
@@ -784,8 +827,19 @@
     card.style.left = left + 'px';
     const h = card.offsetHeight;
     const below = a.bottom + 6;
-    card.style.top = (below + h > innerHeight - 8 ? Math.max(8, a.top - h - 6) : below) + 'px';
-    card.style.transformOrigin = `${Math.min(Math.max(0, a.left - left + 20), w)}px ${below + h > innerHeight - 8 ? h : 0}px`;
+    const flip = below + h > innerHeight - 8;
+    // Preferred spot: under the row, or above it when it won't fit. Then clamp
+    // to BOTH edges. Clamping only the top used to let a tall card hang off the
+    // bottom, which put 編集/削除 somewhere you couldn't click.
+    const top = Math.min(
+      Math.max(8, flip ? a.top - h - 6 : below),
+      Math.max(8, innerHeight - h - 8)
+    );
+    card.style.top = top + 'px';
+    // Grow from wherever the row actually is relative to the card we landed on.
+    card.style.transformOrigin =
+      `${Math.min(Math.max(0, a.left - left + 20), w)}px ` +
+      `${Math.min(Math.max(0, a.top - top), h)}px`;
 
     requestAnimationFrame(() => card.classList.add('in'));
     scrim.onclick = (e) => { if (e.target === scrim) closeDetail(); };
@@ -795,6 +849,510 @@
   function closeDetail() {
     ui.detail?.remove();
     ui.detail = null;
+  }
+
+  // --- confirm ----------------------------------------------------------
+
+  /**
+   * Deleting is the one irreversible thing this app does, so it asks. Captures
+   * keys so the grid's shortcuts behind it stay inert while it's up.
+   */
+  function confirmDialog({ title, body, ok = 'OK', danger = false }) {
+    return new Promise((resolve) => {
+      const scrim = el('div', 'scrim cf-scrim');
+      const card = el('div', 'confirm');
+      card.append(el('div', 'cf-t', title), el('div', 'cf-b', body));
+
+      const foot = el('div', 'cf-f');
+      const cancel = el('button', 'btn', 'キャンセル');
+      const go = el('button', 'btn ' + (danger ? 'danger' : 'primary'), ok);
+      foot.append(cancel, go);
+      card.appendChild(foot);
+      scrim.appendChild(card);
+      document.body.appendChild(scrim);
+      ui.confirm = true;
+
+      const done = (v) => {
+        document.removeEventListener('keydown', onKey, true);
+        scrim.remove();
+        ui.confirm = false;
+        resolve(v);
+      };
+      const onKey = (e) => {
+        if (e.key !== 'Escape' && e.key !== 'Enter') return;
+        e.preventDefault();
+        e.stopPropagation();
+        done(e.key === 'Enter');
+      };
+      document.addEventListener('keydown', onKey, true);
+      cancel.onclick = () => done(false);
+      go.onclick = () => done(true);
+      scrim.onclick = (e) => { if (e.target === scrim) done(false); };
+      requestAnimationFrame(() => go.focus());
+    });
+  }
+
+  // --- event form -------------------------------------------------------
+
+  /**
+   * Holidays aren't events at all (they come from memorialdays and have no
+   * calendar), and a birthday's title is synthesised from a member name rather
+   * than stored — editing either would be editing something that isn't there.
+   */
+  const canEdit = (o) => !o.holiday && !o.birthday && !!o.calendarId && !!o.uuid;
+
+  /** Next half-hour boundary — today's default. Other days open at 09:00. */
+  function defaultTime(dateKey) {
+    if (dateKey !== todayKey()) return '09:00';
+    const now = new Date(TTX.tz.toLocal(Date.now(), TZ));
+    let h = now.getUTCHours();
+    const m = now.getUTCMinutes() < 30 ? 30 : 0;
+    if (m === 0) h++;
+    return h > 23 ? '23:00' : String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
+  }
+
+  /**
+   * Creating from the toolbar or `n`: today if it's on screen, else the cursor.
+   * Ask range() rather than comparing months — in week view "same month" is not
+   * "on screen", and it would open the form on a day you can't see.
+   */
+  function newEventDate() {
+    const t = todayKey();
+    const { from, to } = range();
+    return t >= from && t <= to ? t : ui.cursor;
+  }
+
+  function freshFields(opts) {
+    const st = TTX.store.state;
+    const calId = opts.calendarId || primaryCalendarId()
+      || st.calendars.find((c) => st.enabled.has(c.id))?.id || null;
+    const startKey = opts.dateKey || newEventDate();
+    const allDay = !!opts.allDay;
+    const startTime = opts.time || defaultTime(startKey);
+    const [endKey, endTime] = TTX.tz.shiftWall(startKey, startTime, 60);
+    const labels = st.labels.get(calId) || [];
+    return {
+      calendarId: calId,
+      title: '',
+      allDay,
+      startKey,
+      startTime,
+      // An all-day event is one day by default; end_at is inclusive.
+      endKey: allDay ? startKey : endKey,
+      endTime,
+      location: '',
+      note: '',
+      labelId: labels[0]?.id ?? 1,
+    };
+  }
+
+  /**
+   * Read the raw event, not the occurrence: the view drops fields the form
+   * needs and rewrites others (an event ending at 00:00 is displayed on the
+   * previous day, which would silently move it if we round-tripped that).
+   */
+  function fieldsFromRaw(raw) {
+    const tz = raw.all_day ? 'UTC' : (raw.start_timezone || TZ);
+    const startKey = ymd(raw.start_at, tz);
+    const endKey = ymd(raw.end_at, tz);
+    return {
+      calendarId: raw.calendar_id,
+      title: raw.title || '',
+      allDay: !!raw.all_day,
+      startKey,
+      endKey,
+      // Latent values, so toggling all-day off has somewhere sensible to land.
+      startTime: raw.all_day ? defaultTime(startKey) : hm(raw.start_at, tz),
+      endTime: raw.all_day ? '10:00' : hm(raw.end_at, tz),
+      location: raw.location || '',
+      note: raw.note || '',
+      labelId: raw.label_id ?? 1,
+    };
+  }
+
+  const startEpoch = (f) => TTX.tz.toEpoch(f.startKey, f.startTime, f.allDay, TZ);
+  const endEpoch = (f) => TTX.tz.toEpoch(f.endKey, f.endTime, f.allDay, TZ);
+
+  /**
+   * PUT is a merge, not a replace — send only what changed. A full-object PUT
+   * would round-trip fields we never modelled (lunar, row_order …) and can
+   * clobber them.
+   */
+  function diffPatch(raw, f) {
+    const p = {};
+    const put = (k, v, cur = raw[k]) => { if (cur !== v) p[k] = v; };
+    put('title', f.title);
+    put('all_day', f.allDay, !!raw.all_day);
+    put('start_at', startEpoch(f));
+    put('end_at', endEpoch(f));
+    put('start_timezone', f.allDay ? 'UTC' : TZ);
+    put('end_timezone', f.allDay ? 'UTC' : TZ);
+    put('label_id', f.labelId, raw.label_id ?? 1);
+    put('note', f.note, raw.note || '');
+    put('location', f.location, raw.location || '');
+    return p;
+  }
+
+  function closeForm() {
+    ui.form?.remove();
+    ui.form = null;
+    ui.formClose = null;
+  }
+
+  /**
+   * Create/edit sheet. Unlike the detail popover this IS a modal: the popover
+   * is anchored because you read it *against* the grid behind it, but writing
+   * is a committed act on one thing, and the grid is what's about to change
+   * rather than reference material.
+   */
+  function openForm(opts = {}) {
+    if (ui.form) return;
+    closeDetail();
+    closeMenus();
+
+    const st = TTX.store.state;
+    const editing = !!opts.occ;
+    const raw = editing ? TTX.store.rawEvent(opts.occ.calendarId, opts.occ.uuid) : null;
+    if (editing && !raw) return toast('元の予定が見つかりません。再同期してください');
+    if (!editing && !st.calendars.some((c) => st.enabled.has(c.id))) {
+      return toast('書き込めるカレンダーがありません');
+    }
+
+    const f = editing ? fieldsFromRaw(raw) : freshFields(opts);
+    // A master carries the RRULE; its exception children are plain events.
+    const series = !!(raw?.recurrences?.some((l) => l.startsWith('RRULE:')));
+
+    const scrim = el('div', 'scrim f-scrim');
+    const card = el('div', 'form');
+    ui.form = scrim;
+
+    // --- head
+    const head = el('div', 'f-head');
+    head.appendChild(el('div', 'f-h-t', editing ? '予定を編集' : '新しい予定'));
+    card.appendChild(head);
+
+    const body = el('div', 'f-body');
+    card.appendChild(body);
+
+    if (series) {
+      body.appendChild(el('div', 'f-warn',
+        '繰り返しの予定です。変更はすべての回に反映されます。'));
+    }
+
+    // --- title
+    const title = el('input', 'f-title');
+    title.placeholder = 'タイトル';
+    title.value = f.title;
+    title.spellcheck = false;
+    title.oninput = () => { f.title = title.value; validate(); };
+    body.appendChild(title);
+
+    // --- label swatches. TimeTree buries these in a dropdown; the colour IS
+    //     the meaning here, so show them all at once.
+    const labelRow = el('div', 'f-row');
+    labelRow.appendChild(el('span', 'f-k', 'ラベル'));
+    const swatches = el('div', 'f-labels');
+    const labelName = el('span', 'f-lb-n');
+    labelRow.append(swatches, labelName);
+    body.appendChild(labelRow);
+
+    function paintLabels() {
+      swatches.textContent = '';
+      const labels = (st.labels.get(f.calendarId) || []).filter((l) => l.id != null);
+      // Only re-pick when there is something to pick from. labels() swallows a
+      // failed fetch and returns [], and defaulting to 1 on that path would
+      // silently relabel the event we're editing on the next save.
+      if (labels.length && !labels.some((l) => l.id === f.labelId)) f.labelId = labels[0].id;
+      for (const lb of labels) {
+        const b = el('button', 'f-lb' + (lb.id === f.labelId ? ' on' : ''));
+        b.style.background = TTX.api.colorHex(lb.color);
+        b.title = lb.name || `ラベル ${lb.id}`;
+        b.onclick = () => { f.labelId = lb.id; paintLabels(); };
+        swatches.appendChild(b);
+      }
+      const cur = labels.find((l) => l.id === f.labelId);
+      labelName.textContent = cur?.name || '';
+    }
+    paintLabels();
+
+    // Snapshot after paintLabels(), which may normalise labelId — otherwise an
+    // untouched form would already read as dirty.
+    const pristine = JSON.stringify(f);
+    const dirty = () => JSON.stringify(f) !== pristine;
+
+    // --- all-day toggle
+    const adRow = el('div', 'f-row');
+    adRow.appendChild(el('span', 'f-k', '終日'));
+    const sw = el('button', 'sw' + (f.allDay ? ' on' : ''));
+    sw.appendChild(el('span', 'sw-k'));
+    sw.setAttribute('aria-pressed', String(f.allDay));
+    adRow.appendChild(sw);
+    body.appendChild(adRow);
+
+    // --- when
+    const startRow = el('div', 'f-row');
+    startRow.appendChild(el('span', 'f-k', '開始'));
+    const sDate = el('input', 'f-date');
+    sDate.type = 'date';
+    const sTime = el('input', 'f-time');
+    sTime.type = 'time';
+    startRow.append(sDate, sTime);
+    body.appendChild(startRow);
+
+    const endRow = el('div', 'f-row');
+    endRow.appendChild(el('span', 'f-k', '終了'));
+    const eDate = el('input', 'f-date');
+    eDate.type = 'date';
+    const eTime = el('input', 'f-time');
+    eTime.type = 'time';
+    endRow.append(eDate, eTime);
+    body.appendChild(endRow);
+
+    const span = el('div', 'f-span');
+    body.appendChild(span);
+
+    // --- location / note
+    const locRow = el('div', 'f-row');
+    locRow.appendChild(el('span', 'f-k', '場所'));
+    const loc = el('input', 'f-text');
+    loc.placeholder = '任意';
+    loc.value = f.location;
+    loc.oninput = () => { f.location = loc.value; };
+    locRow.appendChild(loc);
+    body.appendChild(locRow);
+
+    const noteRow = el('div', 'f-row top');
+    noteRow.appendChild(el('span', 'f-k', 'メモ'));
+    const note = el('textarea', 'f-note');
+    note.placeholder = '任意';
+    note.rows = 3;
+    note.value = f.note;
+    note.oninput = () => { f.note = note.value; };
+    noteRow.appendChild(note);
+    body.appendChild(noteRow);
+
+    // --- calendar. Only worth asking when there's a choice. Moving an event
+    //     between calendars isn't a field the API patches, so edit shows it
+    //     as a fact rather than a control.
+    const enabled = st.calendars.filter((c) => st.enabled.has(c.id));
+    if (editing) {
+      const cal = TTX.store.calendarOf(f.calendarId);
+      if (cal && enabled.length > 1) {
+        const r = el('div', 'f-row');
+        r.append(el('span', 'f-k', 'カレンダー'), el('span', 'f-fact', cal.name));
+        body.appendChild(r);
+      }
+    } else if (enabled.length > 1) {
+      const r = el('div', 'f-row');
+      r.appendChild(el('span', 'f-k', 'カレンダー'));
+      const sel = el('select', 'f-sel');
+      for (const c of enabled) {
+        const o = el('option', null, c.name);
+        o.value = c.id;
+        if (c.id === f.calendarId) o.selected = true;
+        sel.appendChild(o);
+      }
+      sel.onchange = () => {
+        // select.value is a STRING; calendar ids are numbers, and both the
+        // label and event caches are Maps keyed by the number. Taking
+        // sel.value directly made every lookup miss — which meant a created
+        // event never reached the cache and didn't appear until a full
+        // re-sync. Round-trip through the calendar to keep the id's type.
+        const c = enabled.find((x) => String(x.id) === sel.value);
+        if (!c) return;
+        f.calendarId = c.id;
+        // Labels belong to a calendar, so the id we were holding means
+        // nothing now.
+        paintLabels();
+      };
+      r.appendChild(sel);
+      body.appendChild(r);
+    }
+
+    // --- foot
+    const foot = el('div', 'f-foot');
+    if (editing) {
+      const del = el('button', 'btn danger', '削除');
+      del.onclick = async () => {
+        closeForm();
+        await removeEvent(opts.occ);
+      };
+      foot.appendChild(del);
+    }
+    foot.appendChild(el('div', 'tb-spacer'));
+    const err = el('div', 'f-err');
+    foot.appendChild(err);
+    const cancel = el('button', 'btn', 'キャンセル');
+    cancel.onclick = () => tryClose();
+    const saveBtn = el('button', 'btn primary', '保存');
+    saveBtn.appendChild(el('kbd', null, MOD + ' ↵'));
+    foot.append(cancel, saveBtn);
+    card.appendChild(foot);
+
+    scrim.appendChild(card);
+    document.body.appendChild(scrim);
+
+    // --- behaviour
+
+    /** Keep the duration when the start moves: that's almost always the intent. */
+    function onStartChanged(prevStart) {
+      const mins = Math.round((endEpoch(f) - prevStart) / 60000);
+      if (mins < 0) return;
+      const [k, t] = TTX.tz.shiftWall(f.startKey, f.startTime, mins);
+      f.endKey = k;
+      if (!f.allDay) f.endTime = t;
+    }
+
+    function syncWhen() {
+      sDate.value = f.startKey;
+      sTime.value = f.startTime;
+      eDate.value = f.endKey;
+      eTime.value = f.endTime;
+      card.classList.toggle('allday', f.allDay);
+      sw.className = 'sw' + (f.allDay ? ' on' : '');
+      sw.setAttribute('aria-pressed', String(f.allDay));
+      const days = TTX.tz.daysBetween(f.startKey, f.endKey).length;
+      span.textContent = f.allDay && days > 1 ? `${days}日間` : '';
+      validate();
+    }
+
+    function validate() {
+      const bad = endEpoch(f) < startEpoch(f);
+      err.textContent = bad ? '終了が開始より前です' : '';
+      saveBtn.disabled = bad || !title.value.trim();
+      return !saveBtn.disabled;
+    }
+
+    sw.onclick = () => {
+      f.allDay = !f.allDay;
+      // Only one combination is actually invalid; leave the rest literal.
+      if (f.allDay && f.endKey < f.startKey) f.endKey = f.startKey;
+      syncWhen();
+    };
+    sDate.onchange = () => {
+      if (!sDate.value) return syncWhen();
+      const prev = startEpoch(f);
+      f.startKey = sDate.value;
+      onStartChanged(prev);
+      syncWhen();
+    };
+    sTime.onchange = () => {
+      if (!sTime.value) return syncWhen();
+      const prev = startEpoch(f);
+      f.startTime = sTime.value;
+      onStartChanged(prev);
+      syncWhen();
+    };
+    eDate.onchange = () => { if (eDate.value) f.endKey = eDate.value; syncWhen(); };
+    eTime.onchange = () => { if (eTime.value) f.endTime = eTime.value; syncWhen(); };
+
+    async function save() {
+      if (!validate()) return;
+      f.title = title.value.trim();
+      saveBtn.disabled = true;
+      saveBtn.textContent = '保存中…';
+      try {
+        if (editing) {
+          const patch = diffPatch(raw, f);
+          if (!Object.keys(patch).length) {
+            closeForm();
+            return toast('変更はありません');
+          }
+          const saved = await TTX.api.updateEvent(f.calendarId, raw.uuid, patch);
+          // Trust the server's echo when we get one; fall back to the merge we
+          // just asked for, which is what PUT semantics promise anyway.
+          TTX.store.applyEvent(f.calendarId, saved?.uuid ? saved : { ...raw, ...patch });
+        } else {
+          const saved = await TTX.api.createEvent(f.calendarId, {
+            title: f.title,
+            allDay: f.allDay,
+            startAt: startEpoch(f),
+            endAt: endEpoch(f),
+            tz: TZ,
+            labelId: f.labelId,
+            note: f.note,
+            location: f.location,
+          });
+          if (!saved?.uuid) throw new Error('サーバーが予定を返しませんでした');
+          TTX.store.applyEvent(f.calendarId, saved);
+        }
+        closeForm();
+        await showKey(f.startKey);
+        toast(editing ? '保存しました' : '予定を作成しました');
+      } catch (e) {
+        saveBtn.disabled = false;
+        saveBtn.textContent = '保存';
+        saveBtn.appendChild(el('kbd', null, MOD + ' ↵'));
+        err.textContent = '';
+        toast('保存に失敗しました: ' + e.message);
+      }
+    }
+    saveBtn.onclick = () => save();
+
+    /**
+     * A stray click on the backdrop shouldn't cost you what you typed. An
+     * untouched form closes instantly — asking there would be nagging — but a
+     * form with anything in it asks first.
+     */
+    async function tryClose() {
+      if (!dirty()) return closeForm();
+      const discard = await confirmDialog({
+        title: '編集を破棄しますか',
+        body: '入力した内容は保存されません。',
+        ok: '破棄',
+        danger: true,
+      });
+      if (discard) closeForm();
+    }
+
+    // Escape is handled centrally in keys(), not here: a listener on the card
+    // plus the document one would both fire and stack two confirm dialogs.
+    ui.formClose = tryClose;
+
+    scrim.onclick = (e) => { if (e.target === scrim) tryClose(); };
+    card.addEventListener('keydown', (e) => {
+      // ⌘/Ctrl+Enter saves from anywhere, including the note textarea.
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); return save(); }
+      // Plain Enter in a single-line field means "done", as in a native form.
+      if (e.key === 'Enter' && /^(INPUT|SELECT)$/.test(e.target.tagName)) {
+        e.preventDefault();
+        save();
+      }
+    });
+
+    syncWhen();
+    // Synchronously, as the palette does: a frame where the sheet is up but
+    // unfocused is a frame where a fast typist loses their first keystroke.
+    title.focus();
+  }
+
+  /** Bring `key` into view if the current range doesn't already cover it. */
+  async function showKey(key) {
+    const { from, to } = range();
+    if (key < from || key > to) return jumpTo(key);
+    await refresh('fade');
+  }
+
+  async function removeEvent(o) {
+    const raw = TTX.store.rawEvent(o.calendarId, o.uuid);
+    const series = !!(raw?.recurrences?.some((l) => l.startsWith('RRULE:')));
+    const okd = await confirmDialog({
+      title: series ? '繰り返しの予定を削除' : '予定を削除',
+      body: series
+        ? `「${o.title}」をすべての回で削除します。取り消せません。`
+        : `「${o.title}」を削除します。取り消せません。`,
+      ok: '削除',
+      danger: true,
+    });
+    if (!okd) return;
+    try {
+      await TTX.api.deleteEvent(o.calendarId, o.uuid);
+      TTX.store.markDeleted(o.calendarId, o.uuid);
+      await refresh('fade');
+      toast('削除しました');
+    } catch (e) {
+      toast('削除に失敗しました: ' + e.message);
+    }
   }
 
   // --- command palette --------------------------------------------------
@@ -848,6 +1406,7 @@
     }
 
     const cmds = [
+      { icon: '＋', main: '新しい予定', run: () => openForm() },
       { icon: '⌂', main: '今日へ', run: () => jumpTo(todayKey()) },
       { icon: '☰', main: 'アジェンダ表示', run: () => setView('agenda') },
       { icon: '▤', main: '週表示', run: () => setView('week') },
@@ -1035,12 +1594,21 @@
 
   function keys(e) {
     if (e.key === 'Escape' && ui.menu) { e.preventDefault(); return closeMenus(); }
+    // The form and the confirm own every key while they're up — otherwise the
+    // grid behind them would still navigate under the user's typing. The
+    // confirm swallows its own Escape in the capture phase, so this only ever
+    // sees the form's.
+    if (ui.form || ui.confirm) {
+      if (e.key === 'Escape' && ui.form && !ui.confirm) { e.preventDefault(); ui.formClose?.(); }
+      return;
+    }
     if (e.key === 'Escape' && ui.detail) { e.preventDefault(); return closeDetail(); }
     if (ui.palette) return;
     const typing = /^(INPUT|TEXTAREA)$/.test(e.target.tagName);
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); return openPalette(); }
     if (typing) return;
     if (e.key === '/') { e.preventDefault(); return openPalette(); }
+    if (e.key.toLowerCase() === 'n') { e.preventDefault(); return openForm(); }
     if (e.key === 'ArrowLeft') { e.preventDefault(); return go(-1); }
     if (e.key === 'ArrowRight') { e.preventDefault(); return go(1); }
     if (e.key.toLowerCase() === 't') return jumpTo(todayKey());
