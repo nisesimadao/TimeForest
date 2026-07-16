@@ -1,7 +1,7 @@
 /* The only bridge between the renderer and Node. Deliberately tiny: the
- * renderer can ask for /api/* JSON, manage accounts, and set the theme.
- * It gets no filesystem, no shell, no arbitrary URLs — and no way to reach
- * one account's session while another is active. */
+ * renderer can ask for /api/* JSON, manage accounts, set the theme, and ask
+ * the OS to show a reminder. It gets no filesystem, no shell, no arbitrary
+ * URLs — and no way to reach one account's session while another is active. */
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('host', {
@@ -21,6 +21,10 @@ contextBridge.exposeInMainWorld('host', {
   },
   auth: {
     check: () => ipcRenderer.invoke('auth:check'),
+  },
+  notify: {
+    show: (o) => ipcRenderer.invoke('notify:show', o),
+    onClicked: (fn) => ipcRenderer.on('notify:clicked', (_e, key) => fn(key)),
   },
   theme: {
     set: (mode) => ipcRenderer.invoke('app:setTheme', mode),

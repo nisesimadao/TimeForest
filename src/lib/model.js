@@ -158,11 +158,26 @@
     return byDay;
   }
 
+  /**
+   * The instant a reminder fires for `occ`.
+   *
+   * `alerts` counts minutes before the start — but for an all-day event the
+   * start TimeTree measures from is LOCAL midnight, not the UTC midnight it
+   * stores. Subtracting from `occ.start` directly would put every all-day
+   * reminder 9 hours out in JST. That offset is exactly why 1日前 is 900
+   * minutes and not 1440: 15 hours before local midnight is 09:00 the day
+   * before.
+   */
+  function alertAt(occ, mins, tz = 'Asia/Tokyo') {
+    const base = occ.allDay ? TTX.tz.toEpoch(occ.startKey, '00:00', false, tz) : occ.start;
+    return base - mins * 60000;
+  }
+
   function matchesQuery(o, q) {
     if (!q) return true;
     const hay = (o.title + ' ' + o.location + ' ' + o.note + ' ' + o.calendarName).toLowerCase();
     return q.toLowerCase().split(/\s+/).filter(Boolean).every((t) => hay.includes(t));
   }
 
-  TTX.model = { occurrences, holidayOccurrences, groupByDay, matchesQuery, normalize };
+  TTX.model = { occurrences, holidayOccurrences, groupByDay, matchesQuery, normalize, alertAt };
 })();

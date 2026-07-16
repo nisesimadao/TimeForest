@@ -23,7 +23,7 @@
  *    times you log in. With per-account partitions that trap is now fatal
  *    rather than merely confusing, so it is centralised in apiFetch() below.
  */
-const { app, BrowserWindow, ipcMain, session, shell, nativeTheme } = require('electron');
+const { app, BrowserWindow, ipcMain, session, shell, nativeTheme, Notification } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const crypto = require('node:crypto');
@@ -346,6 +346,26 @@ ipcMain.handle('api:request', async (_e, { path: pathname, method = 'GET', body 
   const acct = activeAccount();
   if (!acct) throw new Error('アカウントが選択されていません');
   return apiJSON(acct, pathname, m, body);
+});
+
+/**
+ * Fire a reminder. The renderer decides WHEN — it's the side that holds the
+ * events and the user's alert settings — and this side only knows how to make
+ * the OS say something. `key` comes back on click so the renderer can show
+ * whatever the notification was about.
+ */
+ipcMain.handle('notify:show', (_e, { title, body, key } = {}) => {
+  if (!Notification.isSupported()) return false;
+  const n = new Notification({ title: String(title || ''), body: String(body || '') });
+  n.on('click', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+    mainWindow.webContents.send('notify:clicked', key);
+  });
+  n.show();
+  return true;
 });
 
 ipcMain.handle('accounts:list', () => publicAccounts());

@@ -44,6 +44,8 @@
     activeId: null,
     cellCap: 4,
     status: '',
+    notify: true,
+    fired: new Map(),
   };
 
   const todayKey = () => ymd(Date.now(), TZ);
@@ -80,6 +82,7 @@
       localStorage.setItem(PREF, JSON.stringify({
         view: ui.view,
         theme: ui.theme,
+        notify: ui.notify,
         muted: [...ui.mutedLabels],
         disabled: TTX.store.state.calendars
           .filter((c) => !TTX.store.state.enabled.has(c.id)).map((c) => c.id),
@@ -91,6 +94,7 @@
       const p = JSON.parse(localStorage.getItem(PREF) || '{}');
       if (p.view) ui.view = p.view;
       if (p.theme) ui.theme = p.theme;
+      if (p.notify != null) ui.notify = !!p.notify;
       if (p.muted) ui.mutedLabels = new Set(p.muted);
       return p;
     } catch {
@@ -1898,6 +1902,89 @@
     }
   }
 
+  // --- reminders --------------------------------------------------------
+  //
+  // TimeTree's servers already push these to the user's phone. This client can
+  // only fire while it's open, so the honest promise is "while I'm running",
+  // not "always" — but a calendar you leave open on a desktop is exactly where
+  // you want to be told about the next thing.
+  //
+  // A ticker rather than a timer per alert: setTimeout doesn't survive the
+  // machine sleeping (it fires late, all at once, on wake), and re-arming a
+  // pile of timers after every sync is more moving parts than a scan of an
+  // in-memory list that already costs nothing.
+
+  const TICK = 30000;
+  /** Missed while closed is missed. Don't open the laptop to yesterday's alarms. */
+  const GRACE = 5 * 60 * 1000;
+  const FIRED_KEY = 'ttc.fired';
+
+  function loadFired() {
+    try {
+      const j = JSON.parse(localStorage.getItem(FIRED_KEY) || '{}');
+      // Drop anything older than the grace window — it can never fire again.
+      const cutoff = Date.now() - DAY;
+      return new Map(Object.entries(j).filter(([, at]) => at > cutoff));
+    } catch {
+      return new Map();
+    }
+  }
+
+  function saveFired(map) {
+    try {
+      localStorage.setItem(FIRED_KEY, JSON.stringify(Object.fromEntries(map)));
+    } catch { /* non-fatal */ }
+  }
+
+  /**
+   * Reminders that came due since the last look. A recurring master's uuid is
+   * the same for every occurrence, so the key has to name the instant too.
+   */
+  function dueAlerts(now) {
+    const out = [];
+    if (!TTX.store.state.ready) return out;
+    const from = ymd(now - 2 * DAY, TZ);
+    const to = ymd(now + 2 * DAY, TZ);
+    // Muted labels are the only signal we have that the user doesn't want to
+    // hear about a kind of event, so respect it. Their phone still notifies —
+    // this only silences the client they muted it in.
+    const occs = TTX.store.occurrences(from, to, { mutedLabels: ui.mutedLabels });
+    for (const o of occs) {
+      if (o.holiday || !o.calendarId) continue;
+      const raw = TTX.store.rawEvent(o.calendarId, o.uuid);
+      for (const m of raw?.alerts || []) {
+        const at = TTX.model.alertAt(o, m, TZ);
+        if (at <= now && at > now - GRACE) out.push({ o, m, at });
+      }
+    }
+    return out;
+  }
+
+  async function checkAlerts() {
+    if (!ui.notify || !window.host?.notify) return;
+    const now = Date.now();
+    let dirty = false;
+    for (const { o, m, at } of dueAlerts(now)) {
+      const key = `${o.uuid}@${o.start}#${m}`;
+      if (ui.fired.has(key)) continue;
+      ui.fired.set(key, at);
+      dirty = true;
+      const when = o.allDay ? '終日' : `${o.startTime}〜${o.endTime}`;
+      const body = [TTX.api.alertLabel(m, o.allDay), when, o.location]
+        .filter(Boolean).join(' · ');
+      await window.host.notify.show({ title: o.title, body, key: o.startKey })
+        .catch(() => {});
+    }
+    if (dirty) saveFired(ui.fired);
+  }
+
+  function startAlerts() {
+    ui.fired = loadFired();
+    window.host.notify.onClicked((key) => { if (key) jumpTo(key, 'agenda'); });
+    checkAlerts();
+    setInterval(checkAlerts, TICK);
+  }
+
   // --- command palette --------------------------------------------------
 
   /** "7/20", "2026-07-20", "7月20日", "20260720" -> a date key. */
@@ -1958,6 +2045,17 @@
       { icon: '☀', main: 'テーマ: ライト', run: () => applyTheme('light') },
       { icon: '◐', main: 'テーマ: システムに従う', run: () => applyTheme('system') },
       { icon: '⟳', main: '再同期', run: () => resync() },
+      {
+        icon: '🔔',
+        main: ui.notify ? '通知をオフにする' : '通知をオンにする',
+        sub: ui.notify ? 'このアプリが開いている間、予定の通知を出します' : '通知は止まっています',
+        run: () => {
+          ui.notify = !ui.notify;
+          savePrefs();
+          toast(ui.notify ? '通知をオンにしました' : '通知をオフにしました');
+          if (ui.notify) checkAlerts();
+        },
+      },
       { icon: '↧', main: 'Markdown をコピー', run: () => doExport('md') },
       { icon: '↧', main: 'CSV を書き出し', run: () => doExport('csv') },
       { icon: '↧', main: 'ICS を書き出し', run: () => doExport('ics') },
@@ -2242,6 +2340,7 @@
     });
     document.addEventListener('keydown', keys);
     window.addEventListener('resize', () => { if (ui.view === 'month') measureCells(); });
+    startAlerts();
 
     await refreshAccounts();
     await bootUI();

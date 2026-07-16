@@ -166,6 +166,36 @@ for (const [name, got, want] of cases) {
   else bad(`${name}: expected ${want}, got ${got}`);
 }
 
+section('reminder timing (behavioural)');
+require(path.join(ROOT, 'src/lib/model.js'));
+const { model } = globalThis.TTX;
+
+/* `alerts` counts minutes before the start, but an all-day event's start is
+ * LOCAL midnight while TimeTree STORES it as UTC midnight. Subtracting from
+ * the stored instant puts every all-day reminder 9 hours out in JST — and the
+ * error is invisible in the data, it only shows up as a notification at the
+ * wrong time. That offset is why 1日前 is 900 minutes and not 1440.
+ *
+ * Measured against the real client: all-day 1日前 == 09:00 the day before. */
+const iso = (ms) => new Date(ms).toISOString();
+const AD = { allDay: true, startKey: '2026-08-03', start: Date.UTC(2026, 7, 3) };
+const TIMED = { allDay: false, startKey: '2026-08-03', start: Date.UTC(2026, 7, 3, 1, 0) };
+
+const timing = [
+  // 09:00 JST on 8/2 is 00:00Z on 8/2.
+  ['all-day 1日前 (900) fires 09:00 the day before', iso(model.alertAt(AD, 900, 'Asia/Tokyo')), '2026-08-02T00:00:00.000Z'],
+  ['all-day 2日前 (2340) fires 09:00 two days before', iso(model.alertAt(AD, 2340, 'Asia/Tokyo')), '2026-08-01T00:00:00.000Z'],
+  // 当日 (0) is local midnight, NOT the stored UTC midnight.
+  ['all-day 当日 (0) fires at LOCAL midnight', iso(model.alertAt(AD, 0, 'Asia/Tokyo')), '2026-08-02T15:00:00.000Z'],
+  ['timed 開始時 (0) fires at the start', iso(model.alertAt(TIMED, 0, 'Asia/Tokyo')), '2026-08-03T01:00:00.000Z'],
+  ['timed 30分前', iso(model.alertAt(TIMED, 30, 'Asia/Tokyo')), '2026-08-03T00:30:00.000Z'],
+  ['timed 1日前 (1440)', iso(model.alertAt(TIMED, 1440, 'Asia/Tokyo')), '2026-08-02T01:00:00.000Z'],
+];
+for (const [name, got, want] of timing) {
+  if (got === want) ok(`${name} — ${got}`);
+  else bad(`${name}: expected ${want}, got ${got}`);
+}
+
 // --- 6. userscript builds ---------------------------------------------------
 
 section('userscript build');
