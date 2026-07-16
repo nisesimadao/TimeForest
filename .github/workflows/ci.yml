@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: check (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 20 is the floor we claim to support; 24 is what the client ships on.
+        node: [20, 24]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      # scripts/check.js deliberately has zero dependencies, so there is
+      # nothing to install — no npm ci, no 144MB Electron download in CI.
+      - name: Structural checks
+        run: node scripts/check.js
+
+      - name: Verify the userscript build is reproducible
+        run: |
+          node build-userscript.js
+          cp dist/timeforest.user.js /tmp/first.js
+          node build-userscript.js
+          diff -q /tmp/first.js dist/timeforest.user.js
+
+      - name: Upload userscript
+        if: matrix.node == 24
+        uses: actions/upload-artifact@v4
+        with:
+          name: timeforest-userscript
+          path: dist/timeforest.user.js
+          if-no-files-found: error
+
+  client:
+    name: client boots
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+
+      - name: Install
+        working-directory: client
+        run: npm ci
+
+      # Electron needs a display and a sandbox we don't get on a CI runner.
+      # This isn't an end-to-end test — it proves main.js loads, the preload
+      # bridge resolves, and nothing throws before the window would appear.
+      - name: Smoke-test the main process
+        working-directory: client
+        env:
+          ELECTRON_DISABLE_SANDBOX: '1'
+        run: xvfb-run --auto-servernum node ../scripts/smoke-client.js

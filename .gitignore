@@ -1,0 +1,19 @@
+node_modules/
+
+# Built from src/ by build-userscript.js — no reason to track the output.
+dist/
+
+# Electron packaging output
+client/out/
+client/release/
+
+*.log
+npm-debug.log*
+
+.DS_Store
+Thumbs.db
+desktop.ini
+
+.vscode/
+.idea/
+*.swp
