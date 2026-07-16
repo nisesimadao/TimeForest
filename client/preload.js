@@ -26,6 +26,10 @@ contextBridge.exposeInMainWorld('host', {
     show: (o) => ipcRenderer.invoke('notify:show', o),
     onClicked: (fn) => ipcRenderer.on('notify:clicked', (_e, key) => fn(key)),
   },
+  autoStart: {
+    get: () => ipcRenderer.invoke('app:getAutoStart'),
+    set: (on) => ipcRenderer.invoke('app:setAutoStart', on),
+  },
   theme: {
     set: (mode) => ipcRenderer.invoke('app:setTheme', mode),
     shouldUseDark: () => ipcRenderer.invoke('app:shouldUseDark'),

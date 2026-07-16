@@ -11,7 +11,8 @@
     "smoke": "cd client && node ../scripts/smoke-client.js",
     "verify:form": "node scripts/verify-form.js",
     "verify:recur": "node scripts/verify-recur.js",
-    "verify:notify": "node scripts/verify-notify.js"
+    "verify:notify": "node scripts/verify-notify.js",
+    "icons": "node scripts/build-icons.js"
   },
   "engines": {
     "node": ">=20"

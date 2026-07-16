@@ -23,3 +23,7 @@ desktop.ini
 
 # セッション引き継ぎメモ。webhook URL を含むのでコミットしない。
 HANDOFF.md
+
+# electron-builder の出力
+client/dist/
+client/out/

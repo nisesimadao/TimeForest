@@ -46,6 +46,7 @@
     status: '',
     notify: true,
     fired: new Map(),
+    autoStart: false,
   };
 
   const todayKey = () => ymd(Date.now(), TZ);
@@ -1985,6 +1986,16 @@
     setInterval(checkAlerts, TICK);
   }
 
+  /**
+   * Auto-start isn't a preference we store — the OS owns it, and it can be
+   * turned off from Windows' own settings behind our back. Read it back from
+   * the source rather than remembering what we last asked for.
+   */
+  async function setAutoStart(on) {
+    ui.autoStart = await window.host.autoStart.set(on);
+    toast(ui.autoStart ? 'Windows 起動時に開始します' : '自動起動をやめました');
+  }
+
   // --- command palette --------------------------------------------------
 
   /** "7/20", "2026-07-20", "7月20日", "20260720" -> a date key. */
@@ -2048,13 +2059,19 @@
       {
         icon: '🔔',
         main: ui.notify ? '通知をオフにする' : '通知をオンにする',
-        sub: ui.notify ? 'このアプリが開いている間、予定の通知を出します' : '通知は止まっています',
+        sub: ui.notify ? '起動中は予定の通知を出します' : '通知は止まっています',
         run: () => {
           ui.notify = !ui.notify;
           savePrefs();
           toast(ui.notify ? '通知をオンにしました' : '通知をオフにしました');
           if (ui.notify) checkAlerts();
         },
+      },
+      {
+        icon: '⏻',
+        main: ui.autoStart ? 'Windows 起動時に開始しない' : 'Windows 起動時に開始する',
+        sub: ui.autoStart ? '今は自動で起動します' : '通知を受け取るにはアプリが起動している必要があります',
+        run: () => setAutoStart(!ui.autoStart),
       },
       { icon: '↧', main: 'Markdown をコピー', run: () => doExport('md') },
       { icon: '↧', main: 'CSV を書き出し', run: () => doExport('csv') },
@@ -2341,6 +2358,7 @@
     document.addEventListener('keydown', keys);
     window.addEventListener('resize', () => { if (ui.view === 'month') measureCells(); });
     startAlerts();
+    ui.autoStart = await window.host.autoStart.get().catch(() => false);
 
     await refreshAccounts();
     await bootUI();

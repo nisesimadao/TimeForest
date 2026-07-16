@@ -62,6 +62,22 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   }
   ok(`only "${EXPECT_CALENDAR}" is writable`);
 
+  // Start from a known state. The off-switch section below deliberately turns
+  // notifications off, and the live flag only re-reads prefs on load — so a
+  // previous run could otherwise leave this one testing a silenced app.
+  const reload = async () => {
+    await page.reload();
+    await page.waitForFunction(() => globalThis.TTX?.store?.state?.ready === true, { timeout: 90000 });
+  };
+  await page.evaluate(() => {
+    const p = JSON.parse(localStorage.getItem('ttc.prefs') || '{}');
+    p.notify = true;
+    localStorage.setItem('ttc.prefs', JSON.stringify(p));
+    localStorage.setItem('ttc.fired', '{}');
+  });
+  await reload();
+  ok('notifications on, ledger empty');
+
   // --- 1. the OS path -------------------------------------------------------
   sec('the OS path');
   const shown = await page.evaluate(() => window.host.notify.show({
@@ -108,22 +124,57 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   check(Object.keys(after).length === 1, 'a second tick did not fire it again');
   check(after[wantKey] === fired?.[wantKey], 'the ledger entry is unchanged');
 
+  // --- 3b. closing must not stop the reminders ------------------------------
+  // The whole feature dies the first time somebody hits X unless close means
+  // "hide". This is the assertion that keeps that honest.
+  sec('closing the window hides it — reminders keep running');
+  await page.evaluate(() => { localStorage.setItem('ttc.fired', '{}'); });
+  const closed = await page.evaluate(() => { window.close(); return true; });
+  await sleep(2000);
+  check(closed && !page.isClosed(), 'the renderer is still alive after close');
+  check(await page.evaluate(() => document.visibilityState !== undefined),
+    'and still executing');
+
+  const hiddenSetup = await page.evaluate(async () => {
+    const cal = [...TTX.store.state.enabled][0];
+    const start = Date.now() - 60000;
+    const e = await TTX.api.createEvent(cal, {
+      title: 'NF検証-トレイ', allDay: false, startAt: start, endAt: start + 1800000,
+      tz: 'Asia/Tokyo', labelId: 1, alerts: [0],
+    });
+    TTX.store.applyEvent(cal, e);
+    return { uuid: e.uuid, start: e.start_at };
+  });
+  let hiddenFired = false;
+  for (let i = 0; i < Math.ceil((TICK + 8000) / 1000); i++) {
+    const l = await ledger();
+    if (l[`${hiddenSetup.uuid}@${hiddenSetup.start}#0`]) { hiddenFired = true; break; }
+    await sleep(1000);
+  }
+  check(hiddenFired, 'a reminder still fires with the window closed to the tray');
+
+  // Put the window back. A person would click the tray; a script can't, and
+  // leaving someone's app hidden because a test closed it is rude.
+  await page.bringToFront();
+  await sleep(800);
+  check(await page.evaluate(() => document.visibilityState === 'visible'),
+    'the window comes back (as it would from the tray)');
+
   // --- 4. off means off -----------------------------------------------------
   sec('the off switch');
-  const off = await page.evaluate(async () => {
+  await page.evaluate(() => {
     localStorage.setItem('ttc.fired', '{}');
     const p = JSON.parse(localStorage.getItem('ttc.prefs') || '{}');
     p.notify = false;
     localStorage.setItem('ttc.prefs', JSON.stringify(p));
-    return true;
   });
-  await page.reload();
-  await page.waitForFunction(() => globalThis.TTX?.store?.state?.ready === true, { timeout: 90000 });
+  await reload();
   await sleep(TICK + 3000);
   check(Object.keys(await ledger()).length === 0,
-    'with notify off, a due reminder is not fired');
+    'with notify off, the due reminders above are not fired');
 
-  // restore the default and clean up
+  // Restore, and RELOAD — the live flag only re-reads prefs on load, so
+  // writing storage alone would leave the app silent for whoever runs next.
   await page.evaluate(async () => {
     const p = JSON.parse(localStorage.getItem('ttc.prefs') || '{}');
     p.notify = true;
@@ -137,7 +188,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       }
     }
   });
-  ok('cleaned up and notifications restored to on');
+  const left = await page.evaluate(() => (TTX.store.state.events.get([...TTX.store.state.enabled][0]) || [])
+    .filter((e) => /^NF検証/.test(e.title || '') && !e.deactivated_at).length);
+  check(left === 0, 'no test events left behind');
+  await reload();
+  ok('notifications restored to on, in the running app as well as in prefs');
 
   console.log(`\n${fail ? '\x1b[31m' : '\x1b[32m'}${pass} passed, ${fail} failed\x1b[0m`);
   await browser.close();

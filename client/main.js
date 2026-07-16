@@ -23,7 +23,7 @@
  *    times you log in. With per-account partitions that trap is now fatal
  *    rather than merely confusing, so it is centralised in apiFetch() below.
  */
-const { app, BrowserWindow, ipcMain, session, shell, nativeTheme, Notification } = require('electron');
+const { app, BrowserWindow, ipcMain, session, shell, nativeTheme, Notification, Tray, Menu, nativeImage } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const crypto = require('node:crypto');
@@ -368,6 +368,17 @@ ipcMain.handle('notify:show', (_e, { title, body, key } = {}) => {
   return true;
 });
 
+/**
+ * Reminders need the app to be running, and a machine reboots. Opt-in, never
+ * assumed: starting yourself at login without being asked is something a user
+ * should get to refuse. Starts hidden — the tray is enough of an announcement.
+ */
+ipcMain.handle('app:getAutoStart', () => app.getLoginItemSettings().openAtLogin);
+ipcMain.handle('app:setAutoStart', (_e, on) => {
+  app.setLoginItemSettings({ openAtLogin: !!on, args: ['--hidden'] });
+  return app.getLoginItemSettings().openAtLogin;
+});
+
 ipcMain.handle('accounts:list', () => publicAccounts());
 ipcMain.handle('accounts:add', async () => {
   const id = await addAccount();
@@ -398,6 +409,52 @@ ipcMain.handle('app:setTheme', (_e, mode) => {
 });
 ipcMain.handle('app:shouldUseDark', () => nativeTheme.shouldUseDarkColors);
 
+// --- tray ------------------------------------------------------------------
+//
+// Reminders only fire while the renderer is alive, so "close" has to mean
+// "get out of the way", not "stop being a calendar". Closing hides to the
+// tray; quitting is an explicit choice from the tray menu or Ctrl+Q. Without
+// this the notification feature would quietly stop working the first time
+// somebody hit the X, which is worse than not having it.
+
+let tray = null;
+let quitting = false;
+
+const iconPath = (name) => path.join(__dirname, 'build', name);
+
+function trayImage() {
+  // The tray slot is 16px; hand it the size it asked for rather than letting
+  // Windows downscale a 1024px master into mush.
+  for (const n of ['icon-32.png', 'icon-16.png', 'icon.png']) {
+    const p = iconPath(n);
+    if (fs.existsSync(p)) {
+      const img = nativeImage.createFromPath(p);
+      if (!img.isEmpty()) return img;
+    }
+  }
+  return null;
+}
+
+function showWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) return createWindow();
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+function createTray() {
+  const img = trayImage();
+  if (!img || tray) return;
+  tray = new Tray(img);
+  tray.setToolTip('TimeForest');
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: 'TimeForest を開く', click: showWindow },
+    { type: 'separator' },
+    { label: '終了', click: () => { quitting = true; app.quit(); } },
+  ]));
+  tray.on('click', showWindow);
+}
+
 // --- window ----------------------------------------------------------------
 
 function loadState() {
@@ -427,7 +484,8 @@ function createWindow() {
     height: s.height || 820,
     minWidth: 720,
     minHeight: 520,
-    title: 'TimeTree',
+    title: 'TimeForest',
+    icon: fs.existsSync(iconPath('icon.png')) ? iconPath('icon.png') : undefined,
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff',
     autoHideMenuBar: true,
     show: false,
@@ -440,10 +498,20 @@ function createWindow() {
   });
   if (s.maximized) mainWindow.maximize();
   mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
-  mainWindow.once('ready-to-show', () => mainWindow.show());
+  // Launched at login we start in the tray: the point of auto-start is the
+  // reminders, not a window in your face every time you turn the machine on.
+  const hidden = process.argv.includes('--hidden');
+  mainWindow.once('ready-to-show', () => { if (!hidden) mainWindow.show(); });
   if (DEV) mainWindow.webContents.openDevTools({ mode: 'detach' });
 
-  mainWindow.on('close', saveState);
+  // Closing hides; only an explicit quit tears the renderer down, because the
+  // renderer is what fires reminders.
+  mainWindow.on('close', (e) => {
+    saveState();
+    if (quitting || !tray) return;
+    e.preventDefault();
+    mainWindow.hide();
+  });
   mainWindow.on('closed', () => { mainWindow = null; });
 
   nativeTheme.on('updated', () => {
@@ -463,12 +531,19 @@ migrateUserData();
 app.whenReady().then(async () => {
   loadAccounts();
   await adoptLegacySession();
+  createTray();
   createWindow();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    else showWindow();
   });
 });
 
+app.on('before-quit', () => { quitting = true; });
+
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
+  // With a tray we're a background app: the last window closing is the user
+  // putting us away, not asking us to stop. Reminders keep working. Without a
+  // tray (no icon built) there'd be no way back, so fall back to quitting.
+  if (process.platform !== 'darwin' && !tray) app.quit();
 });
