@@ -88,6 +88,36 @@
   const calendarOf = (calId) => store.calendars.find((c) => c.id === calId);
 
   /**
+   * Fold a written event back into the cache. The write endpoints return the
+   * full server-side object, so we can splice it in rather than re-pulling
+   * 2400 events to see one change.
+   */
+  function applyEvent(calId, raw) {
+    const list = store.events.get(calId);
+    if (!list || !raw?.uuid) return;
+    const i = list.findIndex((e) => e.uuid === raw.uuid);
+    if (i >= 0) list[i] = raw;
+    else list.push(raw);
+    emit({ type: 'event-changed', calId, uuid: raw.uuid });
+  }
+
+  /**
+   * Delete is a soft delete server-side — the event stays and gains
+   * deactivated_at. Mirror exactly that locally, so the same reader filter
+   * that hides it after a re-sync hides it right now.
+   */
+  function markDeleted(calId, uuid) {
+    const list = store.events.get(calId);
+    if (!list) return;
+    const i = list.findIndex((e) => e.uuid === uuid);
+    if (i >= 0) list[i] = { ...list[i], deactivated_at: Date.now() };
+    emit({ type: 'event-changed', calId, uuid });
+  }
+
+  /** The raw event behind an occurrence — the form needs fields the view drops. */
+  const rawEvent = (calId, uuid) => (store.events.get(calId) || []).find((e) => e.uuid === uuid);
+
+  /**
    * Merging calendars surfaces genuine mirrors: a birthday, for instance, is
    * written into every calendar the person belongs to, so 🎂たろうの誕生日 lands in
    * both 家族 and プライベート and renders twice. Collapse those — but only
@@ -162,5 +192,6 @@
     state: store, subscribe, emit, reset,
     loadCalendarList, syncAll, syncCalendar, holidaysFor,
     occurrences, searchAll, labelOf, calendarOf, totalEvents,
+    applyEvent, markDeleted, rawEvent,
   };
 })();

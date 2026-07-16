@@ -17,3 +17,9 @@ desktop.ini
 .vscode/
 .idea/
 *.swp
+
+# Local-only: webhook URL (a credential), inbox messages, notify state.
+.local/
+
+# セッション引き継ぎメモ。webhook URL を含むのでコミットしない。
+HANDOFF.md
