@@ -431,7 +431,19 @@ button { background: none; border: 0; cursor: default; text-align: left; }
 .side-item.off { color: var(--label-3); }
 .side-item.off .dot { opacity: 0.25; }
 
-.side-foot { margin-top: auto; padding: 10px 12px 2px; display: flex; flex-wrap: wrap; gap: 4px; }
+.side-foot { margin-top: auto; padding: var(--s2) 0 2px; }
+
+/* A run of empty days, said once. */
+.ag-gap {
+  display: block;
+  width: 100%;
+  padding: 5px var(--s4);
+  font-size: var(--t-xs);
+  color: var(--label-3);
+  border-bottom: var(--hair) solid var(--sep);
+  transition: background 0.12s, color 0.12s;
+}
+.ag-gap:hover { background: var(--bg-hover); color: var(--label-2); }
 .mini-btn {
   padding: 3px 8px;
   font-size: var(--t-xs);
@@ -460,7 +472,7 @@ button { background: none; border: 0; cursor: default; text-align: left; }
   position: sticky;
   top: 0;
   z-index: 3;
-  padding: 5px var(--pad);
+  padding: 5px var(--s4);
   font-size: var(--t-xs);
   font-weight: 700;
   letter-spacing: 0.04em;
@@ -474,7 +486,7 @@ button { background: none; border: 0; cursor: default; text-align: left; }
   display: grid;
   grid-template-columns: 46px 1fr;
   gap: 12px;
-  padding: 6px var(--pad);
+  padding: 6px var(--s4);
   border-bottom: var(--hair) solid var(--sep);
   align-items: start;
 }
@@ -1227,6 +1239,80 @@ button { background: none; border: 0; cursor: default; text-align: left; }
   flex: none;
 }
 .f-err { font-size: var(--t-sm); color: var(--red); }
+
+/* --- settings ----------------------------------------------------------- */
+
+.st-scrim { padding-top: 8vh; }
+
+.settings {
+  width: min(520px, 92vw);
+  max-height: 82vh;
+  background: var(--bg-elev);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: sheet 0.2s var(--ease);
+}
+
+.st-body {
+  padding: var(--s2) var(--s4) var(--s4);
+  overflow-y: auto;
+}
+
+.st-sec {
+  font-size: var(--t-xs);
+  font-weight: 700;
+  color: var(--label-3);
+  letter-spacing: 0.03em;
+  padding: var(--s4) 0 var(--s1);
+}
+.st-sec:first-child { padding-top: var(--s2); }
+
+.st-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  padding: var(--s2) 0;
+  border-top: var(--hair) solid var(--sep);
+}
+.st-box { flex: 1; min-width: 0; }
+.st-l { font-size: var(--t-md); }
+.st-s { font-size: var(--t-xs); color: var(--label-2); line-height: 1.5; margin-top: 1px; }
+.st-row .f-sel { flex: none; min-width: 160px; }
+
+/* Export is a list of destinations, not four abbreviations in a row. "JSON"
+   with no explanation is a developer's shelf; "生データ" is a sentence. */
+.st-exports { display: flex; flex-direction: column; gap: 2px; margin-top: var(--s1); }
+.st-exp {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+  padding: var(--s2);
+  border-radius: var(--r-sm);
+  width: 100%;
+  color: var(--label-2);
+  transition: background 0.12s;
+}
+.st-exp:hover { background: var(--bg-hover); }
+.st-exp .i { align-self: center; }
+.st-exp-t { font-size: var(--t-md); color: var(--label); min-width: 84px; }
+.st-exp-s { font-size: var(--t-xs); }
+
+.st-note { font-size: var(--t-xs); color: var(--label-3); padding: var(--s2) var(--s2) 0; line-height: 1.6; }
+.st-about {
+  font-size: var(--t-sm);
+  line-height: 1.6;
+  padding-top: var(--s1);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+}
+/* Prose, not a label: this is the one place in the app with something to read
+   rather than scan, so it gets the leading that CJK reading actually wants,
+   and proportional kana is turned off because palt is for tight labels. */
+.st-about .st-s { line-height: 1.75; font-feature-settings: normal; }
 
 /* --- confirm ------------------------------------------------------------ */
 

@@ -516,13 +516,23 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     return v;
   };
 
-  // agenda: an empty day
+  // agenda: a run of empty days. With 空いている日を隠す on (the default) the
+  // per-day "＋ 予定を追加" is gone and the collapsed row is the affordance;
+  // with it off, the per-day one is back. Check whichever is on screen.
   const emptyKey = await page.evaluate(() => {
-    const days = [...document.querySelectorAll('.ag-day')];
-    const d = days.find((n) => n.querySelector('.ag-add'));
+    const gap = document.querySelector('.ag-gap');
+    if (gap) {
+      // "7/1 – 7/6 予定なし（6日）" — creating should land on the first day.
+      const m = gap.textContent.match(/(\d+)\/(\d+)/);
+      let h = gap.previousElementSibling;
+      while (h && !h.classList.contains('ag-month')) h = h.previousElementSibling;
+      const y = h.textContent.match(/(\d+)年/)[1];
+      gap.click();
+      return `${y}-${String(+m[1]).padStart(2, '0')}-${String(+m[2]).padStart(2, '0')}`;
+    }
+    const d = [...document.querySelectorAll('.ag-day')].find((n) => n.querySelector('.ag-add'));
     if (!d) return null;
     d.querySelector('.ag-add').click();
-    // Reconstruct the key from the month header above it and its day number.
     let h = d.previousElementSibling;
     while (h && !h.classList.contains('ag-month')) h = h.previousElementSibling;
     const m = h.textContent.match(/(\d+)年\s*(\d+)月/);
@@ -580,6 +590,36 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   }
 
   await page.click('.seg button:text-is("アジェンダ")');
+
+  // --- 8. settings ----------------------------------------------------------
+  sec('settings');
+  await page.keyboard.press(',');
+  await page.waitForSelector('.settings', { timeout: 5000 });
+  ok('the , key opens settings');
+  const st = await page.evaluate(() => ({
+    role: document.querySelector('.settings').getAttribute('role'),
+    inert: document.querySelector('#app')?.hasAttribute('inert'),
+    focusInside: document.querySelector('.settings').contains(document.activeElement),
+    sections: [...document.querySelectorAll('.st-sec')].map((n) => n.textContent),
+    exports: [...document.querySelectorAll('.st-exp-t')].map((n) => n.textContent),
+    note: document.querySelector('.st-note')?.textContent ?? '',
+  }));
+  check(st.role === 'dialog' && st.inert === true, 'it is a dialog and the app behind is inert');
+  check(st.focusInside, 'focus moved into it');
+  check(st.sections.join() === '表示,通知,書き出し,このアプリについて',
+    `sections: ${st.sections.join(' / ')}`);
+  check(st.exports.join() === 'Markdown,ICS,CSV,JSON',
+    `the four exports moved here off the sidebar (${st.exports.join(', ')})`);
+  // The sidebar used to carry these four abbreviations permanently.
+  check(await page.evaluate(() => document.querySelectorAll('.side-foot .mini-btn').length) === 0,
+    'and are gone from the sidebar');
+  check(!/\d{4}-\d{2}-\d{2}/.test(st.note),
+    `the range is written in Japanese, not ISO (${st.note})`);
+
+  await page.keyboard.press('Escape');
+  await page.waitForSelector('.settings', { state: 'detached', timeout: 5000 });
+  check(await page.evaluate(() => !document.querySelector('#app')?.hasAttribute('inert')),
+    'Escape closes it and the app is interactive again');
 
   console.log(`\n${fail ? '\x1b[31m' : '\x1b[32m'}${pass} passed, ${fail} failed\x1b[0m`);
   if (uuid) console.log(`(test events were created and deleted in "${EXPECT_CALENDAR}")`);

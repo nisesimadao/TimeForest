@@ -58,6 +58,12 @@ const WANTED = {
   'square-check': 'square-check-big',
   star: 'star',
   trash: 'trash-2',
+  sliders: 'sliders-horizontal',
+  'external-link': 'external-link',
+  map: 'map-pin',
+  info: 'info',
+  keyboard: 'keyboard',
+  palette: 'palette',
 };
 
 const dir = path.join(ROOT, 'node_modules', 'lucide-static', 'icons');

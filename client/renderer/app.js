@@ -93,6 +93,9 @@
     notify: true,
     fired: new Map(),
     autoStart: false,
+    settings: null,
+    settingsRelease: null,
+    hideEmpty: true,
   };
 
   const todayKey = () => ymd(Date.now(), TZ);
@@ -130,6 +133,7 @@
         view: ui.view,
         theme: ui.theme,
         notify: ui.notify,
+        hideEmpty: ui.hideEmpty,
         muted: [...ui.mutedLabels],
         disabled: TTX.store.state.calendars
           .filter((c) => !TTX.store.state.enabled.has(c.id)).map((c) => c.id),
@@ -142,6 +146,7 @@
       if (p.view) ui.view = p.view;
       if (p.theme) ui.theme = p.theme;
       if (p.notify != null) ui.notify = !!p.notify;
+      if (p.hideEmpty != null) ui.hideEmpty = !!p.hideEmpty;
       if (p.muted) ui.mutedLabels = new Set(p.muted);
       return p;
     } catch {
@@ -520,13 +525,17 @@
       }
     }
 
+    // MD / CSV / JSON / ICS used to sit here, four buttons wide, permanently,
+    // in the best real estate the sidebar has. They're export formats — things
+    // you reach for a handful of times a year — and one of them is JSON, which
+    // is a developer leaving their own tools on the shelf. They moved into
+    // settings; this is the door.
     const foot = el('div', 'side-foot');
-    for (const [kind, label] of [['md', 'MD'], ['csv', 'CSV'], ['json', 'JSON'], ['ics', 'ICS']]) {
-      const b = el('button', 'mini-btn', label);
-      b.title = label + ' で書き出し';
-      b.onclick = () => doExport(kind);
-      foot.appendChild(b);
-    }
+    const gear = el('button', 'side-item');
+    gear.append(TTX.icon('sliders', 14), el('span', 'nm', '設定'));
+    gear.title = '設定 (,)';
+    gear.onclick = () => openSettings();
+    foot.appendChild(gear);
     s.appendChild(foot);
     s.appendChild(el('div', 'side-status', ui.status));
     const sync = el('div', 'side-sync' + (ui.syncFailed ? ' bad' : ''), syncedText());
@@ -544,7 +553,44 @@
     let month = '';
     let count = 0;
 
+    /**
+     * A run of empty days becomes one line, not thirty.
+     *
+     * Measured on a real July: 63% of the agenda's scroll height was days
+     * where nothing happens, and the loudest recurring mark on the page was a
+     * dash. You were spending your best ink on absence, and 16 events meant 90
+     * rows of scrolling. But deleting empty days outright loses something
+     * real — "the week of the 13th is completely free" is an answer you often
+     * want. So collapse the run and say so, in one row.
+     */
+    const runs = [];
     for (const [key, list] of Object.entries(byDay)) {
+      const prev = runs[runs.length - 1];
+      if (ui.hideEmpty && !list.length && prev && prev.gap) prev.keys.push(key);
+      else if (ui.hideEmpty && !list.length) runs.push({ gap: true, keys: [key] });
+      else runs.push({ gap: false, key, list });
+    }
+
+    for (const run of runs) {
+      if (run.gap) {
+        const m = monthOf(run.keys[0]);
+        if (m !== month) {
+          month = m;
+          wrap.appendChild(el('div', 'ag-month', `${m.slice(0, 4)}年${Number(m.slice(5))}月`));
+        }
+        const jp = (k) => `${+k.slice(5, 7)}/${+k.slice(8)}`;
+        const first = run.keys[0];
+        const last = run.keys[run.keys.length - 1];
+        const b = el('button', 'ag-gap');
+        b.textContent = run.keys.length === 1
+          ? `${jp(first)} 予定なし`
+          : `${jp(first)} – ${jp(last)} 予定なし（${run.keys.length}日）`;
+        b.title = '空いている日にも予定を追加できます';
+        b.onclick = () => openForm({ dateKey: first });
+        wrap.appendChild(b);
+        continue;
+      }
+      const { key, list } = run;
       const m = monthOf(key);
       if (m !== month) {
         month = m;
@@ -2149,6 +2195,152 @@
     toast(ui.autoStart ? 'Windows 起動時に開始します' : '自動起動をやめました');
   }
 
+  // --- settings ---------------------------------------------------------
+  //
+  // TimeTree's web app technically has settings: click your avatar, then the
+  // gear inside the popover that opens, and you get links to the privacy
+  // policy. Everything that's actually a setting lives in the phone app. So
+  // there's nothing to copy here, and a low bar to clear.
+  //
+  // One sheet, sections, no tabs. There are eleven things to set; a nav rail
+  // for eleven things is furniture.
+
+  function closeSettings() {
+    ui.settingsRelease?.();
+    ui.settingsRelease = null;
+    ui.settings?.remove();
+    ui.settings = null;
+  }
+
+  /** A labelled row. `control` is whatever does the work. */
+  function setRow(label, sub, control) {
+    const r = el('div', 'st-row');
+    const box = el('div', 'st-box');
+    box.appendChild(el('div', 'st-l', label));
+    if (sub) box.appendChild(el('div', 'st-s', sub));
+    r.append(box, control);
+    return r;
+  }
+
+  function toggleBtn(on, onChange) {
+    const b = el('button', 'sw' + (on ? ' on' : ''));
+    b.appendChild(el('span', 'sw-k'));
+    b.setAttribute('role', 'switch');
+    b.setAttribute('aria-checked', String(on));
+    b.onclick = () => onChange(!on);
+    return b;
+  }
+
+  function openSettings() {
+    if (ui.settings) return;
+    closeDetail();
+    closeMenus();
+
+    const scrim = el('div', 'scrim st-scrim');
+    const card = el('div', 'settings');
+    ui.settings = scrim;
+
+    const head = el('div', 'f-head');
+    const hid = 'st-h';
+    const h = el('div', 'f-h-t', '設定');
+    h.id = hid;
+    head.appendChild(h);
+    card.appendChild(head);
+
+    const body = el('div', 'st-body');
+    card.appendChild(body);
+
+    const section = (t) => { body.appendChild(el('div', 'st-sec', t)); };
+
+    // --- appearance
+    section('表示');
+    const themeSel = el('select', 'f-sel');
+    for (const m of ['system', 'light', 'dark']) {
+      const o = el('option', null, THEME_LABEL[m]);
+      o.value = m;
+      if (m === ui.theme) o.selected = true;
+      themeSel.appendChild(o);
+    }
+    themeSel.onchange = () => applyTheme(themeSel.value);
+    body.appendChild(setRow('テーマ', null, themeSel));
+
+    body.appendChild(setRow('空いている日を隠す', '予定のない日を詰めて表示します',
+      toggleBtn(ui.hideEmpty, (v) => {
+        ui.hideEmpty = v;
+        savePrefs();
+        openSettings.refresh();
+        refresh('fade');
+      })));
+
+    // --- notifications
+    section('通知');
+    body.appendChild(setRow('予定の通知', 'このアプリが起動している間だけ鳴ります',
+      toggleBtn(ui.notify, (v) => {
+        ui.notify = v;
+        savePrefs();
+        openSettings.refresh();
+        if (v) checkAlerts();
+      })));
+    body.appendChild(setRow('Windows 起動時に開始', 'トレイに常駐して通知を受け取ります',
+      toggleBtn(ui.autoStart, async (v) => {
+        await setAutoStart(v);
+        openSettings.refresh();
+      })));
+
+    // --- export
+    section('書き出し');
+    const exp = el('div', 'st-exports');
+    for (const [kind, label, sub] of [
+      ['md', 'Markdown', 'クリップボードへ'],
+      ['ics', 'ICS', 'カレンダーアプリへ取り込む'],
+      ['csv', 'CSV', '表計算ソフトへ'],
+      ['json', 'JSON', '生データ'],
+    ]) {
+      const b = el('button', 'st-exp');
+      b.append(TTX.icon('download', 14), el('span', 'st-exp-t', label), el('span', 'st-exp-s', sub));
+      b.onclick = () => doExport(kind);
+      exp.appendChild(b);
+    }
+    body.appendChild(exp);
+    const { from, to } = range();
+    const jp = (k) => `${+k.slice(5, 7)}月${+k.slice(8)}日`;
+    body.appendChild(el('div', 'st-note',
+      `いま表示している範囲（${from.slice(0, 4)}年${jp(from)} 〜 ${jp(to)}）を書き出します。`));
+
+    // --- about
+    section('このアプリについて');
+    const about = el('div', 'st-about');
+    about.appendChild(el('div', null, 'TimeForest — TimeTree 非公式クライアント'));
+    about.appendChild(el('div', 'st-s',
+      'TimeTree の公開 API はありません。Web アプリと同じ内部 API を、あなたのログイン'
+      + 'セッションで呼んでいます。パスワードはこのアプリを通りません。'));
+    body.appendChild(about);
+
+    const foot = el('div', 'f-foot');
+    foot.appendChild(el('div', 'tb-spacer'));
+    const close = el('button', 'btn primary', '閉じる');
+    close.onclick = () => closeSettings();
+    foot.appendChild(close);
+    card.appendChild(foot);
+
+    scrim.appendChild(card);
+    document.body.appendChild(scrim);
+    ui.settingsRelease = dialog(card, { labelledBy: hid });
+
+    scrim.onclick = (e) => { if (e.target === scrim) closeSettings(); };
+    card.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); closeSettings(); }
+    });
+    (card.querySelector(FOCUSABLE) || card).focus();
+  }
+
+  /** Toggles change labels elsewhere in the sheet, so redraw it in place. */
+  openSettings.refresh = () => {
+    if (!ui.settings) return;
+    closeSettings();
+    openSettings();
+  };
+
   // --- command palette --------------------------------------------------
 
   /** "7/20", "2026-07-20", "7月20日", "20260720" -> a date key. */
@@ -2209,6 +2401,7 @@
       { icon: 'sun', main: 'テーマ: ライト', run: () => applyTheme('light') },
       { icon: 'monitor', main: 'テーマ: システムに従う', run: () => applyTheme('system') },
       { icon: 'refresh', main: '再同期', run: () => resync() },
+      { icon: 'sliders', main: '設定', run: () => openSettings() },
       {
         icon: ui.notify ? 'bell-off' : 'bell',
         main: ui.notify ? '通知をオフにする' : '通知をオンにする',
@@ -2500,6 +2693,10 @@
     // grid behind them would still navigate under the user's typing. The
     // confirm swallows its own Escape in the capture phase, so this only ever
     // sees the form's.
+    if (ui.settings) {
+      if (e.key === 'Escape') { e.preventDefault(); closeSettings(); }
+      return;
+    }
     if (ui.form || ui.confirm) {
       if (e.key === 'Escape' && ui.form && !ui.confirm) { e.preventDefault(); ui.formClose?.(); }
       return;
@@ -2518,6 +2715,7 @@
     if (typing) return;
     if (e.key === '/') { e.preventDefault(); return openPalette(); }
     if (e.key.toLowerCase() === 'n') { e.preventDefault(); return openForm(); }
+    if (e.key === ',') { e.preventDefault(); return openSettings(); }
     if (e.key === 'ArrowLeft') { e.preventDefault(); return go(-1); }
     if (e.key === 'ArrowRight') { e.preventDefault(); return go(1); }
     if (e.key.toLowerCase() === 't') return jumpTo(todayKey());
