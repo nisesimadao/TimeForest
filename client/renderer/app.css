@@ -908,6 +908,52 @@ button { background: none; border: 0; cursor: default; }
 .form.repeats .f-until { display: flex; }
 .form.weekly .f-byday { display: flex; }
 
+/* Reminders and members are both "a set you add to", so they share a shape:
+   the current picks read left to right, the way to add sits after them. */
+.f-alerts { display: flex; gap: 4px; flex-wrap: wrap; }
+.f-alerts:empty { display: none; }
+.f-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 3px 2px 8px;
+  border-radius: 11px;
+  background: var(--accent-soft);
+  color: var(--label);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+.f-chip-x {
+  color: var(--label-2);
+  font-size: 9px;
+  width: 15px;
+  height: 15px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  transition: background 0.12s, color 0.12s;
+}
+.f-chip-x:hover { background: var(--red); color: #fff; }
+.f-add { flex: none; width: auto; min-width: 96px; }
+
+.f-members { display: flex; gap: 4px; flex-wrap: wrap; }
+.f-mem {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 9px 2px 2px;
+  border-radius: 12px;
+  background: var(--bg-hover);
+  font-size: 11.5px;
+  border: 1px solid transparent;
+  transition: background 0.12s, border-color 0.12s, opacity 0.12s;
+  opacity: 0.55;
+}
+.f-mem:hover { background: var(--bg-active); opacity: 0.85; }
+.f-mem.on { opacity: 1; border-color: var(--accent); background: var(--accent-soft); }
+.f-mem .acct-av { box-shadow: none; }
+.f-mem-n { max-width: 96px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 .f-days { display: flex; gap: 3px; }
 .f-day {
   width: 26px;

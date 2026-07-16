@@ -16,6 +16,7 @@
     labels: new Map(),    // calendarId -> labels
     members: new Map(),   // calendarId -> Map(user_id -> member)
     holidays: new Map(),  // 'YYYY' -> memorialdays
+    me: null,             // the signed-in user; `attendees` holds their id
     ready: false,
     syncedAt: 0,
   };
@@ -36,13 +37,22 @@
     store.labels.clear();
     store.members.clear();
     store.holidays.clear();
+    store.me = null;
     store.ready = false;
     store.syncedAt = 0;
     emit({ type: 'reset' });
   }
 
   async function loadCalendarList() {
-    store.calendars = await TTX.api.calendars();
+    // Who we are is needed before the first write, not before the first paint,
+    // so it rides along here rather than costing a round trip later. A failure
+    // must not block the calendars — it only softens a form default.
+    const [cals, who] = await Promise.all([
+      TTX.api.calendars(),
+      TTX.api.me().catch(() => null),
+    ]);
+    store.calendars = cals;
+    store.me = who;
     if (!store.enabled.size) {
       for (const c of store.calendars) store.enabled.add(c.id);
     }

@@ -132,6 +132,12 @@
     return j.calendar_users || [];
   }
 
+  /** The signed-in user. `id` is what `attendees` holds. */
+  async function me() {
+    const j = await get('/api/v1/user').catch(() => ({}));
+    return j.user || null;
+  }
+
   /**
    * Public holidays / observances. These are not part of the events feed —
    * 七夕 and 海の日 show up on the grid but come from here. `workday:true`
@@ -305,14 +311,54 @@
     return { created: j?.event ?? j, master: updated };
   }
 
+  // --- alerts ----------------------------------------------------------
+  //
+  // `alerts` is a list of MINUTES BEFORE THE START. Timed events are the
+  // obvious reading of that — 0 は開始時, 30 は 30分前, 1440 は 1日前.
+  //
+  // All-day is not obvious, and was measured rather than assumed: TimeTree
+  // treats an all-day event's start as LOCAL midnight, and its "N日前"
+  // reminder fires at 09:00 on that day — which is 15 hours (900 minutes)
+  // before the following midnight. So 1日前 is 900, and each extra day adds a
+  // full 1440. 当日 is the one that breaks the pattern: it's plain 0.
+  //
+  // Confirmed both directions on a throwaway calendar: the real client emitted
+  // 900 for 1日前, and writing 900 / 2340 / 3780 back made it render 1日前 /
+  // 2日前 / 3日前. 0 renders as 当日 (all-day) and 開始時 (timed).
+  const ALLDAY_ALERT_BASE = 900;   // 15h: 09:00 the day before
+
+  /** Days-before -> the value TimeTree stores for an all-day event. */
+  const alldayAlert = (days) => (days <= 0 ? 0 : ALLDAY_ALERT_BASE + (days - 1) * 1440);
+
+  /** The inverse. Returns null for values that aren't on the ladder. */
+  function alldayAlertDays(mins) {
+    if (mins === 0) return 0;
+    const d = (mins - ALLDAY_ALERT_BASE) / 1440 + 1;
+    return Number.isInteger(d) && d > 0 ? d : null;
+  }
+
+  /** How TimeTree itself words an alert, so our label matches theirs. */
+  function alertLabel(mins, allDay) {
+    if (allDay) {
+      const d = alldayAlertDays(mins);
+      if (d === 0) return '当日';
+      return d === null ? `${mins}分前` : `${d}日前`;
+    }
+    if (mins === 0) return '開始時';
+    if (mins % 1440 === 0) return `${mins / 1440}日前`;
+    if (mins % 60 === 0) return `${mins / 60}時間前`;
+    return `${mins}分前`;
+  }
+
   /** TimeTree stores label colours as a 24-bit int. */
   const colorHex = (n) => '#' + Number(n >>> 0).toString(16).padStart(6, '0').slice(-6);
 
   TTX.api = {
-    calendars, currentCalendar, allEvents, labels, members, memorialdays,
+    calendars, currentCalendar, allEvents, labels, members, memorialdays, me,
     createEvent, updateEvent, deleteEvent, buildEvent,
     excludeOccurrence, truncateSeries, editOccurrence, splitSeries,
     icalStamp, ruleOf, isMaster, withRule, withUntil,
+    alldayAlert, alldayAlertDays, alertLabel,
     colorHex, setTransport, csrfToken, request, CLIENT_TAG, ORIGIN,
   };
 })();

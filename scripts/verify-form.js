@@ -126,6 +126,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       uuid: e.uuid, title: e.title, all_day: e.all_day, start_at: e.start_at,
       end_at: e.end_at, start_timezone: e.start_timezone, end_timezone: e.end_timezone,
       location: e.location, note: e.note, label_id: e.label_id,
+      alerts: e.alerts ?? null, attendees: e.attendees ?? null,
       deactivated_at: e.deactivated_at ?? null, category: e.category,
     } : null;
   }, t);
@@ -325,6 +326,91 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     return ts.filter((t) => occ.some((o) => o.title === t));
   }, [T2, T3]);
   check(visible.length === 0, 'neither deleted event renders after a re-sync');
+
+  // --- 6b. reminders and attendees ------------------------------------------
+  // These are the fields TimeTree's own apps act on: a reminder becomes a real
+  // push to the user's phone, an attendee becomes the avatar shown there. The
+  // all-day encoding is not guessable — it was measured off the real client —
+  // so assert the exact stored numbers rather than "something non-empty".
+  sec('reminders and attendees');
+  const T4 = `TF検証-通知-${stamp}`;
+  const T5 = `TF検証-終日通知-${stamp}`;
+  const alertRow = '.f-row:has(> .f-k:text-is("通知")) .f-sel';
+  const chipText = () => page.evaluate(() =>
+    [...document.querySelectorAll('.f-chip')].map((n) => n.textContent.replace('✕', '')).join(', '));
+
+  await page.click('.new-btn');
+  await page.waitForSelector('.form', { timeout: 5000 });
+  await page.fill('.f-title', T4);
+  await page.fill('.f-row:has(> .f-k:text-is("開始")) .f-date', DATE);
+  await page.fill('.f-row:has(> .f-k:text-is("開始")) .f-time', '14:00');
+
+  check(await page.isVisible('.f-row:has(> .f-k:text-is("参加者"))'),
+    'the form offers 参加者 even on a one-member calendar — TimeTree assigns there too');
+  check(await page.evaluate(() => document.querySelectorAll('.f-mem.on').length) === 1,
+    'you are assigned by default, matching what TimeTree\'s own form does');
+
+  await page.selectOption(alertRow, '30');
+  await page.selectOption(alertRow, '60');
+  check((await chipText()) === '30分前, 1時間前',
+    `reminders read the way TimeTree words them (${await chipText()})`);
+
+  // Flipping all-day changes what "before" is measured from.
+  await page.click('.sw');
+  await sleep(300);
+  check((await chipText()) === '1日前',
+    `all-day carries the intent across instead of dropping it (${await chipText()})`);
+  await page.click('.sw');
+  await sleep(300);
+
+  await page.selectOption(alertRow, '0');
+  await page.click('.btn.primary');
+  await page.waitForSelector('.form', { state: 'detached', timeout: 15000 });
+
+  const al = await findRaw(T4);
+  check(!!al, 'created with reminders');
+  check(JSON.stringify(al?.alerts) === '[0,1440]',
+    `timed reminders stored as minutes-before (${JSON.stringify(al?.alerts)})`);
+  check(al?.attendees?.length === 1, `attendee stored (${JSON.stringify(al?.attendees)})`);
+
+  // All-day has its own ladder: 900 == 1日前 == 09:00 the day before, and each
+  // further day adds 1440. Measured against the real client in both directions.
+  await page.click('.new-btn');
+  await page.waitForSelector('.form', { timeout: 5000 });
+  await page.fill('.f-title', T5);
+  await page.click('.sw');
+  await page.fill('.f-row:has(> .f-k:text-is("開始")) .f-date', DATE);
+  await page.selectOption(alertRow, '900');
+  await page.selectOption(alertRow, '2340');
+  check((await chipText()) === '1日前, 2日前', `all-day ladder is worded in days (${await chipText()})`);
+  await page.click('.btn.primary');
+  await page.waitForSelector('.form', { state: 'detached', timeout: 15000 });
+  check(JSON.stringify((await findRaw(T5))?.alerts) === '[900,2340]',
+    `all-day 1日前/2日前 store as 900/2340 (${JSON.stringify((await findRaw(T5))?.alerts)})`);
+
+  sec('re-sync — the reminders really reached the server');
+  await page.evaluate(() => { TTX.store.state.events.clear(); return TTX.store.syncAll(); });
+  check(JSON.stringify((await findRaw(T4))?.alerts) === '[0,1440]', 'server kept the timed reminders');
+  check(JSON.stringify((await findRaw(T5))?.alerts) === '[900,2340]', 'server kept the all-day reminders');
+  check((await findRaw(T4))?.attendees?.length === 1, 'server kept the attendee');
+
+  await openRow(T4);
+  const shownAlerts = await page.evaluate(() => {
+    const r = [...document.querySelectorAll('.d-row')].find((n) => n.textContent.includes('通知'));
+    return r?.querySelector('.d-v')?.textContent ?? null;
+  });
+  check(shownAlerts === '開始時、1日前', `the detail popover reports them (${shownAlerts})`);
+  await page.keyboard.press('Escape');
+
+  for (const t of [T4, T5]) {
+    await openRow(t);
+    await page.click('.d-acts .btn.danger');
+    await page.waitForSelector('.confirm', { timeout: 5000 });
+    await page.click('.confirm .btn.danger');
+    await page.waitForSelector('.confirm', { state: 'detached', timeout: 15000 });
+    await waitRow(t, false).catch(() => {});
+  }
+  ok('reminder test events cleaned up');
 
   // --- 7. entry points ------------------------------------------------------
   // Each of these opens the same form; what matters is that it arrives

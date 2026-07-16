@@ -792,7 +792,12 @@
       const names = o.attendees.map((id) => members.get(id)?.name).filter(Boolean);
       if (names.length) rows.push(['👥', 'メンバー', names.join('、')]);
     }
-    if (o.recurring) rows.push(['🔁', '繰り返し', '繰り返しの予定']);
+    const alerts = TTX.store.rawEvent(o.calendarId, o.uuid)?.alerts;
+    if (alerts?.length) {
+      rows.push(['🔔', '通知', alerts.slice().sort((a, b) => a - b)
+        .map((m) => TTX.api.alertLabel(m, o.allDay)).join('、')]);
+    }
+    if (o.recurring) rows.push(['🔁', '繰り返し', repeatText(o)]);
     if (o.isException) rows.push(['✎', '例外', 'この回だけ変更されています']);
     if (o.birthday) rows.push(['🎂', '種別', '誕生日']);
 
@@ -999,6 +1004,49 @@
   const sameRepeat = (a, b) =>
     a.freq === b.freq && a.until === b.until && a.byday.join() === b.byday.join();
 
+  const FREQ_EVERY = { DAILY: '毎日', WEEKLY: '毎週', MONTHLY: '毎月', YEARLY: '毎年' };
+  const FREQ_UNIT = { DAILY: '日', WEEKLY: '週間', MONTHLY: 'か月', YEARLY: '年' };
+
+  /**
+   * Say what the rule actually is — 「毎週 月曜日」 — instead of "this repeats".
+   * The reader already had to parse the rule to place the event; refusing to
+   * tell you what it found is just withholding.
+   */
+  function repeatText(o) {
+    const rule = TTX.api.ruleOf(TTX.store.rawEvent(o.calendarId, o.uuid) || {});
+    const r = parseRepeat(rule);
+    if (!r.freq) return '繰り返しの予定';
+    const n = +r.rest.INTERVAL || 1;
+    let s = n > 1 ? `${n}${FREQ_UNIT[r.freq] || ''}ごと` : (FREQ_EVERY[r.freq] || '繰り返し');
+    if (r.freq === 'WEEKLY' && r.byday.length) {
+      s += ' ' + r.byday.map((d) => WEEKDAY_JA[BYDAY.indexOf(d)] + '曜日').join('・');
+    }
+    if (r.until) s += ` — ${r.until.replace(/-/g, '/')} まで`;
+    else if (r.rest.COUNT) s += ` — ${r.rest.COUNT}回`;
+    return s;
+  }
+
+  /** What the picker offers. All-day reminders live on their own ladder. */
+  const alertChoices = (allDay) => (allDay
+    ? [0, 1, 2, 3, 7].map((d) => TTX.api.alldayAlert(d))
+    : [0, 5, 10, 15, 30, 60, 120, 1440]);
+
+  /**
+   * Toggling all-day changes what "before" is measured from, so a reminder's
+   * stored number stops meaning what the user picked. Carry the intent over
+   * instead of dropping it: the exact minute is unrecoverable either way, but
+   * "roughly a day ahead" survives, and 開始時/当日 map cleanly onto each other.
+   */
+  function remapAlerts(list, toAllDay) {
+    const out = list.map((m) => {
+      if (m === 0) return 0;
+      if (toAllDay) return TTX.api.alldayAlert(Math.max(1, Math.round(m / 1440)));
+      const d = TTX.api.alldayAlertDays(m);
+      return d === null ? m : d * 1440;
+    });
+    return [...new Set(out)].sort((a, b) => a - b);
+  }
+
   /**
    * Holidays aren't events at all (they come from memorialdays and have no
    * calendar), and a birthday's title is synthesised from a member name rather
@@ -1049,6 +1097,11 @@
       note: '',
       labelId: labels[0]?.id ?? 1,
       repeat: { freq: '', byday: [], until: '', rest: {} },
+      alerts: [],
+      // TimeTree's own form assigns the event to you by default, and the
+      // user's phone renders that avatar. Match it rather than quietly
+      // producing events that look different from the ones they make there.
+      attendees: st.me?.id ? [st.me.id] : [],
     };
   }
 
@@ -1082,6 +1135,8 @@
       note: raw.note || '',
       labelId: raw.label_id ?? 1,
       repeat: parseRepeat(TTX.api.ruleOf(raw)),
+      alerts: [...(raw.alerts || [])].sort((a, b) => a - b),
+      attendees: [...(raw.attendees || [])],
     };
   }
 
@@ -1105,6 +1160,11 @@
     put('label_id', f.labelId, raw.label_id ?? 1);
     put('note', f.note, raw.note || '');
     put('location', f.location, raw.location || '');
+    // Arrays never compare equal by identity, so diff them by value or every
+    // save would send them back untouched.
+    const same = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
+    if (!same(f.alerts, [...(raw.alerts || [])].sort((a, b) => a - b))) p.alerts = f.alerts;
+    if (!same(f.attendees, raw.attendees || [])) p.attendees = f.attendees;
     // Only touch the rule if the user touched the control — and keep the
     // master's EXDATEs when we do, or every occurrence deleted with
     // "この予定だけを削除" would come back to life on the next title edit.
@@ -1313,6 +1373,77 @@
       validate();
     }
 
+    // --- reminders. TimeTree's own apps deliver these, so setting one here
+    //     reaches the user's phone — which is most of the point.
+    const alertRow = el('div', 'f-row');
+    alertRow.appendChild(el('span', 'f-k', '通知'));
+    const alertBox = el('div', 'f-alerts');
+    const alertAdd = el('select', 'f-sel f-add');
+    alertRow.append(alertBox, alertAdd);
+    body.appendChild(alertRow);
+
+    function paintAlerts() {
+      alertBox.textContent = '';
+      for (const m of f.alerts) {
+        const chip = el('span', 'f-chip', TTX.api.alertLabel(m, f.allDay));
+        const x = el('button', 'f-chip-x', '✕');
+        x.title = '削除';
+        x.onclick = () => { f.alerts = f.alerts.filter((v) => v !== m); paintAlerts(); };
+        chip.appendChild(x);
+        alertBox.appendChild(chip);
+      }
+      alertAdd.textContent = '';
+      const rest = alertChoices(f.allDay).filter((m) => !f.alerts.includes(m));
+      const head = el('option', null, f.alerts.length ? '＋ 追加' : '通知なし');
+      head.value = '';
+      alertAdd.appendChild(head);
+      for (const m of rest) {
+        const o = el('option', null, TTX.api.alertLabel(m, f.allDay));
+        o.value = String(m);
+        alertAdd.appendChild(o);
+      }
+      alertAdd.value = '';
+      alertAdd.disabled = !rest.length;
+    }
+    alertAdd.onchange = () => {
+      if (!alertAdd.value) return;
+      f.alerts = [...new Set([...f.alerts, +alertAdd.value])].sort((a, b) => a - b);
+      paintAlerts();
+    };
+    paintAlerts();
+
+    // --- attendees. The detail popover could already show these; not being
+    //     able to SET them made the form a downgrade from TimeTree on the one
+    //     thing a shared family calendar is actually for.
+    const mRow = el('div', 'f-row');
+    mRow.appendChild(el('span', 'f-k', '参加者'));
+    const mBox = el('div', 'f-members');
+    mRow.appendChild(mBox);
+    body.appendChild(mRow);
+
+    /** Read the roster fresh: it belongs to whichever calendar f points at. */
+    function paintMembers() {
+      const roster = st.members.get(f.calendarId);
+      mRow.style.display = roster?.size ? '' : 'none';
+      mBox.textContent = '';
+      if (!roster?.size) return;
+      for (const m of roster.values()) {
+        const on = f.attendees.includes(m.user_id);
+        const b = el('button', 'f-mem' + (on ? ' on' : ''));
+        const av = el('span', 'acct-av sm', (m.name || '?').slice(0, 1));
+        av.style.background = acctColor(String(m.user_id));
+        b.append(av, el('span', 'f-mem-n', m.name || '(名前なし)'));
+        b.onclick = () => {
+          f.attendees = on
+            ? f.attendees.filter((id) => id !== m.user_id)
+            : [...f.attendees, m.user_id];
+          paintMembers();
+        };
+        mBox.appendChild(b);
+      }
+    }
+    paintMembers();
+
     // --- location / note
     const locRow = el('div', 'f-row');
     locRow.appendChild(el('span', 'f-k', '場所'));
@@ -1363,9 +1494,12 @@
         const c = enabled.find((x) => String(x.id) === sel.value);
         if (!c) return;
         f.calendarId = c.id;
-        // Labels belong to a calendar, so the id we were holding means
-        // nothing now.
+        // Labels and members both belong to a calendar, so the ids we were
+        // holding mean nothing now.
         paintLabels();
+        const roster = st.members.get(c.id);
+        f.attendees = st.me?.id && roster?.has(st.me.id) ? [st.me.id] : [];
+        paintMembers();
       };
       r.appendChild(sel);
       body.appendChild(r);
@@ -1429,6 +1563,8 @@
       f.allDay = !f.allDay;
       // Only one combination is actually invalid; leave the rest literal.
       if (f.allDay && f.endKey < f.startKey) f.endKey = f.startKey;
+      f.alerts = remapAlerts(f.alerts, f.allDay);
+      paintAlerts();
       syncWhen();
     };
     sDate.onchange = () => {
@@ -1458,6 +1594,8 @@
       labelId: f.labelId,
       note: f.note,
       location: f.location,
+      alerts: f.alerts,
+      attendees: f.attendees,
     });
 
     async function save() {
