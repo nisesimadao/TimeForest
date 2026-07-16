@@ -174,7 +174,23 @@ body {
 }
 
 button, input, select { font: inherit; color: inherit; }
-button { background: none; border: 0; cursor: default; }
+button { background: none; border: 0; cursor: default; text-align: left; }
+
+/* One focus ring, everywhere, and only for keyboard.
+ *
+ * The event rows, chips and blocks used to be <div onclick>: not focusable, so
+ * a keyboard user could create an event and then never open, edit or delete
+ * one. They're buttons now, which only helps if you can see where you are —
+ * and the text fields had `outline: 0` with a hairline border-colour as the
+ * sole cue, measured at 2.92:1 against the field. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-radius: var(--r-sm);
+}
+.f-title:focus-visible, .f-cl-t:focus-visible, .palette input:focus-visible {
+  outline-offset: -2px;
+}
 
 #app { height: 100%; display: flex; flex-direction: column; }
 
@@ -477,6 +493,7 @@ button { background: none; border: 0; cursor: default; }
 
 .ev {
   display: grid;
+  width: 100%;
   /* dot · time · title · author. The time is right-aligned into its column so
      every colon lines up and the titles start on one edge — the old layout
      left-aligned 終日 / 祝 / 10:30 in a fixed box, giving three different
@@ -611,6 +628,7 @@ button { background: none; border: 0; cursor: default; }
 
 .m-ev {
   display: flex;
+  width: 100%;
   align-items: baseline;
   gap: 4px;
   font-size: var(--t-xs);
@@ -699,6 +717,8 @@ button { background: none; border: 0; cursor: default; }
 }
 .w-ad-cell.today { background: var(--accent-wash); }
 .w-ad {
+  width: 100%;
+  display: block;
   font-size: var(--t-xs);
   line-height: 15px;
   /* colour set by fill() */

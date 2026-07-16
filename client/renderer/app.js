@@ -26,6 +26,50 @@
     return n;
   }
 
+  const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), '
+    + 'select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+  /**
+   * Make `root` behave like a dialog: Tab stays inside it, the rest of the app
+   * is hidden from assistive tech, and focus goes back where it came from when
+   * it closes.
+   *
+   * All four overlays were missing every part of this. One Tab walked out of
+   * the form into the agenda behind it — which was still focusable, still
+   * clickable, and now wearing the focus ring — and closing anything dropped
+   * focus on <body>, so the next Tab started over from the top of the app.
+   *
+   * Returns the release function; callers must call it when they tear down.
+   */
+  function dialog(root, { label, labelledBy } = {}) {
+    const prev = document.activeElement;
+    root.setAttribute('role', 'dialog');
+    root.setAttribute('aria-modal', 'true');
+    if (label) root.setAttribute('aria-label', label);
+    if (labelledBy) root.setAttribute('aria-labelledby', labelledBy);
+
+    const app = $('#app');
+    app?.setAttribute('inert', '');
+
+    const onKey = (e) => {
+      if (e.key !== 'Tab') return;
+      const items = [...root.querySelectorAll(FOCUSABLE)].filter((n) => n.offsetParent !== null);
+      if (!items.length) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    };
+    root.addEventListener('keydown', onKey);
+
+    return () => {
+      root.removeEventListener('keydown', onKey);
+      app?.removeAttribute('inert');
+      // paint() rebuilds #app, so the element we came from may be gone.
+      if (prev && document.contains(prev)) prev.focus();
+    };
+  }
+
   const ui = {
     view: 'agenda',
     cursor: '',            // any date inside the focused month
@@ -535,7 +579,7 @@
   }
 
   function eventRow(o, dayKey) {
-    const row = el('div', 'ev' + (o.allDay ? ' allday' : '')
+    const row = el('button', 'ev' + (o.allDay ? ' allday' : '')
       + (o.holiday ? ' holiday' : '') + (o.workday ? ' workday' : ''));
     // A dot, not a 3px stripe. The stripe carried real information, so it
     // wasn't the decorative version of the tell — but it was still the wrong
@@ -624,7 +668,7 @@
       const shown = list.length > ui.cellCap ? list.slice(0, Math.max(0, ui.cellCap - 1)) : list;
       for (const o of shown) {
         const c = railColor(o);
-        const chip = el('div', 'm-ev ' + (o.allDay || o.holiday ? 'chip' : 'dotted'));
+        const chip = el('button', 'm-ev ' + (o.allDay || o.holiday ? 'chip' : 'dotted'));
         if (o.allDay || o.holiday) {
           fill(chip, o);
         } else {
@@ -693,7 +737,7 @@
       for (const key of days) {
         const cell = el('div', 'w-ad-cell' + (key === today ? ' today' : ''));
         for (const o of banners.filter((x) => x.days.includes(key))) {
-          const c = el('div', 'w-ad', o.title);
+          const c = el('button', 'w-ad', o.title);
           fill(c, o);
           c.title = o.title;
           c.onclick = (e) => { e.stopPropagation(); openDetail(o, c); };
@@ -725,7 +769,7 @@
       for (const o of layoutColumns(timed)) {
         const startMin = +o.startTime.slice(0, 2) * 60 + +o.startTime.slice(3);
         const endMin = Math.max(startMin + 20, +o.endTime.slice(0, 2) * 60 + +o.endTime.slice(3));
-        const box = el('div', 'w-ev');
+        const box = el('button', 'w-ev');
         box.style.top = (startMin / 60) * HOUR_H + 'px';
         box.style.height = ((endMin - startMin) / 60) * HOUR_H - 2 + 'px';
         box.style.left = `calc(${(o._col / o._cols) * 100}% + 1px)`;
@@ -959,9 +1003,15 @@
     requestAnimationFrame(() => card.classList.add('in'));
     scrim.onclick = (e) => { if (e.target === scrim) closeDetail(); };
     ui.detail = scrim;
+    ui.detailRelease = dialog(card, { label: o.title });
+    // Focus has to ENTER the card, or its 編集/削除 are unreachable by keyboard
+    // even though they are real buttons.
+    (card.querySelector(FOCUSABLE) || card).focus();
   }
 
   function closeDetail() {
+    ui.detailRelease?.();
+    ui.detailRelease = null;
     ui.detail?.remove();
     ui.detail = null;
   }
@@ -986,9 +1036,11 @@
       scrim.appendChild(card);
       document.body.appendChild(scrim);
       ui.confirm = true;
+      const release = dialog(card, { label: title });
 
       const done = (v) => {
         document.removeEventListener('keydown', onKey, true);
+        release();
         scrim.remove();
         ui.confirm = false;
         resolve(v);
@@ -1045,9 +1097,11 @@
       scrim.appendChild(card);
       document.body.appendChild(scrim);
       ui.confirm = true;
+      const release = dialog(card, { label: title });
 
       const done = (v) => {
         document.removeEventListener('keydown', onKey, true);
+        release();
         scrim.remove();
         ui.confirm = false;
         resolve(v);
@@ -1301,6 +1355,8 @@
   }
 
   function closeForm() {
+    ui.formRelease?.();
+    ui.formRelease = null;
     ui.form?.remove();
     ui.form = null;
     ui.formClose = null;
@@ -1339,7 +1395,10 @@
 
     // --- head
     const head = el('div', 'f-head');
-    head.appendChild(el('div', 'f-h-t', editing ? '予定を編集' : '新しい予定'));
+    const headId = 'f-h-' + Math.random().toString(36).slice(2, 8);
+    const headEl = el('div', 'f-h-t', editing ? '予定を編集' : '新しい予定');
+    headEl.id = headId;
+    head.appendChild(headEl);
     card.appendChild(head);
 
     const body = el('div', 'f-body');
@@ -1717,6 +1776,7 @@
 
     scrim.appendChild(card);
     document.body.appendChild(scrim);
+    ui.formRelease = dialog(card, { labelledBy: headId });
 
     // --- behaviour
 
@@ -2190,7 +2250,8 @@
     box.append(input, list);
     scrim.appendChild(box);
     document.body.appendChild(scrim);
-    ui.palette = { scrim, input, sel: 0, items: [] };
+    ui.palette = { scrim, input, sel: 0, items: [],
+      release: dialog(box, { label: '検索・移動・コマンド' }) };
 
     const paint = () => {
       const items = paletteItems(input.value);
@@ -2246,6 +2307,7 @@
   }
 
   function closePalette() {
+    ui.palette?.release?.();
     ui.palette?.scrim.remove();
     ui.palette = null;
   }
@@ -2405,7 +2467,14 @@
       return;
     }
     if (e.key === 'Escape' && ui.detail) { e.preventDefault(); return closeDetail(); }
-    if (ui.palette) return;
+    // Escape has to be handled HERE, not only on the palette's input. It used
+    // to live on input.onkeydown, and `if (ui.palette) return` sat above it —
+    // so one Tab moved focus to a result and the only way out of the palette
+    // was the mouse. That's a keyboard trap: Ctrl+K, Tab, and you're stuck.
+    if (ui.palette) {
+      if (e.key === 'Escape') { e.preventDefault(); closePalette(); }
+      return;
+    }
     const typing = /^(INPUT|TEXTAREA)$/.test(e.target.tagName);
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); return openPalette(); }
     if (typing) return;
