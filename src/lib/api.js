@@ -161,6 +161,39 @@
   // Note the singular `/event`; the read endpoint is the plural `/events`.
 
   /**
+   * The URL and the checklist live inside `attachment`, not beside it — even
+   * though a read answers with `url` at the top level TOO (the server mirrors
+   * it). Writing the top-level one does nothing.
+   *
+   * `attachment` is a nested object, so a PUT REPLACES it whole; there is no
+   * merging. That's why this builds from `base`: the server puts things in
+   * there that we never sent and can't reconstruct — set a url and it crawls
+   * the page and stores an `ogp` preview beside it (title, favicon, image).
+   * Rebuilding the object from scratch silently threw that away.
+   *
+   * Measured, not assumed:
+   *   - checklist items the real client sends carry `id` and `order`, but a
+   *     write with neither round-trips fine, and sending order:1 before
+   *     order:0 came back in ARRAY order. Position is the truth.
+   *   - `checklist: []` is REJECTED (400 / code -403). Omitting the key is how
+   *     you clear the list.
+   *   - `url: ''` is accepted, and IS how you clear the url.
+   */
+  function buildAttachment(e, base) {
+    const a = { ...(base || {}) };
+    a.virtual_user_attendees = a.virtual_user_attendees || [];
+    if (e.url !== undefined) a.url = e.url || '';
+    if (e.checklist !== undefined) {
+      const items = (e.checklist || [])
+        .filter((i) => (i.title || '').trim())
+        .map((i) => ({ title: i.title.trim(), checked: !!i.checked }));
+      if (items.length) a.checklist = items;
+      else delete a.checklist;
+    }
+    return a;
+  }
+
+  /**
    * Build a create payload. Callers pass friendly fields; this fills in the
    * shape TimeTree expects, including the bits the web app always sends
    * (`attachment.virtual_user_attendees`, `category: 1`) that the server is
@@ -183,7 +216,7 @@
       attendees: e.attendees || [],
       recurrences: e.recurrences || [],
       alerts: e.alerts || [],
-      attachment: { virtual_user_attendees: [] },
+      attachment: buildAttachment(e, e.attachment),
       category: 1,
     };
   }
@@ -355,7 +388,7 @@
 
   TTX.api = {
     calendars, currentCalendar, allEvents, labels, members, memorialdays, me,
-    createEvent, updateEvent, deleteEvent, buildEvent,
+    createEvent, updateEvent, deleteEvent, buildEvent, buildAttachment,
     excludeOccurrence, truncateSeries, editOccurrence, splitSeries,
     icalStamp, ruleOf, isMaster, withRule, withUntil,
     alldayAlert, alldayAlertDays, alertLabel,

@@ -719,6 +719,11 @@ button { background: none; border: 0; cursor: default; }
 .d-k { color: var(--label-2); font-size: 11.5px; }
 .d-v { overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
 
+.d-cl { display: flex; flex-direction: column; gap: 2px; max-height: 150px; overflow-y: auto; }
+.d-cl-i { display: flex; gap: 6px; font-size: 12.5px; line-height: 18px; align-items: baseline; }
+.d-cl-b { color: var(--label-2); font-size: 11px; flex: none; }
+.d-cl-i.on { color: var(--label-2); text-decoration: line-through; }
+
 .d-note {
   margin-top: 2px;
   padding: 7px 9px;
@@ -935,6 +940,62 @@ button { background: none; border: 0; cursor: default; }
 }
 .f-chip-x:hover { background: var(--red); color: #fff; }
 .f-add { flex: none; width: auto; min-width: 96px; }
+
+.f-cl { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
+.f-cl-i { display: flex; align-items: center; gap: 5px; }
+.f-cl-c {
+  width: 17px;
+  height: 17px;
+  border-radius: 4px;
+  flex: none;
+  border: 1.5px solid var(--sep-strong);
+  font-size: 10px;
+  line-height: 1;
+  color: transparent;
+  display: grid;
+  place-items: center;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+.f-cl-c:hover { border-color: var(--accent); }
+.f-cl-c.on { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+.f-cl-t {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: 0;
+  border-bottom: 0.5px solid transparent;
+  outline: 0;
+  padding: 2px 2px;
+  font-size: 12.5px;
+  user-select: text;
+  transition: border-color 0.12s;
+}
+.f-cl-t:focus { border-bottom-color: var(--accent); }
+.f-cl-i:has(.f-cl-c.on) .f-cl-t { color: var(--label-2); text-decoration: line-through; }
+.f-cl-x {
+  opacity: 0;
+  color: var(--label-3);
+  font-size: 9px;
+  width: 16px;
+  height: 16px;
+  border-radius: 8px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  transition: opacity 0.12s, background 0.12s, color 0.12s;
+}
+.f-cl-i:hover .f-cl-x { opacity: 1; }
+.f-cl-x:hover { background: var(--red); color: #fff; }
+.f-cl-add {
+  font-size: 11.5px;
+  color: var(--label-2);
+  text-align: left;
+  padding: 2px 2px;
+  border-radius: 4px;
+  align-self: flex-start;
+  transition: color 0.12s;
+}
+.f-cl-add:hover { color: var(--accent); }
 
 .f-members { display: flex; gap: 4px; flex-wrap: wrap; }
 .f-mem {

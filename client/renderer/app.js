@@ -783,6 +783,7 @@
     rows.push(['🕐', '日時', when]);
 
     if (o.location) rows.push(['📍', '場所', o.location]);
+    if (o.url) rows.push(['🔗', 'URL', o.url]);
     const lb = TTX.store.labelOf(o.calendarId, o.labelId);
     if (lb?.name) rows.push(['🏷', 'ラベル', lb.name]);
     if (o.calendarName) rows.push(['📅', 'カレンダー', o.calendarName]);
@@ -805,6 +806,17 @@
       const r = el('div', 'd-row');
       r.append(el('span', 'd-ic', ic), el('span', 'd-k', k), el('span', 'd-v', v));
       card.appendChild(r);
+    }
+    if (o.checklist?.length) {
+      const done = o.checklist.filter((i) => i.checked).length;
+      card.appendChild(el('div', 'd-k', `リスト ${done}/${o.checklist.length}`));
+      const list = el('div', 'd-cl');
+      for (const i of o.checklist) {
+        const r = el('div', 'd-cl-i' + (i.checked ? ' on' : ''));
+        r.append(el('span', 'd-cl-b', i.checked ? '☑' : '☐'), el('span', null, i.title));
+        list.appendChild(r);
+      }
+      card.appendChild(list);
     }
     if (o.note) {
       const n = el('div', 'd-note', o.note);
@@ -1097,6 +1109,8 @@
       note: '',
       labelId: labels[0]?.id ?? 1,
       repeat: { freq: '', byday: [], until: '', rest: {} },
+      url: '',
+      checklist: [],
       alerts: [],
       // TimeTree's own form assigns the event to you by default, and the
       // user's phone renders that avatar. Match it rather than quietly
@@ -1135,6 +1149,8 @@
       note: raw.note || '',
       labelId: raw.label_id ?? 1,
       repeat: parseRepeat(TTX.api.ruleOf(raw)),
+      url: raw.url || raw.attachment?.url || '',
+      checklist: (raw.attachment?.checklist || []).map((i) => ({ ...i })),
       alerts: [...(raw.alerts || [])].sort((a, b) => a - b),
       attendees: [...(raw.attendees || [])],
     };
@@ -1165,6 +1181,17 @@
     const same = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
     if (!same(f.alerts, [...(raw.alerts || [])].sort((a, b) => a - b))) p.alerts = f.alerts;
     if (!same(f.attendees, raw.attendees || [])) p.attendees = f.attendees;
+
+    // `attachment` is a nested object, so a patch replaces the whole thing.
+    // Build it FROM the original rather than from scratch — same reason the
+    // event patch only carries changed fields: whatever we didn't model must
+    // survive. Only send it at all if the user actually touched something.
+    const next = TTX.api.buildAttachment({ url: f.url, checklist: f.checklist }, raw.attachment);
+    const cur = TTX.api.buildAttachment(
+      { url: raw.url || raw.attachment?.url || '', checklist: raw.attachment?.checklist || [] },
+      raw.attachment
+    );
+    if (JSON.stringify(next) !== JSON.stringify(cur)) p.attachment = next;
     // Only touch the rule if the user touched the control — and keep the
     // master's EXDATEs when we do, or every occurrence deleted with
     // "この予定だけを削除" would come back to life on the next title edit.
@@ -1454,6 +1481,15 @@
     locRow.appendChild(loc);
     body.appendChild(locRow);
 
+    const urlRow = el('div', 'f-row');
+    urlRow.appendChild(el('span', 'f-k', 'URL'));
+    const urlInput = el('input', 'f-text');
+    urlInput.placeholder = '任意';
+    urlInput.value = f.url;
+    urlInput.oninput = () => { f.url = urlInput.value; };
+    urlRow.appendChild(urlInput);
+    body.appendChild(urlRow);
+
     const noteRow = el('div', 'f-row top');
     noteRow.appendChild(el('span', 'f-k', 'メモ'));
     const note = el('textarea', 'f-note');
@@ -1463,6 +1499,54 @@
     note.oninput = () => { f.note = note.value; };
     noteRow.appendChild(note);
     body.appendChild(noteRow);
+
+    // --- checklist. Position is what the server keeps (the `order` field it
+    //     sends is ignored on read), so the array IS the list.
+    const clRow = el('div', 'f-row top');
+    clRow.appendChild(el('span', 'f-k', 'リスト'));
+    const clBox = el('div', 'f-cl');
+    clRow.appendChild(clBox);
+    body.appendChild(clRow);
+
+    function addItem(at) {
+      f.checklist.splice(at, 0, { title: '', checked: false });
+      paintChecklist(at);
+    }
+
+    function paintChecklist(focusAt) {
+      clBox.textContent = '';
+      f.checklist.forEach((it, i) => {
+        const row = el('div', 'f-cl-i');
+        const cb = el('button', 'f-cl-c' + (it.checked ? ' on' : ''), it.checked ? '✓' : '');
+        cb.onclick = () => { it.checked = !it.checked; paintChecklist(); };
+        const inp = el('input', 'f-cl-t');
+        inp.value = it.title;
+        inp.placeholder = '項目';
+        inp.oninput = () => { it.title = inp.value; };
+        inp.onkeydown = (e) => {
+          // The form saves on Enter in a plain input; in a list, Enter means
+          // "next item". Stop it here rather than special-casing up there.
+          if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); return addItem(i + 1); }
+          // Backspace on an empty row removes it, the way every list editor works.
+          if (e.key === 'Backspace' && !inp.value) {
+            e.preventDefault();
+            e.stopPropagation();
+            f.checklist.splice(i, 1);
+            paintChecklist(Math.max(0, i - 1));
+          }
+        };
+        const x = el('button', 'f-cl-x', '✕');
+        x.title = '削除';
+        x.onclick = () => { f.checklist.splice(i, 1); paintChecklist(); };
+        row.append(cb, inp, x);
+        clBox.appendChild(row);
+      });
+      const add = el('button', 'f-cl-add', '＋ 項目を追加');
+      add.onclick = () => addItem(f.checklist.length);
+      clBox.appendChild(add);
+      if (focusAt != null) clBox.querySelectorAll('.f-cl-t')[focusAt]?.focus();
+    }
+    paintChecklist();
 
     // --- calendar. Only worth asking when there's a choice. Moving an event
     //     between calendars isn't a field the API patches, so edit shows it
@@ -1596,6 +1680,11 @@
       location: f.location,
       alerts: f.alerts,
       attendees: f.attendees,
+      url: f.url,
+      checklist: f.checklist,
+      // Carry the original attachment as the base so keys we never modelled
+      // ride along into the copy an occurrence edit or a split creates.
+      attachment: raw?.attachment,
     });
 
     async function save() {

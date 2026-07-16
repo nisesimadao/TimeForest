@@ -66,7 +66,11 @@
       labelId: raw.label_id,
       location: raw.location || '',
       note: raw.note || '',
-      url: raw.url || '',
+      // `url` is written inside `attachment` but read back at BOTH levels —
+      // the server mirrors it up. Read the top one; prefer the attachment if
+      // a write hasn't been mirrored yet.
+      url: raw.url || raw.attachment?.url || '',
+      checklist: raw.attachment?.checklist || [],
       attendees: raw.attendees || [],
       recurring: !!(raw.recurrences && raw.recurrences.length),
       isException: !!raw.recurring_uuid,
@@ -129,7 +133,7 @@
         startKey, endKey, days,
         multiDay: days.length > 1,
         startTime: '', endTime: '',
-        labelId: null, location: '', note: '', url: '', attendees: [],
+        labelId: null, location: '', note: '', url: '', checklist: [], attendees: [],
         recurring: false, isException: false,
         calendarId: null, calendarName: '',
       };

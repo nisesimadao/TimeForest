@@ -82,6 +82,17 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   // silently asserted agenda selectors against a week grid. Set the view here
   // rather than inheriting whatever the last human session left behind.
   sec('setup');
+  // A previous run may have died with a sheet up. Dismiss it the way a person
+  // would — the app tracks what's open, so reaching in and deleting the DOM
+  // leaves it believing a form is still there and refusing to open another.
+  for (let i = 0; i < 4 && await page.$('.scrim, .d-scrim'); i++) {
+    await page.keyboard.press('Escape');
+    await sleep(250);
+    const discard = await page.$('.confirm .btn.danger');
+    if (discard) { await discard.click(); await sleep(250); }
+  }
+  ok('no dialog left over from a previous run');
+
   const swept = await page.evaluate(async (cid) => {
     const list = TTX.store.state.events.get(cid) || [];
     const junk = list.filter((e) => (e.title || '').startsWith('TF検証') && !e.deactivated_at);
@@ -127,6 +138,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       end_at: e.end_at, start_timezone: e.start_timezone, end_timezone: e.end_timezone,
       location: e.location, note: e.note, label_id: e.label_id,
       alerts: e.alerts ?? null, attendees: e.attendees ?? null,
+      url: e.url ?? null, attachment: e.attachment ?? null,
       deactivated_at: e.deactivated_at ?? null, category: e.category,
     } : null;
   }, t);
@@ -411,6 +423,78 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     await waitRow(t, false).catch(() => {});
   }
   ok('reminder test events cleaned up');
+
+  // --- 6c. url and checklist ------------------------------------------------
+  // Both live inside `attachment`, which a PUT replaces wholesale — so the
+  // interesting assertion is not that they save, but that saving one does not
+  // erase the other, or anything else in there.
+  sec('URL and checklist');
+  const T6 = `TF検証-リスト-${stamp}`;
+  await page.click('.new-btn');
+  await page.waitForSelector('.form', { timeout: 5000 });
+  await page.fill('.f-title', T6);
+  await page.fill('.f-row:has(> .f-k:text-is("開始")) .f-date', DATE);
+  await page.fill('.f-row:has(> .f-k:text-is("URL")) .f-text', 'https://example.com/list');
+
+  await page.click('.f-cl-add');
+  await page.keyboard.type('牛乳');
+  // Enter must add a row, not save the form.
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('卵');
+  check(await page.$('.form') !== null, 'Enter inside the list adds a row instead of saving');
+  check(await page.evaluate(() => document.querySelectorAll('.f-cl-i').length) === 2,
+    'two items after Enter');
+  await page.evaluate(() => document.querySelectorAll('.f-cl-c')[1].click());
+  await page.click('.btn.primary');
+  await page.waitForSelector('.form', { state: 'detached', timeout: 15000 });
+
+  // Compare structurally: the server echoes our key order on create and its
+  // own after a re-sync, so a JSON string compare would fail on nothing.
+  const clShape = (r) => (r?.attachment?.checklist || [])
+    .map((i) => `${i.title}:${i.checked}`).join(', ');
+
+  let cl = await findRaw(T6);
+  check(clShape(cl) === '牛乳:false, 卵:true',
+    `checklist stored in array order with its checks (${clShape(cl)})`);
+  check(cl?.url === 'https://example.com/list',
+    `url is written into attachment but read back at the top level (${cl?.url})`);
+  check(Array.isArray(cl?.attachment?.virtual_user_attendees),
+    'virtual_user_attendees survived — the key we never model');
+
+  sec('re-sync — the attachment really reached the server');
+  await page.evaluate(() => { TTX.store.state.events.clear(); return TTX.store.syncAll(); });
+  cl = await findRaw(T6);
+  check(cl?.attachment?.checklist?.length === 2, 'server kept the checklist');
+  check(cl?.url === 'https://example.com/list', 'server kept the url');
+
+  // Now edit ONLY the title: the attachment must not be collateral damage.
+  await openRow(T6);
+  await page.click('.d-acts .btn:text-is("編集")');
+  await page.waitForSelector('.form', { timeout: 5000 });
+  check((await page.inputValue('.f-row:has(> .f-k:text-is("URL")) .f-text')) === 'https://example.com/list',
+    'the form loads the existing url');
+  check(await page.evaluate(() => document.querySelectorAll('.f-cl-i').length) === 2,
+    'the form loads the existing list');
+  check(await page.evaluate(() => document.querySelectorAll('.f-cl-c.on').length) === 1,
+    'and which item was ticked');
+  const T7 = `${T6}-改`;
+  await page.fill('.f-title', T7);
+  await page.click('.btn.primary');
+  await page.waitForSelector('.form', { state: 'detached', timeout: 15000 });
+  await page.evaluate(() => { TTX.store.state.events.clear(); return TTX.store.syncAll(); });
+  cl = await findRaw(T7);
+  check(cl?.attachment?.checklist?.length === 2, 'a title-only edit left the checklist alone');
+  check(cl?.url === 'https://example.com/list', 'and the url');
+
+  await openRow(T7);
+  check(await page.evaluate(() => document.querySelectorAll('.d-cl-i').length) === 2,
+    'the detail popover lists the items');
+  await page.click('.d-acts .btn.danger');
+  await page.waitForSelector('.confirm', { timeout: 5000 });
+  await page.click('.confirm .btn.danger');
+  await page.waitForSelector('.confirm', { state: 'detached', timeout: 15000 });
+  await waitRow(T7, false).catch(() => {});
+  ok('checklist test event cleaned up');
 
   // --- 7. entry points ------------------------------------------------------
   // Each of these opens the same form; what matters is that it arrives
