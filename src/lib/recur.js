@@ -3,8 +3,13 @@
  * Observed in the wild (2395 events / 73 recurring masters):
  *   FREQ=DAILY|WEEKLY|YEARLY, plus optional BYDAY, UNTIL, INTERVAL.
  *   EXDATE arrives as separate lines in the same `recurrences` array.
- * No COUNT, BYMONTHDAY, BYSETPOS or WKST — so this stays small on purpose.
+ * No BYMONTHDAY, BYSETPOS or WKST — so this stays small on purpose.
  * MONTHLY is handled anyway since it costs three lines and users can create it.
+ *
+ * COUNT is also absent from that sample, but it is NOT optional to support:
+ * the write API accepts and stores COUNT (verified against the server), so the
+ * official app or this one can put it there. Ignoring it made a 5-occurrence
+ * series from 2020 expand to 52 in 2020 and still render 4 a year in 2026.
  */
 (() => {
   const TTX = (globalThis.TTX = globalThis.TTX || {});
@@ -78,11 +83,25 @@
     const interval = Math.max(1, Number(rule.INTERVAL || 1));
     const byday = rule.BYDAY ? rule.BYDAY.split(',').map((d) => WD[d.replace(/^[+-]?\d+/, '')]).filter((n) => n !== undefined) : null;
 
+    /**
+     * COUNT bounds the series from ITS OWN START, not from the viewing window.
+     * So it has to be tallied for every instance the rule generates — including
+     * ones before the window, and ones EXDATE later removes (per RFC 5545,
+     * EXDATE subtracts from the set COUNT already sized). Counting only what we
+     * render would let a window in 2026 restart the tally at zero and show a
+     * series that ran out in 2020.
+     */
+    const count = Number(rule.COUNT) > 0 ? Number(rule.COUNT) : 0;
+    let taken = 0;
+    const spent = () => count > 0 && taken >= count;
+
     const starts = [];
     const push = (localT) => {
       if (localT > limitLocal || localT < localStart) return;
       const utc = localT - off;
       if (utc > until || utc > to) return;
+      if (spent()) return;
+      taken++;
       if (localT < minLocal) return;
       if (excluded.has(utc)) return;
       starts.push(utc);
@@ -91,7 +110,7 @@
     const d0 = new Date(localStart);
 
     if (freq === 'DAILY') {
-      for (let n = 0; n < MAX_OCCURRENCES; n++) {
+      for (let n = 0; n < MAX_OCCURRENCES && !spent(); n++) {
         const t = localStart + n * interval * DAY;
         if (t > limitLocal) break;
         push(t);
@@ -99,27 +118,28 @@
     } else if (freq === 'WEEKLY') {
       const dows = byday && byday.length ? [...new Set(byday)].sort((a, b) => a - b) : [d0.getUTCDay()];
       const weekStart = localStart - d0.getUTCDay() * DAY; // Sunday of week 0, time-of-day preserved
-      outer: for (let w = 0; w < MAX_OCCURRENCES; w++) {
+      outer: for (let w = 0; w < MAX_OCCURRENCES && !spent(); w++) {
         const base = weekStart + w * interval * 7 * DAY;
         if (base > limitLocal + 7 * DAY) break;
         for (const dow of dows) {
           const t = base + dow * DAY;
-          if (t > limitLocal) break outer;
+          if (t > limitLocal || spent()) break outer;
           push(t);
         }
       }
     } else if (freq === 'MONTHLY') {
-      for (let n = 0; n < MAX_OCCURRENCES; n++) {
+      for (let n = 0; n < MAX_OCCURRENCES && !spent(); n++) {
         const t = Date.UTC(
           d0.getUTCFullYear(), d0.getUTCMonth() + n * interval, d0.getUTCDate(),
           d0.getUTCHours(), d0.getUTCMinutes(), d0.getUTCSeconds()
         );
         if (t > limitLocal) break;
         // Skip month-end rollovers (Jan 31 -> Mar 3), matching iCal semantics.
+        // A skipped month is not an occurrence, so it must not spend COUNT.
         if (new Date(t).getUTCDate() === d0.getUTCDate()) push(t);
       }
     } else if (freq === 'YEARLY') {
-      for (let n = 0; n < MAX_OCCURRENCES; n++) {
+      for (let n = 0; n < MAX_OCCURRENCES && !spent(); n++) {
         const t = Date.UTC(
           d0.getUTCFullYear() + n * interval, d0.getUTCMonth(), d0.getUTCDate(),
           d0.getUTCHours(), d0.getUTCMinutes(), d0.getUTCSeconds()

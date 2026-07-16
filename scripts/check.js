@@ -126,6 +126,46 @@ if (/CATEGORY_KEEP\s*=\s*2/.test(modelJs) && /category === CATEGORY_KEEP\) conti
   ok('model.js filters Keep (category 2) items');
 } else bad('src/lib/model.js must skip category 2 (Keep/メモ) items');
 
+// --- 5b. behaviour, not spelling ---------------------------------------------
+//
+// The guards above read source text, which only proves a line still exists.
+// The libs are plain IIFEs that hang themselves off globalThis, so requiring
+// them here runs the real thing — still with zero dependencies.
+
+section('recurrence expansion (behavioural)');
+require(path.join(ROOT, 'src/lib/tz.js'));
+require(path.join(ROOT, 'src/lib/recur.js'));
+const { recur } = globalThis.TTX;
+
+const master = (recurrences, startAt) => ({
+  uuid: 'test', title: 'test', start_at: startAt, end_at: startAt + 3600000,
+  start_timezone: 'Asia/Tokyo', all_day: false, recurrences,
+});
+const S2020 = Date.UTC(2020, 0, 6, 1, 0);           // Mon 2020-01-06 10:00 JST
+const YEAR2020 = [Date.UTC(2020, 0, 1), Date.UTC(2020, 11, 31)];
+const JULY2026 = [Date.UTC(2026, 6, 1), Date.UTC(2026, 6, 31)];
+const count = (m, w) => recur.expand(m, w[0], w[1]).length;
+
+/* COUNT bounds a series from ITS OWN START, not from the window being drawn.
+ * Ignoring it expanded a 5-occurrence 2020 series to 52 in 2020 — and still
+ * drew 4 a year in 2026, six years after it ended. The write API accepts and
+ * stores COUNT, so this is reachable with real data. */
+const cases = [
+  ['COUNT=5 yields 5 in its own year', count(master(['RRULE:FREQ=WEEKLY;COUNT=5'], S2020), YEAR2020), 5],
+  ['a spent COUNT series is gone later', count(master(['RRULE:FREQ=WEEKLY;COUNT=5'], S2020), JULY2026), 0],
+  // RFC 5545: EXDATE subtracts from the set COUNT already sized.
+  ['EXDATE spends a COUNT slot', count(master(['RRULE:FREQ=WEEKLY;COUNT=5', 'EXDATE:20200113T010000Z'], S2020), YEAR2020), 4],
+  ['DAILY COUNT', count(master(['RRULE:FREQ=DAILY;COUNT=3'], S2020), YEAR2020), 3],
+  ['MONTHLY COUNT', count(master(['RRULE:FREQ=MONTHLY;COUNT=2'], S2020), YEAR2020), 2],
+  // ...and a rule without COUNT must stay unbounded.
+  ['no COUNT stays weekly forever', count(master(['RRULE:FREQ=WEEKLY'], S2020), JULY2026), 4],
+  ['UNTIL still bounds the series', count(master(['RRULE:FREQ=WEEKLY;UNTIL=20200131T000000Z'], S2020), YEAR2020), 4],
+];
+for (const [name, got, want] of cases) {
+  if (got === want) ok(`${name} — ${got}`);
+  else bad(`${name}: expected ${want}, got ${got}`);
+}
+
 // --- 6. userscript builds ---------------------------------------------------
 
 section('userscript build');
