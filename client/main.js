@@ -36,9 +36,52 @@ const DEV = process.argv.includes('--dev');
 // nobody has to sign in again just because the app learned about accounts.
 const LEGACY_PARTITION = 'persist:timetree';
 
+/**
+ * Pin the app name, and with it userData.
+ *
+ * Electron derives userData from package.json's `name`. Renaming the package
+ * therefore MOVES the whole profile — sessions, accounts, prefs — and the app
+ * silently comes up as a stranger asking everyone to log in again. That
+ * happened once here (timetree-client -> timeforest-client) and cost both
+ * signed-in accounts. Pinning it means the package can be renamed freely and
+ * the profile stays put.
+ */
+app.setName('TimeForest');
+
 const userData = () => app.getPath('userData');
 const ACCOUNTS_FILE = () => path.join(userData(), 'accounts.json');
 const STATE_FILE = () => path.join(userData(), 'window-state.json');
+
+// Profiles written before the name was pinned. Ordered newest-first.
+const LEGACY_USERDATA_DIRS = ['timeforest-client', 'timetree-client'];
+
+/**
+ * One-time move of a pre-pinning profile into the pinned location. Copies the
+ * whole directory rather than cherry-picking: the session cookies live in
+ * Partitions/, the renderer's prefs in Local Storage/, and missing either one
+ * still looks like "logged out" to the user.
+ *
+ * Must run before app.whenReady() — once a session is instantiated its path is
+ * fixed.
+ */
+function migrateUserData() {
+  const target = userData();
+  if (fs.existsSync(path.join(target, 'accounts.json'))) return;
+
+  const parent = path.dirname(target);
+  for (const name of LEGACY_USERDATA_DIRS) {
+    const src = path.join(parent, name);
+    if (src === target || !fs.existsSync(path.join(src, 'accounts.json'))) continue;
+    try {
+      fs.mkdirSync(target, { recursive: true });
+      fs.cpSync(src, target, { recursive: true, force: false, errorOnExist: false });
+      console.log(`[migrate] adopted profile from ${name} -> ${path.basename(target)}`);
+      return;
+    } catch (e) {
+      console.error('[migrate] failed from ' + name, e.message);
+    }
+  }
+}
 
 /** @type {{id:string, partition:string, name:string, email:string, addedAt:number}[]} */
 let accounts = [];
@@ -249,9 +292,10 @@ function openLogin(acct) {
 
 // --- api -------------------------------------------------------------------
 
-async function apiFetch(acct, pathname) {
+async function apiFetch(acct, pathname, method = 'GET', body) {
   if (!csrfTokens.has(acct.partition)) await fetchCsrf(acct);
   const send = () => sessionOf(acct).fetch(ORIGIN + pathname, {
+    method,
     credentials: 'include',
     headers: {
       'content-type': 'application/json',
@@ -259,6 +303,7 @@ async function apiFetch(acct, pathname) {
       'x-timetreea': CLIENT_TAG,
       accept: 'application/json',
     },
+    body: body === undefined ? undefined : JSON.stringify(body),
   });
 
   let res = await send();
@@ -270,10 +315,11 @@ async function apiFetch(acct, pathname) {
   return res;
 }
 
-async function apiJSON(acct, pathname) {
-  const res = await apiFetch(acct, pathname);
+async function apiJSON(acct, pathname, method = 'GET', body) {
+  const res = await apiFetch(acct, pathname, method, body);
   const text = await res.text();
   if (!res.ok) throw new Error(`API ${res.status} ${pathname} ${text.slice(0, 160)}`);
+  if (!text) return null; // 204
   try {
     return JSON.parse(text);
   } catch {
@@ -283,13 +329,23 @@ async function apiJSON(acct, pathname) {
 
 // --- ipc -------------------------------------------------------------------
 
-ipcMain.handle('api:get', async (_e, pathname) => {
-  if (typeof pathname !== 'string' || !pathname.startsWith('/api/')) {
+const ALLOWED_METHODS = new Set(['GET', 'POST', 'PUT', 'DELETE']);
+
+/**
+ * The renderer's only door to the network. It may name a path under /api/ and
+ * a method — nothing else. Keeping the account lookup here (rather than
+ * letting the renderer pass an account id) means a renderer bug can't address
+ * a session other than the active one.
+ */
+ipcMain.handle('api:request', async (_e, { path: pathname, method = 'GET', body } = {}) => {
+  if (typeof pathname !== 'string' || !pathname.startsWith('/api/') || pathname.includes('..')) {
     throw new Error('unsupported path: ' + pathname);
   }
+  const m = String(method).toUpperCase();
+  if (!ALLOWED_METHODS.has(m)) throw new Error('unsupported method: ' + method);
   const acct = activeAccount();
   if (!acct) throw new Error('アカウントが選択されていません');
-  return apiJSON(acct, pathname);
+  return apiJSON(acct, pathname, m, body);
 });
 
 ipcMain.handle('accounts:list', () => publicAccounts());
@@ -380,6 +436,9 @@ function createWindow() {
     return { action: 'deny' };
   });
 }
+
+// Before whenReady: sessions bake in their paths the moment they're created.
+migrateUserData();
 
 app.whenReady().then(async () => {
   loadAccounts();

@@ -1117,7 +1117,7 @@
 
   async function main() {
     // file:// renderer can't reach timetreeapp.com — the host does it for us.
-    TTX.api.setTransport((path) => window.host.api.get(path));
+    TTX.api.setTransport((path, opts) => window.host.api.request(path, opts));
 
     loadPrefs();
     ui.cursor = todayKey();

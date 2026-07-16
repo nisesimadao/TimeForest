@@ -26,6 +26,8 @@
    * its renderer is on a different origin, so CORS blocks it. There the host
    * process installs a transport that performs the request itself and returns
    * parsed JSON. Everything above this line stays identical in both.
+   *
+   * Signature: (path, { method, body }) => Promise<json>
    */
   const setTransport = (fn) => { transport = fn; };
 
@@ -60,20 +62,30 @@
 
   const url = (path) => (path.startsWith('http') ? path : ORIGIN + path);
 
-  async function get(path) {
-    if (transport) return transport(path);
+  async function request(method, path, body) {
+    if (transport) return transport(path, { method, body });
 
-    let res = await fetch(url(path), { headers: headers(await csrfToken()), credentials: 'include' });
+    const send = async (token) => fetch(url(path), {
+      method,
+      headers: headers(token),
+      credentials: 'include',
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+
+    let res = await send(await csrfToken());
     // A stale token reads as 400/-401; refetch once before giving up.
     if (res.status === 400 || res.status === 401 || res.status === 403) {
-      res = await fetch(url(path), { headers: headers(await csrfToken(true)), credentials: 'include' });
+      res = await send(await csrfToken(true));
     }
     if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      throw new Error(`API ${res.status} ${path} ${body.slice(0, 160)}`);
+      const text = await res.text().catch(() => '');
+      throw new Error(`API ${res.status} ${path} ${text.slice(0, 160)}`);
     }
-    return res.json();
+    const text = await res.text();
+    return text ? JSON.parse(text) : null;   // DELETE answers {} , app_launch answers 204
   }
+
+  const get = (path) => request('GET', path);
 
   /** All calendars the signed-in user can see. `alias_code` matches the URL slug. */
   async function calendars() {
@@ -134,11 +146,65 @@
     return (j.memorialdays || []).filter((d) => !d.deactivated_at);
   }
 
+  // --- writes ---------------------------------------------------------
+  //
+  // Captured from the web app itself (on a throwaway account):
+  //   POST   /api/v1/calendar/{id}/event         create — full body
+  //   PUT    /api/v1/calendar/{id}/event/{uuid}  update — CHANGED FIELDS ONLY
+  //   DELETE /api/v1/calendar/{id}/event/{uuid}  delete
+  // Note the singular `/event`; the read endpoint is the plural `/events`.
+
+  /**
+   * Build a create payload. Callers pass friendly fields; this fills in the
+   * shape TimeTree expects, including the bits the web app always sends
+   * (`attachment.virtual_user_attendees`, `category: 1`) that the server is
+   * fussy about.
+   *
+   * `allDay` events must use the UTC-midnight convention with tz "UTC", and an
+   * INCLUSIVE end — same rule the reader relies on (see model.js).
+   */
+  function buildEvent(e) {
+    return {
+      title: e.title,
+      all_day: !!e.allDay,
+      start_at: e.startAt,
+      start_timezone: e.allDay ? 'UTC' : (e.tz || 'Asia/Tokyo'),
+      end_at: e.endAt,
+      end_timezone: e.allDay ? 'UTC' : (e.tz || 'Asia/Tokyo'),
+      label_id: e.labelId ?? 1,
+      note: e.note || '',
+      location: e.location || '',
+      attendees: e.attendees || [],
+      recurrences: e.recurrences || [],
+      alerts: e.alerts || [],
+      attachment: { virtual_user_attendees: [] },
+      category: 1,
+    };
+  }
+
+  async function createEvent(calendarId, event) {
+    const j = await request('POST', `/api/v1/calendar/${calendarId}/event`, buildEvent(event));
+    return j?.event ?? j;
+  }
+
+  /**
+   * `patch` carries only what changed — the server merges. Sending a full
+   * object would work but risks clobbering fields we didn't model.
+   */
+  async function updateEvent(calendarId, uuid, patch) {
+    const j = await request('PUT', `/api/v1/calendar/${calendarId}/event/${uuid}`, patch);
+    return j?.event ?? j;
+  }
+
+  const deleteEvent = (calendarId, uuid) =>
+    request('DELETE', `/api/v1/calendar/${calendarId}/event/${uuid}`);
+
   /** TimeTree stores label colours as a 24-bit int. */
   const colorHex = (n) => '#' + Number(n >>> 0).toString(16).padStart(6, '0').slice(-6);
 
   TTX.api = {
     calendars, currentCalendar, allEvents, labels, members, memorialdays,
-    colorHex, setTransport, csrfToken, CLIENT_TAG, ORIGIN,
+    createEvent, updateEvent, deleteEvent, buildEvent,
+    colorHex, setTransport, csrfToken, request, CLIENT_TAG, ORIGIN,
   };
 })();

@@ -6,7 +6,11 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('host', {
   api: {
-    get: (path) => ipcRenderer.invoke('api:get', path),
+    request: (path, opts) => ipcRenderer.invoke('api:request', {
+      path,
+      method: opts?.method || 'GET',
+      body: opts?.body,
+    }),
   },
   accounts: {
     list: () => ipcRenderer.invoke('accounts:list'),
