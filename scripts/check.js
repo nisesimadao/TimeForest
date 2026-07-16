@@ -196,6 +196,54 @@ for (const [name, got, want] of timing) {
   else bad(`${name}: expected ${want}, got ${got}`);
 }
 
+// --- 5c. the package includes what the renderer loads ------------------------
+//
+// electron-builder's `files` is an ALLOWLIST, and it has to be: the app root is
+// the repo root (so ../../src/lib/* still resolves inside the asar) and the
+// repo root also holds scripts/, .local/ and 144MB of Electron. The failure
+// mode is nasty and silent — the app runs perfectly from source and the
+// packaged build is a white screen, which you only find out after shipping.
+
+section('packaging');
+const builder = require(path.join(ROOT, 'electron-builder.config.js'));
+
+/* Enough of glob for the patterns this config actually uses. */
+const globRe = (g) => new RegExp('^' + g
+  .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+  .replace(/\*\*\//g, '(?:.*/)?')
+  .replace(/\*\*/g, '.*')
+  .replace(/\*/g, '[^/]*') + '$');
+
+const allow = builder.files.filter((p) => typeof p === 'string' && !p.startsWith('!')).map(globRe);
+const deny = builder.files.filter((p) => typeof p === 'string' && p.startsWith('!'))
+  .map((p) => globRe(p.slice(1)));
+const packaged = (rel) => allow.some((re) => re.test(rel)) && !deny.some((re) => re.test(rel));
+
+const refs = [...indexHtml.matchAll(/(?:src|href)=["']([^"']+)["']/g)]
+  .map((m) => m[1])
+  .filter((s) => !/^(https?:|data:|#)/.test(s));
+let missing = 0;
+for (const ref of refs) {
+  // index.html sits in client/renderer/; resolve the way the browser will.
+  const abs = path.resolve(ROOT, 'client', 'renderer', ref);
+  const relPath = rel(abs);
+  if (!fs.existsSync(abs)) { bad(`index.html references a missing file: ${ref}`); missing++; continue; }
+  if (!packaged(relPath)) {
+    bad(`index.html loads ${relPath}, which electron-builder's files[] does not include — the packaged app would fail to load it`);
+    missing++;
+  }
+}
+if (!missing) ok(`all ${refs.length} files index.html loads are inside the package`);
+
+if (builder.extraMetadata?.main === 'client/main.js') ok('packaged main points at client/main.js');
+else bad('electron-builder extraMetadata.main must point at client/main.js');
+
+// The version has to come from where Electron is actually installed.
+const clientPkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'client/package.json'), 'utf8'));
+const want = (clientPkg.devDependencies.electron || '').replace(/^[^\d]*/, '');
+if (builder.electronVersion === want) ok(`electronVersion tracks client/package.json (${want})`);
+else bad(`electronVersion is ${builder.electronVersion} but client/package.json has ${want}`);
+
 // --- 6. userscript builds ---------------------------------------------------
 
 section('userscript build');

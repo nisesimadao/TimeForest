@@ -14,9 +14,10 @@ TimeTree 非公式クライアント。3つの形で同じものを届ける。
 検出して落とす。
 
 ```sh
-npm run check     # 構造チェック（依存ゼロ）
+npm run check     # 構造チェック + 挙動テスト（依存ゼロ）
 npm run build     # → dist/timeforest.user.js
 npm run client    # デスクトップクライアントを起動
+npm run dist      # → client/dist/TimeForest-0.1.0-x64.exe（インストーラ）と .zip
 ```
 
 > **スマホのダークモードが目当てなら** → [スマホで使う](#スマホで使うユーザースクリプト)。
@@ -261,18 +262,42 @@ CI（`.github/workflows/ci.yml`）は Node 20 / 24 でこれを走らせ、ユ�
 ビルドが再現可能かを diff で確認し、Electron クライアントを xvfb 上で起動して
 プリロードブリッジと共有ライブラリが解決することまで見る。
 
+## パッケージ化
+
+```sh
+npm run icons     # client/build/icon.svg → PNG 一式（画像ライブラリ不要）
+npm run dist      # → client/dist/ にインストーラ (.exe) と portable (.zip)
+npm run dist:dir  # インストーラ無しで client/dist/win-unpacked/ に展開
+```
+
+**アプリのルートは `client/` ではなくリポジトリのルート。** 妙に見えるが、
+`src/lib` がある理由を思い出せば必然になる: レンダラは `../../src/lib/*.js` を
+読んでいて、拡張・ユーザースクリプト・クライアントが**同じファイル**を動かす
+（コピーが増えたら CI が落とす）。`client/` だけを包むと共有ライブラリが
+入らないし、ビルド時にコピーするのはそのルールが防いでいるドリフトそのもの。
+だからルートから包んで、コードが既に使っているパスをそのまま保つ — asar の中でも
+`client/renderer/index.html` は `../../src/lib/tz.js` を `src/lib/tz.js` に解決する。
+
+`files` が許可リストなのはこのため（ルートには `scripts/` や 144MB の Electron
+もある）。**`scripts/check.js` が、index.html の読むファイルが全部 `files` に
+含まれているかを検査する。** ここが漏れると「ソースからは動くのにパッケージ版
+だけ白画面」という、出荷してから気づく壊れ方をする。
+
+署名はしていないので Windows は警告を出す。zip 版も出しているのはそのため
+（どのみち警告が出るなら、解凍して実行できる方が筋が良い場面がある）。
+
 ## これから
 
-- **通知・リマインド** — 検証済み: Service Worker が単独で HTML シェルを fetch
-  して csrf-token を抜けば、**TimeTree のタブを開いていなくても** API を叩ける。
-  なので `chrome.alarms` + `chrome.notifications` でバックグラウンド通知が作れる。
-  イベント側が持っている `alerts`（開始何分前か）をそのまま尊重できる
+- **拡張側の通知** — デスクトップクライアントは通知を出す（トレイ常駐 + 自動起動）。
+  拡張側はまだ。検証済み: Service Worker が単独で HTML シェルを fetch して
+  csrf-token を抜けば、**TimeTree のタブを開いていなくても** API を叩ける。
+  なので `chrome.alarms` + `chrome.notifications` で作れる
+- **画像添付** — 本家との最後の機能差。`attachment` / `files` まわり。未調査
 - **自動同期** — Google カレンダーへのミラーなど
 - **常駐** — 拡張である以上 Chrome が起動している必要がある。Chrome の
   「Google Chrome を閉じた際にバックグラウンド アプリの処理を続行する」を
   有効にすれば、ウィンドウを閉じても動き続ける。完全な常駐が要るなら
-  デスクトップクライアントを使う
-- **パッケージ化** — electron-builder 未設定
+  デスクトップクライアントを使う（トレイに常駐する）
 
 ## 既知の制限
 

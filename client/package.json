@@ -10,6 +10,7 @@
     "inspect": "electron . --remote-debugging-port=9333"
   },
   "devDependencies": {
-    "electron": "^43.1.1"
+    "electron": "^43.1.1",
+    "electron-builder": "^26.15.3"
   }
 }
