@@ -64,6 +64,11 @@
       startTime: allDay ? '' : hm(startAt, tz),
       endTime: allDay ? '' : hm(endAt, tz),
       labelId: raw.label_id,
+      // Who put this here. On a shared calendar that is not a detail — it's
+      // half of what the entry means. "10:30 歯医者" that you didn't write
+      // tells you something only because you know your partner wrote it.
+      authorId: raw.author_id ?? null,
+      authorName: (ctx?.membersById?.get(raw.author_id)?.name) || '',
       location: raw.location || '',
       note: raw.note || '',
       // `url` is written inside `attachment` but read back at BOTH levels —
@@ -133,7 +138,8 @@
         startKey, endKey, days,
         multiDay: days.length > 1,
         startTime: '', endTime: '',
-        labelId: null, location: '', note: '', url: '', checklist: [], attendees: [],
+        labelId: null, authorId: null, authorName: '',
+        location: '', note: '', url: '', checklist: [], attendees: [],
         recurring: false, isException: false,
         calendarId: null, calendarName: '',
       };

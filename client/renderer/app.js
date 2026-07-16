@@ -44,6 +44,8 @@
     activeId: null,
     cellCap: 4,
     status: '',
+    syncing: false,
+    syncFailed: false,
     notify: true,
     fired: new Map(),
     autoStart: false,
@@ -106,7 +108,22 @@
   // --- theme ------------------------------------------------------------
 
   const THEME_LABEL = { system: 'システムに従う', light: 'ライト', dark: 'ダーク' };
-  const THEME_ICON = { system: '◐', light: '☀', dark: '☾' };
+  const THEME_ICON = { system: 'monitor', light: 'sun', dark: 'moon' };
+
+  /**
+   * An icon-only button. `title` shows a tooltip to people using a mouse;
+   * `aria-label` is the only thing a screen reader gets, since the button's
+   * content is a decorative svg. They were the same string every time, so it
+   * takes one helper rather than remembering twice.
+   */
+  function iconBtn(name, label, onClick, cls = 'icon-btn') {
+    const b = el('button', cls);
+    b.appendChild(TTX.icon(name, 15));
+    b.title = label;
+    b.setAttribute('aria-label', label);
+    b.onclick = onClick;
+    return b;
+  }
 
   /**
    * The attribute swap has to happen *inside* the transition callback. Flip it
@@ -164,11 +181,32 @@
     });
   }
 
+  /**
+   * The colour an occurrence carries.
+   *
+   * Red means "you are not at work". 七夕 and 海の日 are both memorialdays, but
+   * one is a Tuesday you still go to school on and the other is a day off —
+   * painting them the same red made the single most important thing a calendar
+   * says unreadable. The agenda already told them apart ("暦" vs "祝"); the
+   * grids were throwing that away.
+   */
   const railColor = (o) => {
-    if (o.holiday) return 'var(--red)';
+    if (o.holiday) return o.workday ? 'var(--label-3)' : 'var(--red)';
     const lb = TTX.store.labelOf(o.calendarId, o.labelId);
     return lb ? TTX.api.colorHex(lb.color) : 'var(--label-3)';
   };
+
+  /**
+   * Paint a filled block in the occurrence's colour, with text you can read on
+   * it. Everything used to be white-on-colour unconditionally, which failed
+   * WCAG AA on nine of the ten default labels — 八田野帰省 on ブライト・オレンジ
+   * measured 1.65:1.
+   */
+  function fill(node, o) {
+    node.style.background = railColor(o);
+    const lb = o.holiday ? null : TTX.store.labelOf(o.calendarId, o.labelId);
+    node.style.color = lb ? TTX.api.labelFg(lb) : '#ffffff';
+  }
 
   /** Lowest `order` among enabled calendars — the user's main one. */
   function primaryCalendarId() {
@@ -186,14 +224,19 @@
   // --- render: toolbar --------------------------------------------------
 
   /** The title has to name what's actually on screen, not always a month. */
+  /**
+   * No spaces around 年月日. Japanese doesn't put them there — "2026年 7月" is
+   * a Latin typesetting habit applied to a script that has its own rule, and
+   * `text-autospace` already opens the gap where one belongs.
+   */
   function titleText() {
     const [y, m] = ui.cursor.split('-');
-    if (ui.view !== 'week') return `${y}年 ${+m}月`;
+    if (ui.view !== 'week') return `${y}年${+m}月`;
     const s = weekStart(ui.cursor);
     const e = addDays(s, 6);
     return monthOf(s) === monthOf(e)
-      ? `${s.slice(0, 4)}年 ${+s.slice(5, 7)}月 ${+s.slice(8)}–${+e.slice(8)}日`
-      : `${s.slice(0, 4)}年 ${+s.slice(5, 7)}/${+s.slice(8)} – ${+e.slice(5, 7)}/${+e.slice(8)}`;
+      ? `${s.slice(0, 4)}年${+s.slice(5, 7)}月${+s.slice(8)}–${+e.slice(8)}日`
+      : `${s.slice(0, 4)}年${+s.slice(5, 7)}月${+s.slice(8)}日–${+e.slice(5, 7)}月${+e.slice(8)}日`;
   }
 
   function renderToolbar() {
@@ -201,54 +244,48 @@
 
     t.appendChild(el('div', 'tb-title', titleText()));
 
+    const unit = ui.view === 'week' ? '週' : '月';
     const nav = el('div', 'nav');
-    const prev = el('button', 'icon-btn', '‹');
-    prev.title = (ui.view === 'week' ? '前の週' : '前の月') + ' (←)';
-    prev.onclick = () => go(-1);
+    nav.appendChild(iconBtn('chevron-left', `前の${unit} (←)`, () => go(-1)));
     const today = el('button', 'pill', '今日');
     today.title = '今日 (T)';
     today.onclick = () => jumpTo(todayKey());
-    const next = el('button', 'icon-btn', '›');
-    next.title = (ui.view === 'week' ? '次の週' : '次の月') + ' (→)';
-    next.onclick = () => go(1);
-    nav.append(prev, today, next);
+    nav.appendChild(today);
+    nav.appendChild(iconBtn('chevron-right', `次の${unit} (→)`, () => go(1)));
     t.appendChild(nav);
 
     t.appendChild(el('div', 'tb-spacer'));
 
     const add = el('button', 'new-btn');
-    add.append(el('span', null, '＋'), el('span', null, '予定'));
+    add.append(TTX.icon('plus', 14), el('span', null, '予定'));
     add.title = '新しい予定 (N)';
     add.onclick = () => openForm();
     t.appendChild(add);
 
     const seg = el('div', 'seg');
+    seg.setAttribute('role', 'tablist');
     for (const [key, label] of [['agenda', 'アジェンダ'], ['week', '週'], ['month', '月']]) {
-      const b = el('button', ui.view === key ? 'on' : '', label);
+      const on = ui.view === key;
+      const b = el('button', on ? 'on' : '', label);
+      b.setAttribute('role', 'tab');
+      b.setAttribute('aria-selected', String(on));
       b.onclick = () => setView(key);
       seg.appendChild(b);
     }
     t.appendChild(seg);
 
     const search = el('button', 'search-hint');
-    search.append(el('span', null, '⌕'), el('span', null, ui.query || '検索・移動'));
+    search.append(TTX.icon('search', 13), el('span', 'sh-t', ui.query || '検索・移動'));
     search.appendChild(el('kbd', null, MOD + ' K'));
     search.onclick = () => openPalette();
     t.appendChild(search);
 
-    const theme = el('button', 'icon-btn', THEME_ICON[ui.theme]);
-    theme.title = 'テーマ: ' + THEME_LABEL[ui.theme];
-    theme.onclick = () => {
+    t.appendChild(iconBtn(THEME_ICON[ui.theme], 'テーマ: ' + THEME_LABEL[ui.theme], () => {
       const order = ['system', 'light', 'dark'];
       applyTheme(order[(order.indexOf(ui.theme) + 1) % 3]);
       toast('テーマ: ' + THEME_LABEL[ui.theme]);
-    };
-    t.appendChild(theme);
-
-    const sync = el('button', 'icon-btn', '⟳');
-    sync.title = '再同期';
-    sync.onclick = () => resync();
-    t.appendChild(sync);
+    }));
+    t.appendChild(iconBtn('refresh', '再同期', () => resync()));
 
     return t;
   }
@@ -292,7 +329,8 @@
     const box = el('span', 'acct-box');
     box.append(el('span', 'acct-nm', cur?.name || 'アカウント'),
       el('span', 'acct-em', cur?.email || ''));
-    bar.append(av, box, el('span', 'acct-cv', '⌄'));
+    const cv = el('span', 'acct-cv'); cv.appendChild(TTX.icon('chevron-down', 12));
+    bar.append(av, box, cv);
     bar.title = 'アカウントを切り替え';
     bar.onclick = () => openAccountMenu(bar);
     return bar;
@@ -311,12 +349,14 @@
       const box = el('span', 'acct-box');
       box.append(el('span', 'acct-nm', a.name), el('span', 'acct-em', a.email || ''));
       it.append(av, box);
-      if (on) it.appendChild(el('span', 'menu-ck', '✓'));
+      if (on) { const ck = el('span', 'menu-ck'); ck.appendChild(TTX.icon('check', 13)); it.appendChild(ck); }
       it.onclick = () => { closeMenus(); if (!on) switchAccount(a.id); };
       menu.appendChild(it);
 
       if (ui.accounts.length > 1) {
-        const rm = el('button', 'menu-x', '✕');
+        const rm = el('button', 'menu-x');
+        rm.appendChild(TTX.icon('x', 12));
+        rm.setAttribute('aria-label', a.name + ' を削除');
         rm.title = a.name + ' を削除';
         rm.onclick = (e) => { e.stopPropagation(); closeMenus(); removeAccount(a); };
         it.appendChild(rm);
@@ -325,7 +365,8 @@
 
     menu.appendChild(el('div', 'menu-sep'));
     const add = el('button', 'menu-i');
-    add.append(el('span', 'menu-ic', '＋'), el('span', 'acct-nm', 'アカウントを追加'));
+    const ai = el('span', 'menu-ic'); ai.appendChild(TTX.icon('user-plus', 14));
+    add.append(ai, el('span', 'acct-nm', 'アカウントを追加'));
     add.onclick = () => { closeMenus(); addAccount(); };
     menu.appendChild(add);
 
@@ -444,6 +485,8 @@
     }
     s.appendChild(foot);
     s.appendChild(el('div', 'side-status', ui.status));
+    const sync = el('div', 'side-sync' + (ui.syncFailed ? ' bad' : ''), syncedText());
+    s.appendChild(sync);
     return s;
   }
 
@@ -461,7 +504,7 @@
       const m = monthOf(key);
       if (m !== month) {
         month = m;
-        wrap.appendChild(el('div', 'ag-month', `${m.slice(0, 4)}年 ${Number(m.slice(5))}月`));
+        wrap.appendChild(el('div', 'ag-month', `${m.slice(0, 4)}年${Number(m.slice(5))}月`));
       }
       const dow = weekdayOf(key);
       const day = el('div', 'ag-day' + (list.length ? '' : ' empty') + (key === today ? ' today' : ''));
@@ -487,22 +530,29 @@
       day.appendChild(evs);
       wrap.appendChild(day);
     }
-    ui.status = `${count} 件 / ${from} 〜 ${to}`;
+    ui.status = `${count}件の予定`;
     return wrap;
   }
 
   function eventRow(o, dayKey) {
-    const row = el('div', 'ev' + (o.allDay ? ' allday' : '') + (o.holiday ? ' holiday' : ''));
-    const rail = el('div', 'rail');
-    rail.style.background = railColor(o);
-    row.appendChild(rail);
+    const row = el('div', 'ev' + (o.allDay ? ' allday' : '')
+      + (o.holiday ? ' holiday' : '') + (o.workday ? ' workday' : ''));
+    // A dot, not a 3px stripe. The stripe carried real information, so it
+    // wasn't the decorative version of the tell — but it was still the wrong
+    // shape for the job: 3×17px of #e73b3b with 2px rounding reads as a smudge
+    // rather than a hue, and it added a fourth left edge to a row that has one
+    // thing to say. Apple Calendar uses a dot; the comparison writing is
+    // unanimous that it scans better than Google's filled blocks.
+    const dot = el('div', 'dot');
+    dot.style.background = railColor(o);
+    row.appendChild(dot);
     row.appendChild(el('div', 't', o.holiday ? (o.workday ? '暦' : '祝') : o.allDay ? '終日' : o.startTime));
 
     const ti = el('div', 'ti');
     ti.appendChild(document.createTextNode(o.title));
     const meta = [];
     if (o.multiDay) meta.push(`${o.days.indexOf(dayKey) + 1}/${o.days.length}日目`);
-    if (o.location) meta.push('@' + o.location);
+    if (o.location) meta.push(o.location);
     // Tag only the *other* calendars. Stamping "家族" on all 255 rows is noise;
     // leaving the main calendar implicit makes the odd one out actually visible.
     const primary = primaryCalendarId();
@@ -514,6 +564,19 @@
       ti.appendChild(el('span', 'meta', meta.join(' · ')));
     }
     row.appendChild(ti);
+
+    // Same logic as the calendar tag: name the author only when it isn't you.
+    // "たろうが追加" on every one of your own 255 entries is noise; it's the ones
+    // you DIDN'T write that you need to spot.
+    if (o.authorName && o.authorId !== TTX.store.state.me?.id) {
+      const av = el('span', 'ev-by');
+      av.textContent = o.authorName.slice(0, 1);
+      av.style.background = acctColor(String(o.authorId));
+      av.title = o.authorName + ' が追加';
+      row.appendChild(av);
+    } else {
+      row.appendChild(el('span', 'ev-by empty'));
+    }
     row.onclick = () => openDetail(o, row);
     return row;
   }
@@ -563,7 +626,7 @@
         const c = railColor(o);
         const chip = el('div', 'm-ev ' + (o.allDay || o.holiday ? 'chip' : 'dotted'));
         if (o.allDay || o.holiday) {
-          chip.style.background = c;
+          fill(chip, o);
         } else {
           const dot = el('span', 'm-dot');
           dot.style.background = c;
@@ -588,7 +651,7 @@
       grid.appendChild(cell);
     }
     wrap.appendChild(grid);
-    ui.status = `${count} 件 / ${monthOf(ui.cursor)}`;
+    ui.status = `${count}件の予定`;
     return wrap;
   }
 
@@ -631,7 +694,7 @@
         const cell = el('div', 'w-ad-cell' + (key === today ? ' today' : ''));
         for (const o of banners.filter((x) => x.days.includes(key))) {
           const c = el('div', 'w-ad', o.title);
-          c.style.background = railColor(o);
+          fill(c, o);
           c.title = o.title;
           c.onclick = (e) => { e.stopPropagation(); openDetail(o, c); };
           cell.appendChild(c);
@@ -667,7 +730,7 @@
         box.style.height = ((endMin - startMin) / 60) * HOUR_H - 2 + 'px';
         box.style.left = `calc(${(o._col / o._cols) * 100}% + 1px)`;
         box.style.width = `calc(${(1 / o._cols) * 100}% - 3px)`;
-        box.style.background = railColor(o);
+        fill(box, o);
         box.append(el('div', 'w-ev-t', o.startTime), el('div', 'w-ev-n', o.title));
         box.title = `${o.startTime}〜${o.endTime} ${o.title}`;
         box.onclick = (e) => { e.stopPropagation(); openDetail(o, box); };
@@ -689,7 +752,7 @@
     scroll.appendChild(grid);
     wrap.appendChild(scroll);
 
-    ui.status = `${list.length} 件 / ${days[0]} 〜 ${days[6]}`;
+    ui.status = `${list.length}件の予定`;
     // Open on the working day rather than at midnight.
     requestAnimationFrame(() => { scroll.scrollTop = 7 * HOUR_H; });
     return wrap;
@@ -778,6 +841,17 @@
 
     const head = el('div', 'd-head');
     head.appendChild(el('div', 'd-title', o.title));
+    // Who wrote it. On a shared calendar this is the difference between "a
+    // dentist appointment exists" and "my wife booked me a dentist
+    // appointment" — and the second one is why the calendar is shared.
+    if (o.authorName) {
+      const by = el('div', 'd-by');
+      const av = el('span', 'acct-av sm');
+      av.textContent = o.authorName.slice(0, 1);
+      av.style.background = acctColor(String(o.authorId));
+      by.append(av, el('span', null, `${o.authorName} が追加`));
+      head.appendChild(by);
+    }
     card.appendChild(head);
 
     const rows = [];
@@ -794,31 +868,39 @@
         ? `${jp(o.startKey)} ・ 終日`
         : `${jp(o.startKey)} ${o.startTime} 〜 ${o.endTime}`;
     }
-    rows.push(['🕐', '日時', when]);
+    // Icon AND value, no key column. "🕐 日時 7月21日 10:30" says "日時" twice:
+    // once in the glyph and once in the word, to an audience that can read the
+    // date. TimeTree's own detail panel does icon+value for the same reason.
+    rows.push(['clock', when]);
 
-    if (o.location) rows.push(['📍', '場所', o.location]);
-    if (o.url) rows.push(['🔗', 'URL', o.url]);
+    if (o.location) rows.push(['pin', o.location]);
+    if (o.url) rows.push(['link', o.url]);
     const lb = TTX.store.labelOf(o.calendarId, o.labelId);
-    if (lb) rows.push(['🏷', 'ラベル', TTX.api.labelName(lb)]);
-    if (o.calendarName) rows.push(['📅', 'カレンダー', o.calendarName]);
+    if (lb) rows.push(['tag', TTX.api.labelName(lb)]);
+    // Naming the calendar is only information when there's more than one.
+    if (o.calendarName && TTX.store.state.enabled.size > 1) {
+      rows.push(['calendar', o.calendarName]);
+    }
 
     const members = TTX.store.state.members.get(o.calendarId);
     if (members && o.attendees?.length) {
       const names = o.attendees.map((id) => members.get(id)?.name).filter(Boolean);
-      if (names.length) rows.push(['👥', 'メンバー', names.join('、')]);
+      if (names.length) rows.push(['users', names.join('、')]);
     }
     const alerts = TTX.store.rawEvent(o.calendarId, o.uuid)?.alerts;
     if (alerts?.length) {
-      rows.push(['🔔', '通知', alerts.slice().sort((a, b) => a - b)
+      rows.push(['bell', alerts.slice().sort((a, b) => a - b)
         .map((m) => TTX.api.alertLabel(m, o.allDay)).join('、')]);
     }
-    if (o.recurring) rows.push(['🔁', '繰り返し', repeatText(o)]);
-    if (o.isException) rows.push(['✎', '例外', 'この回だけ変更されています']);
-    if (o.birthday) rows.push(['🎂', '種別', '誕生日']);
+    if (o.recurring) rows.push(['repeat', repeatText(o)]);
+    if (o.isException) rows.push(['pencil', 'この回だけ変更されています']);
+    if (o.birthday) rows.push(['cake', '誕生日']);
 
-    for (const [ic, k, v] of rows) {
+    for (const [ic, v] of rows) {
       const r = el('div', 'd-row');
-      r.append(el('span', 'd-ic', ic), el('span', 'd-k', k), el('span', 'd-v', v));
+      const box = el('span', 'd-ic');
+      box.appendChild(TTX.icon(ic, 14));
+      r.append(box, el('span', 'd-v', v));
       card.appendChild(r);
     }
     if (o.checklist?.length) {
@@ -827,7 +909,9 @@
       const list = el('div', 'd-cl');
       for (const i of o.checklist) {
         const r = el('div', 'd-cl-i' + (i.checked ? ' on' : ''));
-        r.append(el('span', 'd-cl-b', i.checked ? '☑' : '☐'), el('span', null, i.title));
+        const b = el('span', 'd-cl-b');
+        b.appendChild(TTX.icon(i.checked ? 'square-check' : 'square', 13));
+        r.append(b, el('span', null, i.title));
         list.appendChild(r);
       }
       card.appendChild(list);
@@ -1427,8 +1511,10 @@
       alertBox.textContent = '';
       for (const m of f.alerts) {
         const chip = el('span', 'f-chip', TTX.api.alertLabel(m, f.allDay));
-        const x = el('button', 'f-chip-x', '✕');
+        const x = el('button', 'f-chip-x');
+        x.appendChild(TTX.icon('x', 11));
         x.title = '削除';
+        x.setAttribute('aria-label', TTX.api.alertLabel(m, f.allDay) + ' を削除');
         x.onclick = () => { f.alerts = f.alerts.filter((v) => v !== m); paintAlerts(); };
         chip.appendChild(x);
         alertBox.appendChild(chip);
@@ -1531,7 +1617,10 @@
       clBox.textContent = '';
       f.checklist.forEach((it, i) => {
         const row = el('div', 'f-cl-i');
-        const cb = el('button', 'f-cl-c' + (it.checked ? ' on' : ''), it.checked ? '✓' : '');
+        const cb = el('button', 'f-cl-c' + (it.checked ? ' on' : ''));
+        if (it.checked) cb.appendChild(TTX.icon('check', 11));
+        cb.setAttribute('role', 'checkbox');
+        cb.setAttribute('aria-checked', String(!!it.checked));
         cb.onclick = () => { it.checked = !it.checked; paintChecklist(); };
         const inp = el('input', 'f-cl-t');
         inp.value = it.title;
@@ -1549,13 +1638,16 @@
             paintChecklist(Math.max(0, i - 1));
           }
         };
-        const x = el('button', 'f-cl-x', '✕');
+        const x = el('button', 'f-cl-x');
+        x.appendChild(TTX.icon('x', 11));
         x.title = '削除';
+        x.setAttribute('aria-label', '項目を削除');
         x.onclick = () => { f.checklist.splice(i, 1); paintChecklist(); };
         row.append(cb, inp, x);
         clBox.appendChild(row);
       });
-      const add = el('button', 'f-cl-add', '＋ 項目を追加');
+      const add = el('button', 'f-cl-add');
+      add.append(TTX.icon('plus', 12), el('span', null, '項目を追加'));
       add.onclick = () => addItem(f.checklist.length);
       clBox.appendChild(add);
       if (focusAt != null) clBox.querySelectorAll('.f-cl-t')[focusAt]?.focus();
@@ -2026,7 +2118,7 @@
     if (dateKey) {
       out.push({
         sec: '移動',
-        icon: '→',
+        icon: 'arrow-right',
         main: `${dateKey} へ移動`,
         sub: WEEKDAY_JA[weekdayOf(dateKey)] + '曜日',
         run: () => jumpTo(dateKey),
@@ -2047,17 +2139,17 @@
     }
 
     const cmds = [
-      { icon: '＋', main: '新しい予定', run: () => openForm() },
-      { icon: '⌂', main: '今日へ', run: () => jumpTo(todayKey()) },
-      { icon: '☰', main: 'アジェンダ表示', run: () => setView('agenda') },
-      { icon: '▤', main: '週表示', run: () => setView('week') },
-      { icon: '▦', main: '月表示', run: () => setView('month') },
-      { icon: '☾', main: 'テーマ: ダーク', run: () => applyTheme('dark') },
-      { icon: '☀', main: 'テーマ: ライト', run: () => applyTheme('light') },
-      { icon: '◐', main: 'テーマ: システムに従う', run: () => applyTheme('system') },
-      { icon: '⟳', main: '再同期', run: () => resync() },
+      { icon: 'plus', main: '新しい予定', run: () => openForm() },
+      { icon: 'home', main: '今日へ', run: () => jumpTo(todayKey()) },
+      { icon: 'list', main: 'アジェンダ表示', run: () => setView('agenda') },
+      { icon: 'columns', main: '週表示', run: () => setView('week') },
+      { icon: 'calendar-days', main: '月表示', run: () => setView('month') },
+      { icon: 'moon', main: 'テーマ: ダーク', run: () => applyTheme('dark') },
+      { icon: 'sun', main: 'テーマ: ライト', run: () => applyTheme('light') },
+      { icon: 'monitor', main: 'テーマ: システムに従う', run: () => applyTheme('system') },
+      { icon: 'refresh', main: '再同期', run: () => resync() },
       {
-        icon: '🔔',
+        icon: ui.notify ? 'bell-off' : 'bell',
         main: ui.notify ? '通知をオフにする' : '通知をオンにする',
         sub: ui.notify ? '起動中は予定の通知を出します' : '通知は止まっています',
         run: () => {
@@ -2068,18 +2160,18 @@
         },
       },
       {
-        icon: '⏻',
+        icon: 'power',
         main: ui.autoStart ? 'Windows 起動時に開始しない' : 'Windows 起動時に開始する',
         sub: ui.autoStart ? '今は自動で起動します' : '通知を受け取るにはアプリが起動している必要があります',
         run: () => setAutoStart(!ui.autoStart),
       },
-      { icon: '↧', main: 'Markdown をコピー', run: () => doExport('md') },
-      { icon: '↧', main: 'CSV を書き出し', run: () => doExport('csv') },
-      { icon: '↧', main: 'ICS を書き出し', run: () => doExport('ics') },
-      { icon: '↧', main: 'JSON を書き出し', run: () => doExport('json') },
-      { icon: '＋', main: 'アカウントを追加', run: () => addAccount() },
+      { icon: 'download', main: 'Markdown をコピー', run: () => doExport('md') },
+      { icon: 'download', main: 'CSV を書き出し', run: () => doExport('csv') },
+      { icon: 'download', main: 'ICS を書き出し', run: () => doExport('ics') },
+      { icon: 'download', main: 'JSON を書き出し', run: () => doExport('json') },
+      { icon: 'user-plus', main: 'アカウントを追加', run: () => addAccount() },
       ...ui.accounts.filter((a) => a.id !== ui.activeId).map((a) => ({
-        icon: '⇄', main: `アカウント切替: ${a.name}`, run: () => switchAccount(a.id),
+        icon: 'arrow-left-right', main: `アカウント切替: ${a.name}`, run: () => switchAccount(a.id),
       })),
     ].filter((c) => !q.trim() || c.main.toLowerCase().includes(q.trim().toLowerCase()));
 
@@ -2117,11 +2209,13 @@
         }
         const b = el('button', 'p-item' + (i === ui.palette.sel ? ' sel' : ''));
         if (it.rail) {
-          const r = el('span', 'p-rail');
+          const r = el('span', 'p-dot');
           r.style.background = it.rail;
           b.appendChild(r);
         } else {
-          b.appendChild(el('span', 'p-ic', it.icon || '·'));
+          const ic = el('span', 'p-ic');
+          if (it.icon) ic.appendChild(TTX.icon(it.icon, 14));
+          b.appendChild(ic);
         }
         b.appendChild(el('span', 'p-main', it.main));
         if (it.sub) b.appendChild(el('span', 'p-sub', it.sub));
@@ -2218,26 +2312,76 @@
   function scrollToCursor() {
     const wrap = $('.agenda');
     if (!wrap) return;
-    const want = `${ui.cursor.slice(0, 4)}年 ${Number(ui.cursor.slice(5, 7))}月`;
+    const want = `${ui.cursor.slice(0, 4)}年${Number(ui.cursor.slice(5, 7))}月`;
     const target = [...wrap.querySelectorAll('.ag-month')].find((h) => h.textContent === want);
     if (target) wrap.scrollTop = target.offsetTop;
   }
 
-  async function resync() {
-    ui.status = '同期中…';
-    render();
-    TTX.store.state.events.clear();
+  async function resync(quiet = false) {
+    if (ui.syncing) return;
+    ui.syncing = true;
+    if (!quiet) { ui.status = '同期中…'; render(); }
+    const before = TTX.store.state.events;
+    TTX.store.state.events = new Map();
     try {
       await TTX.store.syncAll((cal, n) => {
-        ui.status = `${cal.name}: ${n} 件…`;
+        if (quiet) return;
+        ui.status = `${cal.name}: ${n}件…`;
         const s = $('.side-status');
         if (s) s.textContent = ui.status;
       });
       await refresh();
-      toast(`同期完了 — ${TTX.store.totalEvents()} 件`);
+      if (!quiet) toast(`同期完了 — ${TTX.store.totalEvents()} 件`);
     } catch (e) {
-      toast('同期エラー: ' + e.message);
+      // Keep showing the old data rather than an empty calendar: stale is bad,
+      // but blank is worse, and the footer says which one you're looking at.
+      if (!TTX.store.state.events.size) TTX.store.state.events = before;
+      ui.syncFailed = true;
+      render();
+      if (!quiet) toast('同期エラー: ' + e.message);
+    } finally {
+      ui.syncing = false;
     }
+  }
+
+  /**
+   * Keep the screen honest without being asked.
+   *
+   * A calendar that only refreshes when you press a button starts lying the
+   * moment you forget to press it — and a calendar that lies quietly is worse
+   * than no calendar, because you act on it. You plan around a free Thursday
+   * that your partner filled in this morning.
+   *
+   * Poll rather than push: TimeTree's web app holds a socket, but riding that
+   * is a much bigger surface to reverse and to keep working. Every event ever
+   * is ~2400 rows over 8 chunks, so a full pull is cheap and, more to the
+   * point, correct — there is no delta to get wrong.
+   */
+  const SYNC_EVERY = 5 * 60 * 1000;
+
+  function startAutoSync() {
+    setInterval(() => {
+      if (document.hidden || !TTX.store.state.ready) return;
+      if (Date.now() - TTX.store.state.syncedAt < SYNC_EVERY) return;
+      resync(true);
+    }, 60000);
+    // Coming back to the window is exactly when you're about to trust what it
+    // says, so that's when it's worth re-checking.
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden && TTX.store.state.ready
+          && Date.now() - TTX.store.state.syncedAt > SYNC_EVERY) resync(true);
+    });
+  }
+
+  /** "3分前に同期" — how much to trust what's on screen. */
+  function syncedText() {
+    if (ui.syncing) return '同期中…';
+    const at = TTX.store.state.syncedAt;
+    if (!at) return '';
+    const min = Math.floor((Date.now() - at) / 60000);
+    if (ui.syncFailed) return '更新できていません';
+    if (min < 1) return '最新です';
+    return min < 60 ? `${min}分前に同期` : `${Math.floor(min / 60)}時間前に同期`;
   }
 
   function centerCard(build) {
@@ -2358,6 +2502,7 @@
     document.addEventListener('keydown', keys);
     window.addEventListener('resize', () => { if (ui.view === 'month') measureCells(); });
     startAlerts();
+    startAutoSync();
     ui.autoStart = await window.host.autoStart.get().catch(() => false);
 
     await refreshAccounts();

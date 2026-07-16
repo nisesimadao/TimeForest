@@ -413,13 +413,39 @@
   const labelName = (lb) =>
     (lb && (lb.name || COLOR_NAMES[colorHex(lb.color)])) || '';
 
+  /**
+   * Black or white text on `color`, whichever you can actually read.
+   *
+   * Everything used to be white, unconditionally. Measured against the ten
+   * default labels, that failed WCAG AA (4.5:1) on NINE of them — worst was
+   * ブライト・オレンジ #fdc02d at 1.66:1, where a multi-day trip on a yellow
+   * chip is close to invisible. Black on that same yellow is 12.7:1.
+   *
+   * WCAG relative luminance, not the old brightness formula: the two disagree
+   * exactly on saturated yellows and cyans, which is where the failures are.
+   */
+  function contrastFg(color) {
+    const n = Number(color >>> 0);
+    const ch = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v) => {
+      const c = v / 255;
+      return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+    });
+    const L = 0.2126 * ch[0] + 0.7152 * ch[1] + 0.0722 * ch[2];
+    // Contrast against white is (1.05)/(L+0.05); against black, (L+0.05)/0.05.
+    // They cross at L ≈ 0.1791 — pick whichever side is further from it.
+    return (1.05 / (L + 0.05)) >= ((L + 0.05) / 0.05) ? '#ffffff' : '#000000';
+  }
+
+  /** The text colour for a filled chip in this label's colour. */
+  const labelFg = (lb) => contrastFg(lb?.color ?? 0);
+
   TTX.api = {
     calendars, currentCalendar, allEvents, labels, members, memorialdays, me,
     createEvent, updateEvent, deleteEvent, buildEvent, buildAttachment,
     excludeOccurrence, truncateSeries, editOccurrence, splitSeries,
     icalStamp, ruleOf, isMaster, withRule, withUntil,
     alldayAlert, alldayAlertDays, alertLabel,
-    colorHex, labelName, COLOR_NAMES,
+    colorHex, labelName, labelFg, contrastFg, COLOR_NAMES,
     setTransport, csrfToken, request, CLIENT_TAG, ORIGIN,
   };
 })();
