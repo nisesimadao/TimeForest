@@ -386,12 +386,40 @@
   /** TimeTree stores label colours as a 24-bit int. */
   const colorHex = (n) => '#' + Number(n >>> 0).toString(16).padStart(6, '0').slice(-6);
 
+  /**
+   * The API answers `name: ""` for every label the user hasn't renamed, and
+   * TimeTree's own UI fills the gap client-side with the colour's name. Without
+   * this the picker is ten anonymous swatches.
+   *
+   * Read out of the real client's label picker; the ten defaults line up with
+   * label ids 1..10 in order. Keyed by colour rather than id because the name
+   * describes the colour — a label recoloured to something off-palette gets no
+   * name, which is exactly where we were before, so nothing regresses.
+   */
+  const COLOR_NAMES = {
+    '#2ecc87': 'エメラルド・グリーン',
+    '#3dc2c8': 'モダーン・サイアン',
+    '#47b2f7': 'ディープ・スカイブルー',
+    '#948078': 'パステル・ブラウン',
+    '#212121': 'ミッドナイト・ブラック',
+    '#e73b3b': 'アップル・レッド',
+    '#f35f8c': 'フレンチ・ローズ',
+    '#fb7f77': 'コーラル・ピンク',
+    '#fdc02d': 'ブライト・オレンジ',
+    '#b38bdc': 'ソフト・バイオレット',
+  };
+
+  /** What to call a label: what the user named it, else what colour it is. */
+  const labelName = (lb) =>
+    (lb && (lb.name || COLOR_NAMES[colorHex(lb.color)])) || '';
+
   TTX.api = {
     calendars, currentCalendar, allEvents, labels, members, memorialdays, me,
     createEvent, updateEvent, deleteEvent, buildEvent, buildAttachment,
     excludeOccurrence, truncateSeries, editOccurrence, splitSeries,
     icalStamp, ruleOf, isMaster, withRule, withUntil,
     alldayAlert, alldayAlertDays, alertLabel,
-    colorHex, setTransport, csrfToken, request, CLIENT_TAG, ORIGIN,
+    colorHex, labelName, COLOR_NAMES,
+    setTransport, csrfToken, request, CLIENT_TAG, ORIGIN,
   };
 })();

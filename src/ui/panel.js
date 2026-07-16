@@ -221,15 +221,21 @@
     box.textContent = '';
     for (const cal of state.calendars) {
       if (!state.enabled.has(cal.id)) continue;
+      // Every calendar ships ten labels whether used or not. Offer the ones
+      // that mean something — named, or actually worn by an event. "Named
+      // only" hid in-use labels that nobody renamed, which couldn't be muted.
+      const used = new Set((state.events.get(cal.id) || [])
+        .filter((e) => !e.deactivated_at)
+        .map((e) => e.label_id));
       for (const lb of state.labels.get(cal.id) || []) {
-        if (!lb.name) continue; // TimeTree ships unnamed placeholder labels
+        if (!lb.name && !used.has(lb.id)) continue;
         const key = cal.id + ':' + lb.id;
         const on = !state.mutedLabels.has(key);
         const chip = el('button', 'ttx-chip ' + (on ? 'ttx-on' : 'ttx-off'));
         const dot = el('span', 'ttx-dot');
         dot.style.background = TTX.api.colorHex(lb.color);
         chip.appendChild(dot);
-        chip.appendChild(document.createTextNode(lb.name));
+        chip.appendChild(document.createTextNode(TTX.api.labelName(lb)));
         chip.onclick = () => {
           if (on) state.mutedLabels.add(key); else state.mutedLabels.delete(key);
           renderFilters();

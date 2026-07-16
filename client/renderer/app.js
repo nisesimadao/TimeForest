@@ -399,8 +399,17 @@
     const labels = [];
     for (const cal of st.calendars) {
       if (!st.enabled.has(cal.id)) continue;
+      // Every calendar comes with ten labels whether or not anyone uses them,
+      // so offer a filter for the ones that mean something: named by the user,
+      // or actually worn by an event. Filtering by "named" alone hid labels
+      // that are in use but unnamed — you couldn't mute them at all. Judged
+      // over the whole history, not the current view, so the list doesn't
+      // reshuffle as you navigate.
+      const used = new Set((st.events.get(cal.id) || [])
+        .filter((e) => !e.deactivated_at)
+        .map((e) => e.label_id));
       for (const lb of st.labels.get(cal.id) || []) {
-        if (lb.name) labels.push({ cal, lb });
+        if (lb.name || used.has(lb.id)) labels.push({ cal, lb });
       }
     }
     if (labels.length) {
@@ -411,7 +420,7 @@
         const b = el('button', 'side-item' + (on ? '' : ' off'));
         const dot = el('span', 'dot');
         dot.style.background = TTX.api.colorHex(lb.color);
-        b.append(dot, el('span', 'nm', lb.name));
+        b.append(dot, el('span', 'nm', TTX.api.labelName(lb)));
         b.onclick = () => {
           on ? ui.mutedLabels.add(key) : ui.mutedLabels.delete(key);
           savePrefs();
@@ -785,7 +794,7 @@
     if (o.location) rows.push(['📍', '場所', o.location]);
     if (o.url) rows.push(['🔗', 'URL', o.url]);
     const lb = TTX.store.labelOf(o.calendarId, o.labelId);
-    if (lb?.name) rows.push(['🏷', 'ラベル', lb.name]);
+    if (lb) rows.push(['🏷', 'ラベル', TTX.api.labelName(lb)]);
     if (o.calendarName) rows.push(['📅', 'カレンダー', o.calendarName]);
 
     const members = TTX.store.state.members.get(o.calendarId);
@@ -1269,8 +1278,8 @@
     const labelRow = el('div', 'f-row');
     labelRow.appendChild(el('span', 'f-k', 'ラベル'));
     const swatches = el('div', 'f-labels');
-    const labelName = el('span', 'f-lb-n');
-    labelRow.append(swatches, labelName);
+    const labelNameEl = el('span', 'f-lb-n');
+    labelRow.append(swatches, labelNameEl);
     body.appendChild(labelRow);
 
     function paintLabels() {
@@ -1283,12 +1292,12 @@
       for (const lb of labels) {
         const b = el('button', 'f-lb' + (lb.id === f.labelId ? ' on' : ''));
         b.style.background = TTX.api.colorHex(lb.color);
-        b.title = lb.name || `ラベル ${lb.id}`;
+        b.title = TTX.api.labelName(lb) || `ラベル ${lb.id}`;
         b.onclick = () => { f.labelId = lb.id; paintLabels(); };
         swatches.appendChild(b);
       }
       const cur = labels.find((l) => l.id === f.labelId);
-      labelName.textContent = cur?.name || '';
+      labelNameEl.textContent = TTX.api.labelName(cur);
     }
     paintLabels();
 
