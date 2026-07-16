@@ -1067,12 +1067,13 @@
    */
   function chooseScope(kind) {
     const verb = kind === 'delete' ? '削除' : '編集';
+    const heading = `繰り返しの予定を${verb}`;
     return new Promise((resolve) => {
       const scrim = el('div', 'scrim cf-scrim');
       const card = el('div', 'confirm');
       card.append(
-        el('div', 'cf-t', `繰り返しの予定を${verb}`),
-        el('div', 'cf-b', `どの範囲に適用しますか。`)
+        el('div', 'cf-t', heading),
+        el('div', 'cf-b', 'どの範囲に適用しますか。')
       );
 
       const opts = el('div', 'cf-opts');
@@ -1097,7 +1098,7 @@
       scrim.appendChild(card);
       document.body.appendChild(scrim);
       ui.confirm = true;
-      const release = dialog(card, { label: title });
+      const release = dialog(card, { label: heading });
 
       const done = (v) => {
         document.removeEventListener('keydown', onKey, true);
@@ -2379,11 +2380,27 @@
     if (target) wrap.scrollTop = target.offsetTop;
   }
 
+  /**
+   * A cheap "did anything change" stamp. Count plus the newest updated_at
+   * covers creates, edits and deletes alike — a delete bumps updated_at and
+   * sets deactivated_at, and the row itself stays, so the count holds.
+   */
+  function fingerprint() {
+    let n = 0;
+    let newest = 0;
+    for (const list of TTX.store.state.events.values()) {
+      n += list.length;
+      for (const e of list) if (e.updated_at > newest) newest = e.updated_at;
+    }
+    return n + ':' + newest;
+  }
+
   async function resync(quiet = false) {
     if (ui.syncing) return;
     ui.syncing = true;
     if (!quiet) { ui.status = '同期中…'; render(); }
     const before = TTX.store.state.events;
+    const was = quiet ? fingerprint() : null;
     TTX.store.state.events = new Map();
     try {
       await TTX.store.syncAll((cal, n) => {
@@ -2392,6 +2409,14 @@
         const s = $('.side-status');
         if (s) s.textContent = ui.status;
       });
+      // A background sync that found nothing new should be invisible. Most of
+      // them find nothing, and refresh() ends in a cross-fade of the whole
+      // grid — five minutely, to show you what you were already looking at.
+      if (quiet && fingerprint() === was) {
+        const s = $('.side-sync');
+        if (s) s.textContent = syncedText();
+        return;
+      }
       await refresh();
       if (!quiet) toast(`同期完了 — ${TTX.store.totalEvents()} 件`);
     } catch (e) {
@@ -2421,16 +2446,29 @@
    */
   const SYNC_EVERY = 5 * 60 * 1000;
 
+  /**
+   * Never while the user is mid-thought.
+   *
+   * A sync ends in refresh() -> paint(), and paint() rebuilds #app and closes
+   * the detail popover and the menus, because their anchors are about to be
+   * destroyed. So an auto-sync landing while you read an event would shut the
+   * popover; landing while you fill in the form would re-render the grid
+   * underneath it. Fixing "the calendar lies quietly" by making it interrupt
+   * you is not a trade worth making — the data is minutes old at worst, and
+   * the tick comes round again.
+   */
+  const busy = () => !!(ui.form || ui.confirm || ui.palette || ui.detail || ui.menu);
+
   function startAutoSync() {
     setInterval(() => {
-      if (document.hidden || !TTX.store.state.ready) return;
+      if (document.hidden || !TTX.store.state.ready || busy()) return;
       if (Date.now() - TTX.store.state.syncedAt < SYNC_EVERY) return;
       resync(true);
     }, 60000);
     // Coming back to the window is exactly when you're about to trust what it
     // says, so that's when it's worth re-checking.
     document.addEventListener('visibilitychange', () => {
-      if (!document.hidden && TTX.store.state.ready
+      if (!document.hidden && TTX.store.state.ready && !busy()
           && Date.now() - TTX.store.state.syncedAt > SYNC_EVERY) resync(true);
     });
   }

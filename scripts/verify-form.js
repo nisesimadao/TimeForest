@@ -407,11 +407,13 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   check((await findRaw(T4))?.attendees?.length === 1, 'server kept the attendee');
 
   await openRow(T4);
-  const shownAlerts = await page.evaluate(() => {
-    const r = [...document.querySelectorAll('.d-row')].find((n) => n.textContent.includes('通知'));
-    return r?.querySelector('.d-v')?.textContent ?? null;
-  });
-  check(shownAlerts === '開始時、1日前', `the detail popover reports them (${shownAlerts})`);
+  // The popover is icon + value now, with no key column — "🕐 日時 7月21日"
+  // said 日時 twice to an audience that can read a date. So look for the value
+  // itself rather than a label that no longer exists.
+  const shownAlerts = await page.evaluate(() =>
+    [...document.querySelectorAll('.d-row .d-v')].map((n) => n.textContent));
+  check(shownAlerts.includes('開始時、1日前'),
+    `the detail popover reports them (${JSON.stringify(shownAlerts)})`);
   await page.keyboard.press('Escape');
 
   for (const t of [T4, T5]) {
@@ -523,7 +525,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     // Reconstruct the key from the month header above it and its day number.
     let h = d.previousElementSibling;
     while (h && !h.classList.contains('ag-month')) h = h.previousElementSibling;
-    const m = h.textContent.match(/(\d+)年 (\d+)月/);
+    const m = h.textContent.match(/(\d+)年\s*(\d+)月/);
     const day = d.querySelector('.ag-date .d').textContent;
     return `${m[1]}-${String(+m[2]).padStart(2, '0')}-${String(+day).padStart(2, '0')}`;
   });
@@ -548,7 +550,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const c = cells[14];
     c.click();
     const n = c.querySelector('.m-num').textContent;
-    const cur = document.querySelector('.tb-title').textContent.match(/(\d+)年 (\d+)月/);
+    const cur = document.querySelector('.tb-title').textContent.match(/(\d+)年\s*(\d+)月/);
     return `${cur[1]}-${String(+cur[2]).padStart(2, '0')}-${String(+n).padStart(2, '0')}`;
   });
   const vm = await formPrefill();

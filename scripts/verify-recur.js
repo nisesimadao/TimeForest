@@ -98,10 +98,22 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     .map((o) => o.startKey), title);
 
   sec('setup');
+  // Close anything a previous run died with, and put the view back where this
+  // one expects it. Running verify:form first used to leave the cursor on
+  // whatever month its entry-point tests clicked, and this suite would then
+  // look for August rows in a September agenda and blame the app.
+  for (let i = 0; i < 4 && await page.$('.scrim, .d-scrim'); i++) {
+    await page.keyboard.press('Escape');
+    await sleep(250);
+    const discard = await page.$('.confirm .btn.danger');
+    if (discard) { await discard.click(); await sleep(250); }
+  }
   ok(`swept ${await sweep()} leftover test event(s)`);
   await page.click('.seg button:text-is("アジェンダ")');
   await page.waitForSelector('.agenda', { timeout: 5000 });
-  ok('view = agenda');
+  await page.click('.pill:text-is("今日")');
+  await sleep(600);
+  ok('view = agenda, cursor = today');
 
   const openRow = async (t, nth = 0) => {
     const row = page.locator('.ev', { hasText: t }).nth(nth);
