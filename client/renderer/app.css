@@ -902,6 +902,30 @@ button { background: none; border: 0; cursor: default; }
    rather than leaving a disabled one to be reasoned about. */
 .form.allday .f-time { display: none; }
 
+/* Same rule for repeats: "which weekdays" is only a question for 毎週, and an
+   end date is only a question if it repeats at all. */
+.f-byday, .f-until { display: none; }
+.form.repeats .f-until { display: flex; }
+.form.weekly .f-byday { display: flex; }
+
+.f-days { display: flex; gap: 3px; }
+.f-day {
+  width: 26px;
+  height: 24px;
+  border-radius: 6px;
+  font-size: 11.5px;
+  font-weight: 550;
+  color: var(--label-2);
+  background: var(--bg-hover);
+  transition: background 0.12s, color 0.12s;
+}
+.f-day.sat { color: var(--blue); }
+.f-day.sun { color: var(--red); }
+.f-day:hover { background: var(--bg-active); }
+.f-day.on { background: var(--accent); color: var(--accent-fg); }
+.f-day.on.sat, .f-day.on.sun { color: var(--accent-fg); }
+.f-until .mini-btn { flex: none; }
+
 .f-span {
   font-size: 11px;
   color: var(--label-2);
@@ -940,6 +964,24 @@ button { background: none; border: 0; cursor: default; }
 .cf-t { font-size: 14px; font-weight: 650; }
 .cf-b { font-size: 12.5px; line-height: 19px; color: var(--label-2); overflow-wrap: anywhere; }
 .cf-f { display: flex; justify-content: flex-end; gap: 6px; margin-top: 8px; }
+
+/* Scope choices are the content of the dialog, not a footer of it: each is a
+   full sentence about what will change, stacked in widening order. */
+.cf-opts { display: flex; flex-direction: column; gap: 3px; margin-top: 9px; }
+.cf-opt {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 8px 11px;
+  border-radius: 8px;
+  text-align: left;
+  transition: background 0.12s;
+}
+.cf-opt:hover, .cf-opt:focus-visible { background: var(--bg-hover); outline: 0; }
+.cf-opt:focus-visible { box-shadow: inset 0 0 0 1.5px var(--accent); }
+.cf-opt-t { font-size: 13px; font-weight: 550; }
+.cf-opt-s { font-size: 11px; color: var(--label-2); }
+.cf-opt.danger .cf-opt-t { color: var(--red); }
 
 /* --- misc --------------------------------------------------------------- */
 

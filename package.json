@@ -9,7 +9,8 @@
     "client": "npm --prefix client start",
     "client:dev": "npm --prefix client run dev",
     "smoke": "cd client && node ../scripts/smoke-client.js",
-    "verify:form": "node scripts/verify-form.js"
+    "verify:form": "node scripts/verify-form.js",
+    "verify:recur": "node scripts/verify-recur.js"
   },
   "engines": {
     "node": ">=20"

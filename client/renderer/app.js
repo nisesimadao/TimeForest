@@ -809,7 +809,7 @@
     if (canEdit(o)) {
       const acts = el('div', 'd-acts');
       const edit = el('button', 'btn', '編集');
-      edit.onclick = () => { closeDetail(); openForm({ occ: o }); };
+      edit.onclick = () => { closeDetail(); editEvent(o); };
       const del = el('button', 'btn danger', '削除');
       del.onclick = () => { closeDetail(); removeEvent(o); };
       acts.append(edit, del);
@@ -892,7 +892,112 @@
     });
   }
 
+  /**
+   * "This one" and "all of them" are different acts on a series, so the scope
+   * is asked before the form rather than after — by the time you're typing, the
+   * form should already be showing the thing you chose to change. TimeTree asks
+   * first for the same reason.
+   */
+  function chooseScope(kind) {
+    const verb = kind === 'delete' ? '削除' : '編集';
+    return new Promise((resolve) => {
+      const scrim = el('div', 'scrim cf-scrim');
+      const card = el('div', 'confirm');
+      card.append(
+        el('div', 'cf-t', `繰り返しの予定を${verb}`),
+        el('div', 'cf-b', `どの範囲に適用しますか。`)
+      );
+
+      const opts = el('div', 'cf-opts');
+      for (const [key, label, sub] of [
+        ['this', `この予定だけを${verb}`, 'ほかの回はそのまま'],
+        ['future', `これ以降の予定を${verb}`, 'この回より前はそのまま'],
+        ['all', `すべての予定を${verb}`, '過去の回も含めて'],
+      ]) {
+        const b = el('button', 'cf-opt' + (kind === 'delete' && key === 'all' ? ' danger' : ''));
+        b.append(el('span', 'cf-opt-t', label), el('span', 'cf-opt-s', sub));
+        b.onclick = () => done(key);
+        opts.appendChild(b);
+      }
+      card.appendChild(opts);
+
+      const foot = el('div', 'cf-f');
+      const cancel = el('button', 'btn', 'キャンセル');
+      cancel.onclick = () => done(null);
+      foot.appendChild(cancel);
+      card.appendChild(foot);
+
+      scrim.appendChild(card);
+      document.body.appendChild(scrim);
+      ui.confirm = true;
+
+      const done = (v) => {
+        document.removeEventListener('keydown', onKey, true);
+        scrim.remove();
+        ui.confirm = false;
+        resolve(v);
+      };
+      const onKey = (e) => {
+        if (e.key !== 'Escape') return;
+        e.preventDefault();
+        e.stopPropagation();
+        done(null);
+      };
+      document.addEventListener('keydown', onKey, true);
+      scrim.onclick = (e) => { if (e.target === scrim) done(null); };
+      requestAnimationFrame(() => opts.firstChild.focus());
+    });
+  }
+
   // --- event form -------------------------------------------------------
+
+  const FREQ_LABEL = [
+    ['', '繰り返さない'],
+    ['DAILY', '毎日'],
+    ['WEEKLY', '毎週'],
+    ['MONTHLY', '毎月'],
+    ['YEARLY', '毎年'],
+  ];
+  const BYDAY = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
+
+  /**
+   * Pull apart an RRULE into the parts this form edits, and keep everything
+   * else verbatim. INTERVAL and COUNT are not editable here but absolutely must
+   * survive a title change — rebuilding the rule from a simplified model would
+   * quietly turn "every 2 weeks, 10 times" into "every week, forever".
+   */
+  function parseRepeat(rule) {
+    const parts = {};
+    if (rule) {
+      for (const p of rule.slice('RRULE:'.length).split(';')) {
+        const i = p.indexOf('=');
+        if (i > 0) parts[p.slice(0, i).toUpperCase()] = p.slice(i + 1);
+      }
+    }
+    const until = parts.UNTIL ? TTX.recur.parseICalDate(parts.UNTIL) : null;
+    const { FREQ, BYDAY: BD, UNTIL, ...rest } = parts;
+    return {
+      freq: FREQ || '',
+      byday: BD ? BD.split(',') : [],
+      until: until ? ymd(until.ms, 'UTC') : '',
+      rest,
+    };
+  }
+
+  function buildRepeat(r) {
+    if (!r.freq) return null;
+    let s = 'RRULE:FREQ=' + r.freq;
+    if (r.rest.INTERVAL) s += ';INTERVAL=' + r.rest.INTERVAL;
+    if (r.freq === 'WEEKLY' && r.byday.length) s += ';BYDAY=' + r.byday.join(',');
+    // COUNT and UNTIL are mutually exclusive in RFC 5545; an explicit end date
+    // is the more specific intent, so it wins.
+    if (r.until) s += ';UNTIL=' + r.until.replace(/-/g, '');
+    else if (r.rest.COUNT) s += ';COUNT=' + r.rest.COUNT;
+    return s;
+  }
+
+  const sameRepeat = (a, b) =>
+    a.freq === b.freq && a.until === b.until && a.byday.join() === b.byday.join();
 
   /**
    * Holidays aren't events at all (they come from memorialdays and have no
@@ -943,6 +1048,7 @@
       location: '',
       note: '',
       labelId: labels[0]?.id ?? 1,
+      repeat: { freq: '', byday: [], until: '', rest: {} },
     };
   }
 
@@ -950,11 +1056,19 @@
    * Read the raw event, not the occurrence: the view drops fields the form
    * needs and rewrites others (an event ending at 00:00 is displayed on the
    * previous day, which would silently move it if we round-tripped that).
+   *
+   * `occ` overrides the when. Editing one occurrence of a series, or splitting
+   * at it, is about the date the user clicked — but editing the whole series
+   * means editing the master, so there the master's own date is the truth. Show
+   * the occurrence's date for an "all" edit and an untouched save would move
+   * the entire series onto it.
    */
-  function fieldsFromRaw(raw) {
+  function fieldsFromRaw(raw, occ) {
     const tz = raw.all_day ? 'UTC' : (raw.start_timezone || TZ);
-    const startKey = ymd(raw.start_at, tz);
-    const endKey = ymd(raw.end_at, tz);
+    const startAt = occ ? occ.start : raw.start_at;
+    const endAt = occ ? occ.end : raw.end_at;
+    const startKey = ymd(startAt, tz);
+    const endKey = ymd(endAt, tz);
     return {
       calendarId: raw.calendar_id,
       title: raw.title || '',
@@ -962,11 +1076,12 @@
       startKey,
       endKey,
       // Latent values, so toggling all-day off has somewhere sensible to land.
-      startTime: raw.all_day ? defaultTime(startKey) : hm(raw.start_at, tz),
-      endTime: raw.all_day ? '10:00' : hm(raw.end_at, tz),
+      startTime: raw.all_day ? defaultTime(startKey) : hm(startAt, tz),
+      endTime: raw.all_day ? '10:00' : hm(endAt, tz),
       location: raw.location || '',
       note: raw.note || '',
       labelId: raw.label_id ?? 1,
+      repeat: parseRepeat(TTX.api.ruleOf(raw)),
     };
   }
 
@@ -990,6 +1105,13 @@
     put('label_id', f.labelId, raw.label_id ?? 1);
     put('note', f.note, raw.note || '');
     put('location', f.location, raw.location || '');
+    // Only touch the rule if the user touched the control — and keep the
+    // master's EXDATEs when we do, or every occurrence deleted with
+    // "この予定だけを削除" would come back to life on the next title edit.
+    if (!sameRepeat(f.repeat, parseRepeat(TTX.api.ruleOf(raw)))) {
+      const rule = buildRepeat(f.repeat);
+      p.recurrences = rule ? TTX.api.withRule(raw, rule) : [];
+    }
     return p;
   }
 
@@ -1018,9 +1140,13 @@
       return toast('書き込めるカレンダーがありません');
     }
 
-    const f = editing ? fieldsFromRaw(raw) : freshFields(opts);
     // A master carries the RRULE; its exception children are plain events.
-    const series = !!(raw?.recurrences?.some((l) => l.startsWith('RRULE:')));
+    const series = editing && TTX.api.isMaster(raw);
+    const scope = series ? (opts.scope || 'all') : 'all';
+    const f = editing ? fieldsFromRaw(raw, scope === 'all' ? null : opts.occ) : freshFields(opts);
+    // One occurrence broken out of a series is a standalone event; letting it
+    // carry a rule of its own would nest a series inside a series.
+    const canRepeat = !(series && scope === 'this');
 
     const scrim = el('div', 'scrim f-scrim');
     const card = el('div', 'form');
@@ -1035,8 +1161,12 @@
     card.appendChild(body);
 
     if (series) {
-      body.appendChild(el('div', 'f-warn',
-        '繰り返しの予定です。変更はすべての回に反映されます。'));
+      const jp = (k) => `${+k.slice(5, 7)}月${+k.slice(8)}日`;
+      body.appendChild(el('div', 'f-warn', {
+        this: `この回（${jp(opts.occ.startKey)}）だけを変更します。ほかの回はそのままです。`,
+        future: `${jp(opts.occ.startKey)} 以降のすべての回を変更します。それより前はそのままです。`,
+        all: '繰り返しのすべての回を変更します。過去の回も含まれます。',
+      }[scope]));
     }
 
     // --- title
@@ -1110,6 +1240,78 @@
 
     const span = el('div', 'f-span');
     body.appendChild(span);
+
+    // --- repeat
+    let repeatSel, dayChips, untilInput;
+    if (canRepeat) {
+      const rRow = el('div', 'f-row');
+      rRow.appendChild(el('span', 'f-k', '繰り返し'));
+      repeatSel = el('select', 'f-sel');
+      for (const [v, label] of FREQ_LABEL) {
+        const o = el('option', null, label);
+        o.value = v;
+        if (v === f.repeat.freq) o.selected = true;
+        repeatSel.appendChild(o);
+      }
+      rRow.appendChild(repeatSel);
+      body.appendChild(rRow);
+
+      // Weekly is the only frequency where "which days" is a real question,
+      // and it's the common one — 毎週 月・水 shouldn't need a second dialog.
+      const dRow = el('div', 'f-row f-byday');
+      dRow.appendChild(el('span', 'f-k', '曜日'));
+      dayChips = el('div', 'f-days');
+      for (let i = 0; i < 7; i++) {
+        const b = el('button', 'f-day', WEEKDAY_JA[i]);
+        if (i === 0) b.classList.add('sun');
+        if (i === 6) b.classList.add('sat');
+        b.onclick = () => {
+          const code = BYDAY[i];
+          const at = f.repeat.byday.indexOf(code);
+          if (at >= 0) f.repeat.byday.splice(at, 1);
+          else f.repeat.byday.push(code);
+          f.repeat.byday.sort((a, b2) => BYDAY.indexOf(a) - BYDAY.indexOf(b2));
+          syncRepeat();
+        };
+        dayChips.appendChild(b);
+      }
+      dRow.appendChild(dayChips);
+      body.appendChild(dRow);
+
+      const uRow = el('div', 'f-row f-until');
+      uRow.appendChild(el('span', 'f-k', '終了日'));
+      untilInput = el('input', 'f-date');
+      untilInput.type = 'date';
+      untilInput.value = f.repeat.until;
+      uRow.appendChild(untilInput);
+      const clear = el('button', 'mini-btn', '無期限');
+      clear.onclick = () => { f.repeat.until = ''; syncRepeat(); };
+      uRow.appendChild(clear);
+      body.appendChild(uRow);
+
+      repeatSel.onchange = () => {
+        f.repeat.freq = repeatSel.value;
+        // Default weekly to the day the event actually starts on — that's what
+        // "every week" means when you haven't said otherwise.
+        if (f.repeat.freq === 'WEEKLY' && !f.repeat.byday.length) {
+          f.repeat.byday = [BYDAY[weekdayOf(f.startKey)]];
+        }
+        syncRepeat();
+      };
+      untilInput.onchange = () => { f.repeat.until = untilInput.value || ''; syncRepeat(); };
+    }
+
+    function syncRepeat() {
+      if (!canRepeat) return;
+      const on = !!f.repeat.freq;
+      card.classList.toggle('repeats', on);
+      card.classList.toggle('weekly', f.repeat.freq === 'WEEKLY');
+      for (let i = 0; i < 7; i++) {
+        dayChips.children[i].classList.toggle('on', f.repeat.byday.includes(BYDAY[i]));
+      }
+      untilInput.value = f.repeat.until;
+      validate();
+    }
 
     // --- location / note
     const locRow = el('div', 'f-row');
@@ -1246,13 +1448,56 @@
     eDate.onchange = () => { if (eDate.value) f.endKey = eDate.value; syncWhen(); };
     eTime.onchange = () => { if (eTime.value) f.endTime = eTime.value; syncWhen(); };
 
+    /** The friendly shape the api layer's writers take. */
+    const asEvent = () => ({
+      title: f.title,
+      allDay: f.allDay,
+      startAt: startEpoch(f),
+      endAt: endEpoch(f),
+      tz: TZ,
+      labelId: f.labelId,
+      note: f.note,
+      location: f.location,
+    });
+
     async function save() {
       if (!validate()) return;
       f.title = title.value.trim();
       saveBtn.disabled = true;
       saveBtn.textContent = '保存中…';
       try {
-        if (editing) {
+        let msg = '保存しました';
+        if (editing && series && scope === 'this') {
+          // Replace one occurrence: a new event linked to the master, plus an
+          // EXDATE where it used to be. Both come back and both must land.
+          const { child, master } = await TTX.api.editOccurrence(
+            f.calendarId, raw, opts.occ.start, asEvent());
+          if (!child?.uuid) throw new Error('サーバーが予定を返しませんでした');
+          TTX.store.applyEvent(f.calendarId, child);
+          if (master?.uuid) TTX.store.applyEvent(f.calendarId, master);
+          msg = 'この回だけを変更しました';
+        } else if (editing && series && scope === 'future') {
+          // Split: a new series from here, the old one ended at the previous
+          // occurrence. Ask the expander which one that is rather than
+          // subtracting a day — the rule decides where the gaps are.
+          const prev = previousOccurrence(raw, opts.occ.start);
+          if (!prev) {
+            // Nothing before it, so "from here on" is the whole thing.
+            const patch = diffPatch(raw, f);
+            if (Object.keys(patch).length) {
+              const saved = await TTX.api.updateEvent(f.calendarId, raw.uuid, patch);
+              TTX.store.applyEvent(f.calendarId, saved?.uuid ? saved : { ...raw, ...patch });
+            }
+            msg = 'すべての回を変更しました';
+          } else {
+            const { created, master } = await TTX.api.splitSeries(
+              f.calendarId, raw, ymd(prev, raw.start_timezone || TZ), asEvent());
+            if (!created?.uuid) throw new Error('サーバーが予定を返しませんでした');
+            TTX.store.applyEvent(f.calendarId, created);
+            if (master?.uuid) TTX.store.applyEvent(f.calendarId, master);
+            msg = 'これ以降の回を変更しました';
+          }
+        } else if (editing) {
           const patch = diffPatch(raw, f);
           if (!Object.keys(patch).length) {
             closeForm();
@@ -1262,23 +1507,20 @@
           // Trust the server's echo when we get one; fall back to the merge we
           // just asked for, which is what PUT semantics promise anyway.
           TTX.store.applyEvent(f.calendarId, saved?.uuid ? saved : { ...raw, ...patch });
+          if (series) msg = 'すべての回を変更しました';
         } else {
+          const rule = buildRepeat(f.repeat);
           const saved = await TTX.api.createEvent(f.calendarId, {
-            title: f.title,
-            allDay: f.allDay,
-            startAt: startEpoch(f),
-            endAt: endEpoch(f),
-            tz: TZ,
-            labelId: f.labelId,
-            note: f.note,
-            location: f.location,
+            ...asEvent(),
+            recurrences: rule ? [rule] : [],
           });
           if (!saved?.uuid) throw new Error('サーバーが予定を返しませんでした');
           TTX.store.applyEvent(f.calendarId, saved);
+          msg = rule ? '繰り返しの予定を作成しました' : '予定を作成しました';
         }
         closeForm();
         await showKey(f.startKey);
-        toast(editing ? '保存しました' : '予定を作成しました');
+        toast(msg);
       } catch (e) {
         saveBtn.disabled = false;
         saveBtn.textContent = '保存';
@@ -1321,6 +1563,7 @@
     });
 
     syncWhen();
+    syncRepeat();
     // Synchronously, as the palette does: a frame where the sheet is up but
     // unfocused is a frame where a fast typist loses their first keystroke.
     title.focus();
@@ -1333,14 +1576,39 @@
     await refresh('fade');
   }
 
+  /**
+   * The occurrence before `startMs`, or null if it's the first. Truncating a
+   * series means naming the last occurrence to KEEP, and only the rule knows
+   * where that is — "one day earlier" is a different date entirely for a weekly
+   * or monthly series, and can land on a hole punched by an EXDATE.
+   */
+  function previousOccurrence(master, startMs) {
+    const before = TTX.recur.expand(master, master.start_at, startMs - 1);
+    return before.length ? before[before.length - 1] : null;
+  }
+
+  /** Editing a series asks which回 first; a plain event just opens. */
+  async function editEvent(o) {
+    const raw = TTX.store.rawEvent(o.calendarId, o.uuid);
+    if (!raw) return toast('元の予定が見つかりません。再同期してください');
+    if (!TTX.api.isMaster(raw)) return openForm({ occ: o });
+    const scope = await chooseScope('edit');
+    if (scope) openForm({ occ: o, scope });
+  }
+
   async function removeEvent(o) {
     const raw = TTX.store.rawEvent(o.calendarId, o.uuid);
-    const series = !!(raw?.recurrences?.some((l) => l.startsWith('RRULE:')));
+    if (!raw) return toast('元の予定が見つかりません。再同期してください');
+
+    if (TTX.api.isMaster(raw)) {
+      const scope = await chooseScope('delete');
+      if (!scope) return;
+      return removeSeries(o, raw, scope);
+    }
+
     const okd = await confirmDialog({
-      title: series ? '繰り返しの予定を削除' : '予定を削除',
-      body: series
-        ? `「${o.title}」をすべての回で削除します。取り消せません。`
-        : `「${o.title}」を削除します。取り消せません。`,
+      title: '予定を削除',
+      body: `「${o.title}」を削除します。取り消せません。`,
       ok: '削除',
       danger: true,
     });
@@ -1350,6 +1618,45 @@
       TTX.store.markDeleted(o.calendarId, o.uuid);
       await refresh('fade');
       toast('削除しました');
+    } catch (e) {
+      toast('削除に失敗しました: ' + e.message);
+    }
+  }
+
+  /**
+   * Deleting part of a series is not a DELETE — it's a rewrite of the master's
+   * rule. Only "all" actually removes the event.
+   */
+  async function removeSeries(o, raw, scope) {
+    const jp = (k) => `${+k.slice(5, 7)}月${+k.slice(8)}日`;
+    const prev = scope === 'future' ? previousOccurrence(raw, o.start) : null;
+    // "Everything from the first occurrence onwards" is just "everything".
+    const effective = scope === 'future' && !prev ? 'all' : scope;
+
+    const okd = await confirmDialog({
+      title: '繰り返しの予定を削除',
+      body: {
+        this: `「${o.title}」の ${jp(o.startKey)} の回だけを削除します。取り消せません。`,
+        future: `「${o.title}」の ${jp(o.startKey)} 以降の回を削除します。取り消せません。`,
+        all: `「${o.title}」をすべての回で削除します。取り消せません。`,
+      }[effective],
+      ok: '削除',
+      danger: true,
+    });
+    if (!okd) return;
+
+    try {
+      if (effective === 'all') {
+        await TTX.api.deleteEvent(o.calendarId, raw.uuid);
+        TTX.store.markDeleted(o.calendarId, raw.uuid);
+      } else {
+        const updated = effective === 'this'
+          ? await TTX.api.excludeOccurrence(o.calendarId, raw, o.start)
+          : await TTX.api.truncateSeries(o.calendarId, raw, ymd(prev, raw.start_timezone || TZ));
+        if (updated?.uuid) TTX.store.applyEvent(o.calendarId, updated);
+      }
+      await refresh('fade');
+      toast({ this: 'この回を削除しました', future: 'これ以降の回を削除しました', all: '削除しました' }[effective]);
     } catch (e) {
       toast('削除に失敗しました: ' + e.message);
     }
