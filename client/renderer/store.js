@@ -44,6 +44,12 @@
     store.members.clear();
     store.holidays.clear();
     store.me = null;
+    // Including this one: it decides how the grid is laid out, so leaving the
+    // previous account's behind draws one person's week under the other's name
+    // until the next sync lands. scripts/check.js compares this list against
+    // the store literal above, because "remember to reset it too" is not a
+    // thing anyone remembers.
+    store.setting = null;
     store.ready = false;
     store.syncedAt = 0;
     emit({ type: 'reset' });

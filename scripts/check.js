@@ -101,6 +101,33 @@ for (const name of SHARED) {
 
 section('regression guards');
 
+/* reset() has to clear every field the store holds, or switching accounts
+ * leaves one person's data rendering under the other's name. That is what the
+ * function is FOR, and it is still the easiest thing in the file to forget: add
+ * a field to the store literal, wire it up, ship it, and reset() quietly keeps
+ * the old value. `setting` (which decides how the grid is laid out) got exactly
+ * that far. So check the two lists against each other rather than trusting the
+ * next person to remember. */
+const storeJs = fs.readFileSync(path.join(ROOT, 'client/renderer/store.js'), 'utf8');
+{
+  const lit = storeJs.match(/\n\s*const store = \{\n([\s\S]*?)\n\s*\};/);
+  const body = storeJs.match(/\n\s*function reset\(\) \{\n([\s\S]*?)\n\s*\}/);
+  if (!lit || !body) {
+    bad('store.js: could not find the store literal or reset() — this guard is looking at the wrong shape');
+  } else {
+    const fields = [...lit[1].matchAll(/^\s{4}(\w+):/gm)].map((m) => m[1]);
+    // Comments out, first. Without this the guard reads `// store.setting = null;`
+    // as a reset and passes — measured, by commenting that exact line out and
+    // watching it stay green. A guard that only catches the fields you forgot
+    // to add, and not the ones you took away, is half a guard.
+    const live = body[1].replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+    const missed = fields.filter((f) => !new RegExp(`store\\.${f}\\b`).test(live));
+    if (!fields.length) bad('store.js: read 0 fields off the store literal — the guard is broken, not the code');
+    else if (missed.length) bad(`store.js: reset() never touches ${missed.join(', ')} — switching accounts would keep the last one's`);
+    else ok(`store.js: reset() clears all ${fields.length} store fields (${fields.join(', ')})`);
+  }
+}
+
 /* net.fetch always uses the DEFAULT session and silently ignores a `session`
  * option. With per-account partitions that doesn't just report a false
  * "signed out" — it can read a DIFFERENT ACCOUNT's cookie jar. Every request
