@@ -37,7 +37,7 @@ contextBridge.exposeInMainWorld('host', {
     setEnabled: (on) => ipcRenderer.invoke('map:setEnabled', on),
     tile: (z, x, y) => ipcRenderer.invoke('map:tile', { z, x, y }),
     search: (q) => ipcRenderer.invoke('map:search', q),
-    open: (lat, lon, label) => ipcRenderer.invoke('map:open', { lat, lon, label }),
+    open: (lat, lon) => ipcRenderer.invoke('map:open', { lat, lon }),
   },
   theme: {
     set: (mode) => ipcRenderer.invoke('app:setTheme', mode),

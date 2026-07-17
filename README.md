@@ -26,7 +26,10 @@ npm run dist      # → client/dist/TimeForest-0.1.0-x64.exe（インストー�
 
 ## 拡張でできること
 
-- **アジェンダ表示** — 任意期間を1本のリストで縦に読む。月グリッドを行き来しなくていい
+- **アジェンダ表示** — 任意期間を1本のリストで縦に読む。月グリッドを行き来しなくていい。
+  **スクロールし続ければ前後の月へそのまま入っていく**（見出しは今見ている月に追従する）。
+  どこまで先を用意するかは月数ではなく**画面の高さ**で決めている — 月は長さの単位ではなく、
+  空の月は1行に畳まれ、忙しい月は数画面ぶんあるので
 - **ダークモード** — TimeTree 自身が持っている純正ダークテーマを有効化する（後述）
 - **全文検索** — タイトル・場所・メモを全期間から即時検索
 - **エクスポート** — Markdown（クリップボード）/ CSV / JSON / ICS
@@ -282,7 +285,7 @@ npm run smoke     # Electron クライアントをヘッドレス起動して健
 ```sh
 cd client && npm run inspect   # --remote-debugging-port=9333 付きで起動
 npm i playwright-core          # CI は依存ゼロのままにしたいので、ここでだけ入れる
-npm run verify:form            # 作成・編集・削除 UI（124 アサーション）
+npm run verify:form            # 作成・編集・削除 UI（135 アサーション）
 npm run verify:recur           # 繰り返しの6操作（46 アサーション）
 npm run verify:notify          # リマインドとトレイ（16 アサーション）
 npm run verify:comment         # コメント（51 アサーション）

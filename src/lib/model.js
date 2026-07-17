@@ -152,9 +152,16 @@
   }
 
   /** Group occurrences into { 'YYYY-MM-DD': [occ, ...] }, repeating multi-day spans. */
-  function groupByDay(occs, fromKey, toKey) {
+  /**
+   * `cap` is daysBetween's runaway guard, and the caller is the only one who
+   * knows how many days it legitimately wants. The default (400) is fine for a
+   * month grid, and was fine for an agenda back when it always showed three
+   * months — but the agenda now grows as you scroll, and a range past 400 days
+   * got its tail cut off in silence: the span kept growing, the days stopped.
+   */
+  function groupByDay(occs, fromKey, toKey, cap) {
     const byDay = {};
-    for (const key of daysBetween(fromKey, toKey)) byDay[key] = [];
+    for (const key of daysBetween(fromKey, toKey, cap)) byDay[key] = [];
     for (const o of occs) {
       for (const key of o.days) {
         if (!(key in byDay)) continue;

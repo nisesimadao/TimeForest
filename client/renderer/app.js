@@ -88,6 +88,13 @@
     // TimeTree Web renders (measured), so the grid a family already knows keeps
     // the same shape here. See weekStart() for why this is a setting at all.
     weekStart: 1,
+    // Months either side of the cursor's month that the agenda has grown to
+    // cover. See range(). Not persisted — a fresh window starts at three
+    // months, the same as it always did.
+    spanBack: 0,
+    spanFwd: 2,
+    seenMonth: '',         // the month the agenda is scrolled to; titles it
+    growing: false,        // one extension at a time
     theme: 'system',
     dark: false,
     holidays: [],
@@ -148,14 +155,59 @@
   const weekStartDow = () => (ui.weekStart === 0 ? 0 : 1);
   const weekStart = (key) => addDays(key, -((weekdayOf(key) - weekStartDow() + 7) % 7));
 
-  /** Agenda spans three months; month spans one; week spans seven days. */
+  /**
+   * Agenda spans three months and GROWS as you scroll; month spans one; week
+   * spans seven days.
+   *
+   * `spanBack`/`spanFwd` are months either side of the cursor's month. They
+   * start at 0/2 — the three months this always showed — and the agenda's
+   * scroll handler pushes them outward when you reach an edge, so a year is a
+   * continuous scroll rather than twelve presses of →. The cursor itself does
+   * not move while you scroll; if it did, the range would slide out from under
+   * the very scroll that asked for it.
+   *
+   * Capped: the DOM is real, and an agenda nobody ever navigates away from
+   * would otherwise grow without bound.
+   */
+  /**
+   * How much agenda to keep ready beyond the edge you're heading for, measured
+   * in SCREENFULS — not months.
+   *
+   * A month is not a unit of length here. An empty month collapses to a single
+   * 「予定なし」 line; a busy one is several screens. So a fixed month count is
+   * either far too little (a sparse calendar can add ten months and still not
+   * fill the window — which makes the "am I near the edge?" test permanently
+   * true, and it grows until it hits the cap in one flick) or far too much (a
+   * busy calendar ends up rendering years of rows nobody asked for).
+   *
+   * So: work out how many months the runway actually needs from the density
+   * that's on screen right now, and add them in ONE paint. Measured, a paint at
+   * this size costs ~26ms — two dropped frames. Doing that once per month added
+   * is exactly the stutter you feel while scrolling.
+   */
+  const AGENDA_RUNWAY = 2;
+  /**
+   * And a hard stop per side anyway. The runway is a pixel budget, and a
+   * calendar with nothing in it answers "how many months to fill two screens?"
+   * with a number in the hundreds.
+   */
+  const AGENDA_MAX_SPAN = 24;
+  /* daysBetween caps at 400 by default. The agenda can ask for far more than
+   * that now, and going over doesn't error — it just stops handing back days,
+   * so the last months render as nothing at all. Ask for what the cap allows. */
+  const AGENDA_DAY_CAP = (AGENDA_MAX_SPAN * 2 + 1) * 31 + 31;
+  const resetSpan = () => { ui.spanBack = 0; ui.spanFwd = 2; ui.seenMonth = ''; };
+
   function range() {
     if (ui.view === 'month') return { from: monthStart(ui.cursor), to: monthEnd(ui.cursor) };
     if (ui.view === 'week') {
       const s = weekStart(ui.cursor);
       return { from: s, to: addDays(s, 6) };
     }
-    return { from: monthStart(ui.cursor), to: monthEnd(addMonths(ui.cursor, 2)) };
+    return {
+      from: monthStart(addMonths(ui.cursor, -ui.spanBack)),
+      to: monthEnd(addMonths(ui.cursor, ui.spanFwd)),
+    };
   }
 
   // --- persistence ------------------------------------------------------
@@ -324,6 +376,13 @@
    * `text-autospace` already opens the gap where one belongs.
    */
   function titleText() {
+    // Scrolling the agenda moves what you're looking at without moving the
+    // cursor, so the cursor's month is the wrong answer there. Derived, not
+    // poked into the node: paint() rebuilds the toolbar on every growth, and a
+    // title written directly would be reset to the cursor's month each time —
+    // then skipped by titleFromScroll's own "nothing changed" guard, which is
+    // exactly how it got stuck reading 7月 in December.
+    if (ui.view === 'agenda' && ui.seenMonth) return ui.seenMonth;
     const [y, m] = ui.cursor.split('-');
     if (ui.view !== 'week') return `${y}年${+m}月`;
     const s = weekStart(ui.cursor);
@@ -387,6 +446,10 @@
   /** Step by whatever the current view actually shows. */
   function go(n) {
     ui.cursor = ui.view === 'week' ? addDays(ui.cursor, n * 7) : addMonths(ui.cursor, n);
+    // → after scrolling six months down should move one month from the cursor,
+    // not from wherever the scroll wandered to. Deliberate travel resets the
+    // span the scroll accumulated.
+    resetSpan();
     refresh(n > 0 ? 'next' : 'prev');
   }
 
@@ -394,6 +457,7 @@
   function jumpTo(key, view) {
     const dir = key > ui.cursor ? 'next' : key < ui.cursor ? 'prev' : 'fade';
     ui.cursor = key;
+    resetSpan();
     if (view) { ui.view = view; savePrefs(); }
     refresh(dir);
   }
@@ -401,6 +465,7 @@
   function setView(v) {
     if (ui.view === v) return;
     ui.view = v;
+    resetSpan();
     savePrefs();
     refresh('fade');
   }
@@ -592,7 +657,7 @@
 
   function renderAgenda() {
     const { from, to } = range();
-    const byDay = TTX.model.groupByDay(occs(), from, to);
+    const byDay = TTX.model.groupByDay(occs(), from, to, AGENDA_DAY_CAP);
     const wrap = el('div', 'agenda');
     const today = todayKey();
     let month = '';
@@ -666,6 +731,28 @@
       wrap.appendChild(day);
     }
     ui.status = `${count}件の予定`;
+
+    // Reaching an edge is the ask for more. 600px ahead of it, so the next
+    // months are already there by the time you get to where they go — hitting
+    // the floor first and loading after is what makes infinite scroll feel like
+    // stalling.
+    //
+    // Only in the direction you're travelling. Without that, scrolling DOWN
+    // while still near the top also grows backwards — and an empty month
+    // collapses to a single 「予定なし」 line, so prepending one leaves you
+    // still inside the trigger zone. It would run all the way to the 25-month
+    // cap in one gesture.
+    wrap.onscroll = () => {
+      const top = wrap.scrollTop;
+      const up = top < (ui.lastTop ?? top);
+      ui.lastTop = top;
+      titleFromScroll(wrap);
+      // One screenful from the edge, not a fixed 600px: on a tall window 600px
+      // is already the edge, and on a short one it is the whole list.
+      const edge = wrap.clientHeight;
+      if (up && top < edge) growAgenda(-1);
+      else if (!up && wrap.scrollHeight - top - wrap.clientHeight < edge) growAgenda(1);
+    };
     return wrap;
   }
 
@@ -1135,7 +1222,7 @@
     if (Number.isFinite(o.lat) && Number.isFinite(o.lon)) {
       rows.push(['map', {
         text: '地図で開く',
-        act: () => window.host.map.open(o.lat, o.lon, o.location || o.title),
+        act: () => window.host.map.open(o.lat, o.lon),
       }]);
     }
     if (o.url) rows.push(['link', o.url]);
@@ -3333,6 +3420,7 @@
     if (st) st.textContent = ui.status;
 
     if (ui.view === 'agenda' && scrollTop != null && !ui.keepScroll) $('.agenda').scrollTop = scrollTop;
+    if (ui.view === 'agenda') ui.lastTop = $('.agenda')?.scrollTop ?? 0;
     if (ui.view === 'month') requestAnimationFrame(measureCells);
   }
 
@@ -3353,6 +3441,99 @@
     await ensureHolidays();
     render(dir);
     if (ui.view === 'agenda') scrollToCursor();
+  }
+
+  /**
+   * Grow the agenda at whichever edge you scrolled to, so the calendar reads as
+   * one continuous year instead of three months with walls at both ends.
+   *
+   * Two things make this harder than "append more rows":
+   *
+   * 1. Growing BACKWARDS inserts content above you. The browser keeps scrollTop
+   *    where it was, which means the page jumps by exactly the height that was
+   *    added. So measure before, measure after, and put the difference back —
+   *    the whole point is that nothing appears to move.
+   * 2. This must not go through render(). That runs a View Transition, which
+   *    crossfades the old and new DOM: correct for 「次の月へ」, absurd for
+   *    "there is more of the list below you".
+   */
+  async function growAgenda(dir) {
+    if (ui.growing || ui.view !== 'agenda') return;
+    const side = dir < 0 ? ui.spanBack : ui.spanFwd;
+    if (side >= AGENDA_MAX_SPAN) return;
+
+    const wrap = $('.agenda');
+    if (!wrap) return;
+    const before = wrap.scrollHeight;
+    const at = wrap.scrollTop;
+
+    // How much is already loaded past the edge you're heading for, and how much
+    // short of the runway that leaves us.
+    const have = dir < 0 ? at : before - at - wrap.clientHeight;
+    const need = wrap.clientHeight * AGENDA_RUNWAY - have;
+    if (need <= 0) return;
+
+    // What a month is worth in pixels, on THIS calendar, right now. The whole
+    // reason this isn't a constant: it's ~40px for an empty month and several
+    // hundred for a busy one, and guessing either way is what made this either
+    // stutter or run away.
+    const perMonth = Math.max(1, before / (ui.spanBack + ui.spanFwd + 1));
+    const add = Math.min(Math.max(1, Math.ceil(need / perMonth)), AGENDA_MAX_SPAN - side);
+    if (add <= 0) return;
+
+    ui.growing = true;
+    try {
+      if (dir < 0) ui.spanBack += add; else ui.spanFwd += add;
+
+      // Cached by year, so this is free within a year and one fetch across a
+      // boundary. Painting first would flash a month with no holidays in it.
+      await ensureHolidays();
+      paint();
+      const after = $('.agenda');
+      if (!after) return;
+      // Only ONE end moves — the span never slides — so the height difference is
+      // exactly what appeared, and it appeared above you iff you grew backwards.
+      // paint() has already restored the old scrollTop, which is the whole
+      // answer for forward growth.
+      //
+      // (An earlier version anchored on the month header you were reading
+      // instead. It silently did nothing: .ag-month is `position: sticky`, so
+      // its offsetTop tracks the scroll rather than its place in the list, and
+      // every measurement came out ~0.)
+      after.scrollTop = dir < 0 ? at + (after.scrollHeight - before) : at;
+      // The handler reads direction by comparing against this. Leaving it at
+      // the pre-jump value makes the next scroll look like a huge move upward.
+      ui.lastTop = after.scrollTop;
+    } finally {
+      // Writing scrollTop above FIRES A SCROLL EVENT, and the handler that
+      // catches it would see "still near the edge" and grow again — each growth
+      // paying for the next one. Measured: 14 deliberate scrolls became 27+
+      // growths. Scroll events are dispatched before requestAnimationFrame
+      // callbacks run, so releasing here lets our own scrolls land while the
+      // guard is still up.
+      requestAnimationFrame(() => { ui.growing = false; });
+    }
+  }
+
+  /**
+   * The title names the month you are LOOKING at, which after a scroll is not
+   * the month the cursor sits in. Written straight into the node — re-rendering
+   * the app on every scroll frame to change six characters would be absurd.
+   */
+  function titleFromScroll(wrap) {
+    const heads = [...wrap.querySelectorAll('.ag-month')];
+    if (!heads.length) return;
+    const top = wrap.getBoundingClientRect().top;
+    // The last header at or above the top edge: the month whose rows you're in.
+    let seen = heads[0].textContent;
+    for (const h of heads) {
+      if (h.getBoundingClientRect().top - top <= 1) seen = h.textContent;
+      else break;
+    }
+    if (seen === ui.seenMonth) return;
+    ui.seenMonth = seen;
+    const t = $('.tb-title');
+    if (t) t.textContent = seen;
   }
 
   /** Put the cursor's month at the top of the agenda instead of guessing. */

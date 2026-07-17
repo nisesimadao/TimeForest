@@ -410,16 +410,17 @@ ipcMain.handle('map:setEnabled', (_e, on) => { mapsEnabled = !!on; return mapsEn
  * "anything that looks like a map". Works with maps switched off: this is the
  * user clicking a button, and nothing is fetched.
  */
-ipcMain.handle('map:open', (_e, { lat, lon, label } = {}) => {
+ipcMain.handle('map:open', (_e, { lat, lon } = {}) => {
   const la = Number(lat);
   const lo = Number(lon);
   if (!Number.isFinite(la) || !Number.isFinite(lo)) throw new Error('bad coordinates');
   if (Math.abs(la) > 90 || Math.abs(lo) > 180) throw new Error('bad coordinates');
-  const q = encodeURIComponent(String(label || '').slice(0, 120));
-  shell.openExternal(
-    `https://www.google.com/maps/search/?api=1&query=${la},${lo}`
-    + (q ? `&query_place_id=&z=17` : '')
-  );
+  // Coordinates only. The label used to be encoded here and then dropped on the
+  // floor — what actually got appended was an EMPTY `query_place_id=` plus a
+  // `z=17` that this URL form doesn't take. Both were junk, and the name never
+  // reached Google either way. Coordinates are the precise thing to send; a
+  // place name is a search, which can land somewhere else entirely.
+  shell.openExternal(`https://www.google.com/maps/search/?api=1&query=${la},${lo}`);
   return true;
 });
 

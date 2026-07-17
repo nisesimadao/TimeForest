@@ -216,6 +216,51 @@ for (const [name, got, want] of timing) {
   else bad(`${name}: expected ${want}, got ${got}`);
 }
 
+// --- 5b0. the agenda doesn't lose its tail ----------------------------------
+//
+// daysBetween has a 400-day runaway guard, and going over it doesn't throw — it
+// just stops returning days. That was invisible while the agenda always showed
+// three months. It grows as you scroll now, and at full span the last year of
+// it rendered as nothing at all: the months were in the range, the days were
+// not. Exactly the silent truncation this project keeps finding.
+
+section('agenda span (behavioural)');
+require(path.join(ROOT, 'src/lib/tz.js'));
+
+/* Mirrors client/renderer/app.js. If AGENDA_MAX_MONTHS moves and this doesn't,
+ * the app goes back to dropping months without a word — so read it from the
+ * source rather than restating the number here. */
+const appSrc = fs.readFileSync(path.join(ROOT, 'client/renderer/app.js'), 'utf8');
+const maxSpan = +(appSrc.match(/AGENDA_MAX_SPAN\s*=\s*(\d+)/) || [])[1];
+const maxMonths = maxSpan * 2 + 1;
+const capExpr = appSrc.match(/AGENDA_DAY_CAP\s*=\s*\(AGENDA_MAX_SPAN\s*\*\s*2\s*\+\s*1\)\s*\*\s*(\d+)\s*\+\s*(\d+)/);
+const dayCap = capExpr ? maxMonths * +capExpr[1] + +capExpr[2] : NaN;
+
+if (maxSpan > 0) ok(`AGENDA_MAX_SPAN is ${maxSpan} months each way — ${maxMonths} at most`);
+else bad('could not read AGENDA_MAX_SPAN out of app.js');
+if (Number.isFinite(dayCap)) ok(`AGENDA_DAY_CAP reads as ${dayCap}`);
+else bad('could not read AGENDA_DAY_CAP out of app.js — has the expression changed shape?');
+
+/* The worst case: every month in the span is a 31-day month. */
+if (dayCap >= maxMonths * 31) ok(`AGENDA_DAY_CAP (${dayCap}) covers ${maxMonths} × 31-day months`);
+else bad(`AGENDA_DAY_CAP ${dayCap} is short of ${maxMonths} × 31 = ${maxMonths * 31} days`);
+
+/* And the real thing: ask daysBetween for the full span and count what comes
+ * back. A default cap silently returns 400 and the last year vanishes. */
+{
+  const from = '2026-01-01';
+  const to = globalThis.TTX.tz.ymd(Date.UTC(2026, maxMonths, 0), 'UTC'); // end of the last month
+  const want = globalThis.TTX.tz.daysBetween(from, to, dayCap);
+  const capped = globalThis.TTX.tz.daysBetween(from, to);              // the 400 default
+  if (want[want.length - 1] === to) ok(`the full ${maxMonths}-month span reaches its last day (${to})`);
+  else bad(`span truncated: asked to ${to}, got ${want[want.length - 1]}`);
+  if (capped.length < want.length) {
+    ok(`and the default cap would have cut it at ${capped[capped.length - 1]} — this guard is not decorative`);
+  } else {
+    bad('the default cap no longer truncates this span — the guard proves nothing; widen the case');
+  }
+}
+
 // --- 5b1. the month grid is as tall as the month needs -----------------------
 //
 // A fixed 6 rows draws a spare week of next month in most months, and worse,

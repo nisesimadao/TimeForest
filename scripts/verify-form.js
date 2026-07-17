@@ -804,6 +804,133 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   ok('span test events cleaned up');
 
   // --- 8. settings ----------------------------------------------------------
+  // --- agenda: scrolling keeps going ----------------------------------------
+  //
+  // The agenda used to be three months with a wall at each end. It grows at
+  // whichever edge you reach now, and the two things that can quietly ruin that
+  // are asserted below: the view jumping when months are inserted ABOVE you,
+  // and the far end rendering as nothing because daysBetween stopped handing
+  // back days.
+  sec('agenda — scrolling reaches the next month');
+  await page.click('.seg button:text-is("アジェンダ")');
+  await page.waitForSelector('.agenda', { timeout: 5000 });
+  await page.click('.pill:text-is("今日")');
+  await sleep(500);
+
+  // The throwaway calendar is far too sparse for the agenda to scroll at all
+  // (measured: scrollHeight === clientHeight), and a scroll test on a list that
+  // cannot scroll asserts nothing. One marker per month, right out to the
+  // forward limit, so the far end has something that must appear.
+  //
+  // 13 = the cursor's month + AGENDA_MAX_SPAN. Asking for 14 tests nothing but
+  // this test's own arithmetic — the 14th month is past where the agenda ever
+  // grows, so its marker is correctly absent.
+  const MARK = 'TF検証-月印';
+  const MARK_MONTHS = 13;
+  const marks = await page.evaluate(async ({ t, n }) => {
+    const cal = [...TTX.store.state.enabled][0];
+    const ids = [];
+    for (let k = 0; k < n; k++) {
+      const at = Date.UTC(2026, 6 + k, 15, 2, 0);
+      const e = await TTX.api.createEvent(cal, {
+        title: `${t}${k}`, allDay: false, startAt: at, endAt: at + 3600000,
+        tz: 'Asia/Tokyo', labelId: 1,
+      });
+      TTX.store.applyEvent(cal, e);
+      ids.push(e.uuid);
+    }
+    return ids;
+  }, { t: MARK, n: MARK_MONTHS });
+  await page.click('.pill:text-is("今日")');
+  await sleep(700);
+
+  const agenda = () => page.evaluate((t) => {
+    const w = document.querySelector('.agenda');
+    const hs = [...w.querySelectorAll('.ag-month')].map((n) => n.textContent);
+    return {
+      title: document.querySelector('.tb-title')?.textContent,
+      months: hs.length,
+      first: hs[0],
+      last: hs[hs.length - 1],
+      marks: [...w.querySelectorAll('.ev .ti')].filter((n) => n.textContent.startsWith(t)).length,
+      top: Math.round(w.scrollTop),
+      scrollable: w.scrollHeight > w.clientHeight + 2,
+    };
+  }, MARK);
+
+  const a0 = await agenda();
+  check(a0.scrollable, 'the agenda has enough on it to scroll — otherwise this section proves nothing');
+  check(a0.months === 3, `it starts at three months (${a0.first}〜${a0.last})`);
+
+  // Roll to the bottom until it stops growing.
+  for (let i = 0; i < 14; i++) {
+    await page.evaluate(() => { const w = document.querySelector('.agenda'); w.scrollTop = w.scrollHeight; });
+    await sleep(420);
+  }
+  const a1 = await agenda();
+  check(a1.months > a0.months, `scrolling to the bottom brings more months (${a0.months} → ${a1.months})`);
+  check(a1.marks === MARK_MONTHS,
+    `every month it claims to show is really drawn (${a1.marks}/${MARK_MONTHS} markers — daysBetween's `
+    + '400-day cap silently truncates past ~13 months)');
+  check(a1.title !== a0.title, `the title follows what you're looking at (${a0.title} → ${a1.title})`);
+
+  // Now upward — months get inserted ABOVE, and the whole point is that the
+  // page does not jump. Anchor on a row and check it stays put.
+  const asDate = (s) => (s || '').replace(/(\d+)年(\d+)月/, (_, y, m) => y + String(m).padStart(2, '0'));
+  const atBottom = await agenda();
+  await page.evaluate(() => { document.querySelector('.agenda').scrollTop = 0; });
+  await sleep(900);
+  const wentBack = await agenda();
+  check(asDate(wentBack.first) < asDate(atBottom.first),
+    `scrolling up reaches earlier months, after already going forward `
+    + `(${atBottom.first} → ${wentBack.first})`);
+
+  // Now the thing that quietly ruins it: months appear ABOVE you, and the
+  // browser keeps scrollTop where it was, so the page lurches by exactly the
+  // height that was inserted.
+  //
+  // Anchor on a MARKER row, whose title is unique. An earlier version grabbed
+  // whatever row sat below y=200 and re-found it by its text — which matched a
+  // DIFFERENT row once the span reached a second year and the same 祝日 appeared
+  // twice, and reported a 93px jump that was never there.
+  //
+  // Scrolling to 0 is the deliberate move, so the row must fall by exactly the
+  // scrollTop it started from. Any other number is the list moving underneath.
+  const t0 = await page.evaluate(() => Math.round(document.querySelector('.agenda').scrollTop));
+  const before = await page.evaluate((t) => {
+    const w = document.querySelector('.agenda');
+    const row = [...w.querySelectorAll('.ev')]
+      .find((n) => n.querySelector('.ti')?.textContent.startsWith(t) && n.getBoundingClientRect().top > 100);
+    if (!row) return null;
+    return { y: Math.round(row.getBoundingClientRect().top), title: row.querySelector('.ti').textContent,
+      first: w.querySelector('.ag-month')?.textContent };
+  }, MARK);
+  check(!!before && t0 > 0, `a marker row is on screen to measure against (scrollTop ${t0})`);
+
+  await page.evaluate(() => { document.querySelector('.agenda').scrollTop = 0; });
+  await sleep(900);
+  const after = await page.evaluate((title) => {
+    const w = document.querySelector('.agenda');
+    const rows = [...w.querySelectorAll('.ev')].filter((n) => n.querySelector('.ti')?.textContent === title);
+    return { hits: rows.length, y: rows[0] ? Math.round(rows[0].getBoundingClientRect().top) : null,
+      first: w.querySelector('.ag-month')?.textContent };
+  }, before?.title);
+  check(after.hits === 1, `the anchor row is unambiguous (${after.hits} match)`);
+  check(asDate(after.first) < asDate(before.first),
+    `more months really were inserted above (${before.first} → ${after.first}) — `
+    + 'otherwise the next check proves nothing');
+  check(after.y !== null && Math.abs(after.y - (before.y + t0)) <= 4,
+    `and the row you were reading stays put while that happens (${before.y} → ${after.y}, `
+    + `expected ${before.y + t0} after scrolling ${t0}px up)`);
+
+  await page.evaluate(async (ids) => {
+    const cal = [...TTX.store.state.enabled][0];
+    for (const u of ids) { await TTX.api.deleteEvent(cal, u); TTX.store.markDeleted(cal, u); }
+  }, marks);
+  await page.click('.pill:text-is("今日")');
+  await sleep(400);
+  ok('agenda test events cleaned up');
+
   sec('settings');
   await page.keyboard.press(',');
   await page.waitForSelector('.settings', { timeout: 5000 });
