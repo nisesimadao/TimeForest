@@ -15,7 +15,8 @@
     "verify:comment": "node scripts/verify-comment.js",
     "icons": "node scripts/build-icons.js",
     "dist": "node client/node_modules/electron-builder/out/cli/cli.js --config electron-builder.config.js",
-    "dist:dir": "node client/node_modules/electron-builder/out/cli/cli.js --config electron-builder.config.js --dir"
+    "dist:dir": "node client/node_modules/electron-builder/out/cli/cli.js --config electron-builder.config.js --dir",
+    "tf": "cd client && electron cli.js"
   },
   "engines": {
     "node": ">=20"

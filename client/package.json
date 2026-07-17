@@ -7,7 +7,8 @@
   "scripts": {
     "start": "electron .",
     "dev": "electron . --dev",
-    "inspect": "electron . --remote-debugging-port=9333"
+    "inspect": "electron . --remote-debugging-port=9333",
+    "tf": "electron cli.js"
   },
   "devDependencies": {
     "electron": "^43.1.1",

@@ -41,6 +41,31 @@ S.migrateUserData();
 let mainWindow = null;
 let authWindow = null;
 
+/**
+ * One TimeForest per profile.
+ *
+ * Two Electron processes on the same userData don't fail cleanly — they fight
+ * over the Chromium profile and the loser gets nonsense: a CSRF token comes
+ * back fine, and then /api/v1/calendars answers an empty list, or a 400 with
+ * code -493. Both read as "you have no calendars", which is a lie, and it costs
+ * an hour every time. Measured both ways during this session.
+ *
+ * Taking the lock also means the CLI can ASK, and say something useful instead
+ * of relaying -493.
+ */
+if (!app.requestSingleInstanceLock()) {
+  console.error('TimeForest はもう起動しています。');
+  app.exit(0);
+}
+app.on('second-instance', () => {
+  // Someone launched it again — they want the window, not another copy.
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  }
+});
+
 // --- accounts --------------------------------------------------------------
 
 async function addAccount() {

@@ -78,6 +78,32 @@ npm run dist      # → client/dist/TimeForest-0.1.0-x64.exe（インストー�
 OpenStreetMap のタイル利用ポリシーが要求する User-Agent を名乗れるのも、
 `file://` のレンダラにはできないことなので、そこを通す理由になっている。
 
+## 端末から使う（CLI）
+
+```sh
+npm run tf -- ls --from 2026-07-01 --to 2026-07-31
+npm run tf -- ls --cal 家族 --json
+npm run tf -- show <uuid>
+npm run tf -- comments <uuid>
+npm run tf -- say <uuid> "14時でいい？"
+npm run tf -- accounts
+```
+
+**ログインは要らない。** アプリでログイン済みのセッションをそのまま使う。
+
+それができるのは、CLI が **Electron プロセスだから**。セッションは Electron の
+partition（userData の下にある Chromium の cookie jar）にあって、実体は DPAPI で
+暗号化された SQLite なので、素の Node からは読めない。だから CLI も Electron に
+して `client/session.js` を共有する。ウィンドウは1枚も作らない（実測 433ms）。
+
+API の知識も `src/lib/*` をそのまま共有する。「書き込みは単数形・読み取りは複数形」
+「終日は UTC 深夜で保存される」「繰り返しの本当の編集手順」——全部あそこにある。
+CLI が自前のクライアントを持てば、それが全部間違う場所が2つになる。
+
+> ⚠ **アプリを起動したまま実行しない。** 同じ profile を2つの Electron が奪い合う。
+> 失敗の仕方が悪くて、CSRF は取れるのにカレンダーが空（あるいは 400 `-493`）になり、
+> 「カレンダーがありません」という嘘に見える。CLI は起動を検出して、そう言って止まる。
+
 ## インストール（PC / Chrome 拡張）
 
 ビルド不要。
