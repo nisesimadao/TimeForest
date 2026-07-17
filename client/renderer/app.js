@@ -86,7 +86,9 @@
     confirm: false,
     accounts: [],
     activeId: null,
-    cellCap: 4,
+    rowH: 0,
+    cellH: 0,
+    laneH: 0,
     status: '',
     syncing: false,
     syncFailed: false,
@@ -773,7 +775,8 @@
 
       const evs = el('div', 'm-evs');
       // If it doesn't all fit, give up one slot so the "+N" line has a home.
-      const shown = list.length > ui.cellCap ? list.slice(0, Math.max(0, ui.cellCap - 1)) : list;
+      const cap = capFor(lanes);
+      const shown = list.length > cap ? list.slice(0, Math.max(0, cap - 1)) : list;
       for (const o of shown) {
         const c = railColor(o);
         const chip = el('button', 'm-ev ' + (o.allDay || o.holiday ? 'chip' : 'dotted'));
@@ -956,17 +959,43 @@
    * from the real laid-out chip, and re-measured whenever the window resizes.
    */
   function measureCells() {
-    const evs = $('.m-evs');
     const chip = $('.m-ev');
-    if (!evs || !chip) return;
-    const rowH = chip.getBoundingClientRect().height + 1; // + flex gap
-    if (rowH < 4) return;
-    const cap = Math.max(1, Math.floor((evs.clientHeight + 1) / rowH));
-    if (cap !== ui.cellCap) {
-      ui.cellCap = cap;
-      render();
-    }
+    const week = $('.m-week');
+    const evs = week?.querySelector('.m-evs');
+    if (!chip || !evs) return;
+
+    const rowH = chip.getBoundingClientRect().height + 1;    // + flex gap
+    const bar = $('.m-bar');
+    // Measured, not assumed — same reason as rowH. A guessed lane height is
+    // the same class of mistake as the guessed row height that let cells
+    // overflow in the first place.
+    const laneH = bar ? bar.getBoundingClientRect().height + 1 : (ui.laneH || 16);
+    // The height a cell would give chips if its week spent nothing on bars.
+    // Any week can answer that, since we know what it IS spending.
+    const lanes = +week.style.getPropertyValue('--lanes') || 0;
+    const cellH = evs.clientHeight + lanes * laneH;
+    if (rowH < 4 || cellH < 4) return;
+
+    if (rowH === ui.rowH && cellH === ui.cellH && laneH === ui.laneH) return;
+    ui.rowH = rowH;
+    ui.cellH = cellH;
+    ui.laneH = laneH;
+    render();
   }
+
+  /**
+   * How many chips fit in a cell of a week that spends `lanes` rows on bars.
+   *
+   * There used to be one cap for the whole grid, measured off whichever cell
+   * was first in the DOM. That was fine while every cell was the same height.
+   * Multi-day bars made the height depend on the WEEK — a week with four lanes
+   * has 22px for chips where an empty one has 90px — so the single cap
+   * overfilled the busy weeks and pushed their "+N" line 62px below the cell,
+   * which is exactly the silent clipping the measuring exists to prevent.
+   */
+  const capFor = (lanes) => Math.max(0, Math.floor(
+    ((ui.cellH || 90) - lanes * (ui.laneH || 16) + 1) / (ui.rowH || 16)
+  ));
 
   // --- export -----------------------------------------------------------
 
@@ -2977,9 +3006,14 @@
     if (ui.syncing) return;
     ui.syncing = true;
     if (!quiet) { ui.status = '同期中…'; render(); }
-    const before = TTX.store.state.events;
     const was = quiet ? fingerprint() : null;
-    TTX.store.state.events = new Map();
+    // Don't empty the store first. syncAll replaces each calendar's list as it
+    // lands, so the old data stays readable the whole time, and a failure
+    // leaves it untouched. Clearing opened a window — the length of a full
+    // pull, seconds — where anything that painted saw an empty calendar. The
+    // error path already knew stale beats blank; the happy path had the same
+    // hole, and it only shows if you happen to render mid-fetch, which a
+    // background sync every five minutes makes a matter of when, not if.
     try {
       await TTX.store.syncAll((cal, n) => {
         if (quiet) return;
@@ -2998,9 +3032,8 @@
       await refresh();
       if (!quiet) toast(`同期完了 — ${TTX.store.totalEvents()} 件`);
     } catch (e) {
-      // Keep showing the old data rather than an empty calendar: stale is bad,
-      // but blank is worse, and the footer says which one you're looking at.
-      if (!TTX.store.state.events.size) TTX.store.state.events = before;
+      // The store still holds whatever last landed — stale is bad, blank is
+      // worse, and the footer says which one you're looking at.
       ui.syncFailed = true;
       render();
       if (!quiet) toast('同期エラー: ' + e.message);

@@ -74,7 +74,6 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   }, CAL);
 
   const resync = () => page.evaluate(() => {
-    TTX.store.state.events.clear();
     return TTX.store.syncAll();
   });
 

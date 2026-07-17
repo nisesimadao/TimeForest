@@ -239,7 +239,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   // --- 3. does the server actually agree? -----------------------------------
   sec('re-sync — proving it landed server-side, not just locally');
-  await page.evaluate(() => { TTX.store.state.events.clear(); return TTX.store.syncAll(); });
+  await page.evaluate(() => TTX.store.syncAll());
   raw = await findRaw(T2);
   check(!!raw, 'event is still there after a full re-sync from the server');
   check(raw && raw.location === '検証室A', 'server has the location');
@@ -328,7 +328,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   }
 
   sec('re-sync — proving the delete landed server-side');
-  await page.evaluate(() => { TTX.store.state.events.clear(); return TTX.store.syncAll(); });
+  await page.evaluate(() => TTX.store.syncAll());
   for (const t of [T2, T3]) {
     const after = await findRaw(t);
     // DELETE is a soft delete: the row stays and gains deactivated_at.
@@ -403,7 +403,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     `all-day 1日前/2日前 store as 900/2340 (${JSON.stringify((await findRaw(T5))?.alerts)})`);
 
   sec('re-sync — the reminders really reached the server');
-  await page.evaluate(() => { TTX.store.state.events.clear(); return TTX.store.syncAll(); });
+  await page.evaluate(() => TTX.store.syncAll());
   check(JSON.stringify((await findRaw(T4))?.alerts) === '[0,1440]', 'server kept the timed reminders');
   check(JSON.stringify((await findRaw(T5))?.alerts) === '[900,2340]', 'server kept the all-day reminders');
   check((await findRaw(T4))?.attendees?.length === 1, 'server kept the attendee');
@@ -466,7 +466,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     'virtual_user_attendees survived — the key we never model');
 
   sec('re-sync — the attachment really reached the server');
-  await page.evaluate(() => { TTX.store.state.events.clear(); return TTX.store.syncAll(); });
+  await page.evaluate(() => TTX.store.syncAll());
   cl = await findRaw(T6);
   check(cl?.attachment?.checklist?.length === 2, 'server kept the checklist');
   check(cl?.url === 'https://example.com/list', 'server kept the url');
@@ -485,7 +485,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await page.fill('.f-title', T7);
   await page.click('.btn.primary');
   await page.waitForSelector('.form', { state: 'detached', timeout: 15000 });
-  await page.evaluate(() => { TTX.store.state.events.clear(); return TTX.store.syncAll(); });
+  await page.evaluate(() => TTX.store.syncAll());
   cl = await findRaw(T7);
   check(cl?.attachment?.checklist?.length === 2, 'a title-only edit left the checklist alone');
   check(cl?.url === 'https://example.com/list', 'and the url');
@@ -646,7 +646,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await page.waitForSelector('.form', { state: 'detached', timeout: 15000 });
 
   sec('re-sync — the pin really reached the server');
-  await page.evaluate(() => { TTX.store.state.events.clear(); return TTX.store.syncAll(); });
+  await page.evaluate(() => TTX.store.syncAll());
   const pinned = await page.evaluate((t) => {
     const list = TTX.store.state.events.get([...TTX.store.state.enabled][0]) || [];
     const e = list.find((x) => x.title === t);
@@ -699,6 +699,20 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     await mk(t1, Date.UTC(2026, 6, 25), Date.UTC(2026, 6, 27), 9);   // crosses Sat->Sun
     await mk(t2, Date.UTC(2026, 6, 22), Date.UTC(2026, 7, 2), 3);    // three week rows
     await mk(t3, Date.UTC(2026, 6, 23), Date.UTC(2026, 6, 24), 6);   // shares a lane
+    // And a pile of single-day events in the SAME week as those bars. Without
+    // these the overflow check below is theatre: with nothing to stack under
+    // the lanes, no cap can overfill a cell, and the assertion passes no
+    // matter how wrong the cap is. (It did — until this line existed.)
+    const cal2 = [...TTX.store.state.enabled][0];
+    for (let i = 0; i < 6; i++) {
+      const at = Date.UTC(2026, 6, 23, i + 8, 0);
+      const ev = await TTX.api.createEvent(cal2, {
+        title: `${t3}-${i}`, allDay: false, startAt: at, endAt: at + 1800000,
+        tz: 'Asia/Tokyo', labelId: 1,
+      });
+      TTX.store.applyEvent(cal2, ev);
+      ids.push(ev.uuid);
+    }
     return ids;
   }, [M1, M2, M3]);
 
@@ -719,7 +733,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       trip2: bars.filter((b) => b.t === t3),
       // A span must not ALSO appear as a per-day chip.
       chips: [...document.querySelectorAll('.m-ev .m-ti')].map((n) => n.textContent)
-        .filter((x) => [t1, t2, t3].includes(x)),
+        .filter((x) => x === t1 || x === t2 || x === t3),
       status: document.querySelector('.side-status')?.textContent,
     };
   }, [M1, M2, M3]);
@@ -744,6 +758,31 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   // The footer used to sum the cells, so a 12-day span counted as 12 events.
   check(!/1[5-9]件|2\d件/.test(grid.status || ''),
     `the footer counts events, not day-slots (${grid.status})`);
+
+  // Bars eat the room the chips used to have, and a cell that overfills clips
+  // in silence — the failure this app exists to fix. So measure the pixels,
+  // not the intent.
+  const spill = await page.evaluate(() => {
+    let worst = 0;
+    let where = '';
+    for (const c of document.querySelectorAll('.m-cell')) {
+      const bottom = c.getBoundingClientRect().bottom;
+      for (const k of c.querySelectorAll('.m-ev, .m-more')) {
+        const over = k.getBoundingClientRect().bottom - bottom;
+        if (over > worst) { worst = over; where = k.textContent.slice(0, 14); }
+      }
+    }
+    const weeks = [...document.querySelectorAll('.m-week')]
+      .map((w) => ({ lanes: +w.style.getPropertyValue('--lanes') || 0,
+        evsH: Math.round(w.querySelector('.m-evs').clientHeight) }));
+    return { worst: Math.round(worst), where, weeks };
+  });
+  const busy = spill.weeks.find((w) => w.lanes > 0);
+  const empty = spill.weeks.find((w) => w.lanes === 0);
+  check(busy && empty && busy.evsH < empty.evsH,
+    `a week with bars has less room for chips (${busy?.lanes} lanes: ${busy?.evsH}px vs ${empty?.evsH}px)`);
+  check(spill.worst <= 1,
+    `nothing spills past a cell edge (worst ${spill.worst}px${spill.where ? ' — ' + spill.where : ''})`);
 
   await page.evaluate(async (ids) => {
     const cal = [...TTX.store.state.enabled][0];
