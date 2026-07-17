@@ -180,6 +180,17 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   check((await serverText())[0] === '駐車場ってある？', 'the comment survives');
   check(await page.$('.d-fe .d-cin') !== null, 'and the edit box stays open');
 
+  // The toast is the app's only channel for 保存しました / 失敗しました, app-wide.
+  // Without a live region every one of them is silent to a screen reader, so
+  // "did that work?" answers with nothing. Asserted here because this is where a
+  // toast is already on screen — the element is created lazily on first use.
+  const live = await page.evaluate(() => {
+    const t = document.querySelector('.toast');
+    return t && { role: t.getAttribute('role'), live: t.getAttribute('aria-live') };
+  });
+  check(live && live.role === 'status' && live.live === 'polite',
+    `the toast is a live region, so a screen reader hears it (${JSON.stringify(live)})`);
+
   await page.fill('.d-fe .d-cin', '駐車場ってある？あと何時集合？');
   await page.press('.d-fe .d-cin', 'Enter');
   await page.waitForFunction(() => !document.querySelector('.d-fe'), { timeout: 6000 });
@@ -187,6 +198,17 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     'Enter saves the edit, and the server has the new text');
   check(await page.evaluate(() => [...document.querySelectorAll('.d-ft')]
     .some((n) => n.textContent === '編集済み')), 'the comment is marked 編集済み');
+
+  // Saving rebuilds every row, taking the one you were holding with it. Landing
+  // on <body> puts focus outside the dialog with nothing announced, and the
+  // next Tab restarts from the top of the card instead of where you were.
+  const afterSave = await page.evaluate(() => {
+    const a = document.activeElement;
+    return { body: a === document.body, label: a.getAttribute?.('aria-label'),
+      inCard: !!document.querySelector('.d-card')?.contains(a) };
+  });
+  check(!afterSave.body && afterSave.inCard && afterSave.label === 'このコメントを編集',
+    `after saving, focus is back on the comment you fixed (${JSON.stringify(afterSave)})`);
 
   // Escape backs out of the edit only — losing the whole card here would throw
   // away what you were fixing.
@@ -217,6 +239,16 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   check((await serverText()).length === 0, 'the comment is gone from the server');
   check(await page.evaluate(() => !!document.querySelector('.d-fmsg')?.textContent.includes('まだコメント')),
     'and the feed says まだコメントはありません again');
+
+  // The row you were standing on no longer exists, so this one can't go "back" —
+  // it has to land somewhere that still makes sense, and never on <body>.
+  const afterDel = await page.evaluate(() => {
+    const a = document.activeElement;
+    return { body: a === document.body, cls: a.className,
+      inCard: !!document.querySelector('.d-card')?.contains(a) };
+  });
+  check(!afterDel.body && afterDel.inCard && afterDel.cls === 'd-cin',
+    `after deleting, focus falls to the comment box, not out of the card (${JSON.stringify(afterDel)})`);
 
   // Put one back for the sections below.
   await page.fill('.d-cin', '駐車場ってある？');

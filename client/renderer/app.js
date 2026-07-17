@@ -214,6 +214,13 @@
   function toast(msg) {
     if (!toastEl) {
       toastEl = el('div', 'toast');
+      // This is the app's ONLY channel for "that worked" / "that failed" —
+      // 保存しました, 保存に失敗しました, コメントを送信できませんでした. Without
+      // a live region every one of them is silent to a screen reader, so the
+      // answer to "did my edit save?" is nothing at all. `polite` waits for a
+      // gap rather than cutting in: none of these are emergencies.
+      toastEl.setAttribute('role', 'status');
+      toastEl.setAttribute('aria-live', 'polite');
       document.body.appendChild(toastEl);
     }
     toastEl.textContent = msg;
@@ -1268,6 +1275,9 @@
         return r;
       }
       const r = el('div', 'd-fi');
+      // paint() throws every row away and builds new ones, so "focus the thing
+      // you were just on" needs a name that survives that.
+      r.dataset.id = a.id;
       const av = el('span', 'acct-av sm');
       av.textContent = (a.authorName || '?').slice(0, 1);
       av.style.background = acctColor(String(a.authorId));
@@ -1381,14 +1391,24 @@
      * and not just in the DOM — otherwise the next paint puts it back. */
     const replaceRaw = (id, updated) => {
       raw = raw.map((x) => (x.id === id ? (updated?.id ? updated : x) : x));
-      paint(raw);
+      // Back to the comment you just fixed, on its 編集 button — where you were.
+      paint(raw, id);
     };
     const dropRaw = (id) => {
       raw = raw.filter((x) => x.id !== id);
-      paint(raw);
+      // The row is gone, so this deliberately misses and lands on the compose
+      // box: the one place that still makes sense once your comment isn't there.
+      paint(raw, id);
     };
 
-    const paint = (list) => {
+    /**
+     * `focusId` is where to put focus once the rows are rebuilt. Every row the
+     * user was holding is destroyed here, so without it focus lands on <body>:
+     * outside the dialog, with nothing announced, and the next Tab restarts
+     * from the top of the card instead of where you were. Measured — it's not
+     * a theory.
+     */
+    const paint = (list, focusId) => {
       feed.textContent = '';
       const items = TTX.model.normalizeActivities(list, { membersById: members }, me);
       if (!items.some((i) => i.comment)) {
@@ -1399,6 +1419,15 @@
       feed.scrollTop = feed.scrollHeight;
       // The card was placed against its pre-feed height; it just grew.
       ui.detailPlace?.();
+      if (focusId) {
+        const back = feed.querySelector(`.d-fi[data-id="${focusId}"] .d-fab`);
+        // The row may be gone (deleted, or someone else's edit landed first).
+        // The box you'd type in next is the honest fallback — never <body>.
+        // Read from the DOM rather than closing over the textarea: that is
+        // declared further down, and a future load() that painted synchronously
+        // would turn this line into a ReferenceError.
+        (back || wrap.querySelector('.d-cbox .d-cin'))?.focus();
+      }
     };
 
     let raw = [];
