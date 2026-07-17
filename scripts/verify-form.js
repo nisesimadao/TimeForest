@@ -37,7 +37,21 @@ const DATE = '2026-07-20';
 let pass = 0, fail = 0;
 const ok = (m) => { pass++; console.log('  \x1b[32m✓\x1b[0m ' + m); };
 const bad = (m) => { fail++; console.log('  \x1b[31m✗\x1b[0m ' + m); };
-const sec = (t) => console.log('\n' + t);
+/* Sections print how long they took. This suite runs for minutes and it was
+ * not obvious where they go — 22 sleeps and 68 scroll steps only account for
+ * about 40s of it. Guessing at that is how you optimise the wrong thing. */
+let secAt = Date.now();
+let secName = '';
+const secDone = () => {
+  if (secName) console.log(`  [2m(${secName} — ${((Date.now() - secAt) / 1000).toFixed(1)}s)[0m`);
+};
+const sec = (t) => {
+  secDone();
+  secName = t;
+  secAt = Date.now();
+  console.log(String.fromCharCode(10) + t);
+};
+process.on('exit', secDone);
 const check = (cond, m) => (cond ? ok(m) : bad(m));
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -836,6 +850,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       rows: w.querySelectorAll('.ev').length,
       // The scrollbar thumb, as the browser draws it.
       thumb: Math.round((w.clientHeight / w.scrollHeight) * w.clientHeight),
+      height: w.scrollHeight,
       top: Math.round(w.scrollTop),
       scrollable: w.scrollHeight > w.clientHeight + 2,
     };
@@ -888,7 +903,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const asDate = (v) => (v || '').replace(/(\d+)年(\d+)月/, (_, y, m) => y + String(m).padStart(2, '0'));
   const a0 = await agenda();
   check(a0.scrollable, 'the agenda has enough on it to scroll — otherwise this section proves nothing');
-  check(a0.months === 3, `it starts at three months (${a0.first}〜${a0.last})`);
+  // Not "exactly three": fillAgenda() tops a quiet calendar up until it has
+  // something to scroll, so the honest claim is that it starts SMALL — it does
+  // not render the whole calendar and wait for you to arrive.
+  check(a0.months <= 12, `it starts small (${a0.months} months: ${a0.first}〜${a0.last})`);
 
   const roll = async (to, n) => {
     for (let i = 0; i < n; i++) {
@@ -912,26 +930,27 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   // the scrollbar paid for it: measured, the thumb went 96px → 24px just by
   // scrolling to the end. A scrollbar that shrinks every time you use it has
   // stopped doing the one thing it is for.
-  // The claim is CONVERGENCE, not a size. Comparing against the first reading
-  // is wrong twice over: the list starts near one screen tall, so the thumb
-  // starts near full and settling to the window's size looks like a collapse;
-  // and two earlier attempts at that shape both passed while the bug was
-  // present (`Math.abs(a1.thumb - a0.thumb) <= a0.thumb` is satisfied by the
-  // thumb reaching ONE PIXEL — it passes hardest exactly when it's worst).
+  // The claim, said directly: the RENDERED WINDOW is bounded. That is what the
+  // scrollbar is complaining about when its thumb keeps shrinking.
   //
-  // What the fix actually buys: keep going and it STOPS shrinking. Measured,
-  // 30 rolls travelling 11 months read 95 → 94 → 94 → 96px. Unbounded, it just
-  // keeps going down.
-  await roll('bottom', 14);
-  const a1b = await agenda();
-  check(a1b.thumb >= a1.thumb * 0.8,
-    `the scrollbar stops shrinking — 14 more screens of travel leaves it alone `
-    + `(${a0.thumb}px → ${a1.thumb}px → ${a1b.thumb}px)`);
-  check(a1b.rows <= a1.rows * 1.5,
-    `and the DOM has stopped growing too (${a0.rows} → ${a1.rows} → ${a1b.rows} rows)`);
-  check(asDate(a1b.first) > asDate(a1.first),
-    `while still travelling (${a1.first} → ${a1b.first}) — otherwise it stopped, `
-    + 'which would make the two checks above meaningless');
+  // Two shapes that don't work, both tried. Comparing thumb sizes: the list
+  // starts about one screen tall, so the thumb starts near full and settling to
+  // the window's size reads as a collapse. A floor on the thumb: the fixed
+  // version settles anywhere in 128–217px and the broken one reached 104px —
+  // those bands touch. And measuring a second leg of travel lands past the end
+  // of the calendar, where the window correctly stops rather than growing, so
+  // it measures the edge instead of the steady state.
+  //
+  // The budget separates them with room to spare: bounded, the window came in
+  // at 3678px against a 4422px budget; unbounded, the same seed reached
+  // 16624px and was still climbing.
+  const budget = await page.evaluate(() =>
+    document.querySelector('.agenda').clientHeight * 6);   // AGENDA_WINDOW
+  check(a1.height <= budget * 1.2,
+    `the rendered window stays inside its budget (${a1.height}px of ${Math.round(budget)}px; `
+    + `unbounded this reached 16624px). thumb ${a0.thumb} → ${a1.thumb}px`);
+  check(a1.rows < 200,
+    `and the DOM with it (${a0.rows} → ${a1.rows} rows after 14 screens of travel)`);
 
   // Travelling back must actually get back. With the window sliding, "grow the
   // near side, trim the far one" has to work in both directions — measured
@@ -943,8 +962,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   // and asserting that only measures how many times this loop happened to run.
   await roll('top', 34);
   const a2 = await agenda();
-  check(asDate(a2.first) < asDate(a1b.first),
-    `and scrolling back travels back (${a1b.first} → ${a2.first}, started ${a0.first})`);
+  check(asDate(a2.first) < asDate(a1.first),
+    `and scrolling back travels back (${a1.first} → ${a2.first}, started ${a0.first})`);
   check(a2.rows > 0 && a2.scrollable,
     `with something on screen and somewhere left to go (${a2.rows} rows) — the old `
     + 'version could slide into an empty year and become unscrollable, permanently');
@@ -995,6 +1014,126 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await page.click('.pill:text-is("今日")');
   await sleep(400);
   ok('agenda test events cleaned up');
+
+  // --- month / week: swipe sideways -----------------------------------------
+  sec('月・週 — 横スワイプで前後へ');
+
+  /** One trackpad flick: many small deltaX, the way hardware actually sends it. */
+  const flick = (sel, dx, steps = 12) => page.evaluate(({ sel: s2, dx: d, steps: n }) => {
+    const w = document.querySelector(s2);
+    for (let i = 0; i < n; i++) {
+      w.dispatchEvent(new WheelEvent('wheel', { deltaX: d / n, deltaY: 0, bubbles: true, cancelable: true }));
+    }
+  }, { sel, dx, steps });
+  const title = () => page.evaluate(() => document.querySelector('.tb-title')?.textContent);
+
+  /* Wait for the title to move, don't sleep at it. go() runs a View Transition,
+   * and a fixed sleep read the old title while the new one was still on its
+   * way — which looked exactly like "swiping does nothing", and was wrong. */
+  const swipeTo = async (sel, dx, was) => {
+    await flick(sel, dx);
+    await page.waitForFunction(
+      (prev) => document.querySelector('.tb-title')?.textContent !== prev,
+      was, { timeout: 6000 },
+    ).catch(() => {});
+    return title();
+  };
+
+  await page.click('.seg button:text-is("月")');
+  await page.waitForSelector('.month', { timeout: 5000 });
+  await page.click('.pill:text-is("今日")');
+  await sleep(600);
+  const m0 = await title();
+  const m1 = await swipeTo('.month', 400, m0);
+  check(m1 !== m0, `swiping the month grid moves it (${m0} → ${m1})`);
+  // ONE month. A trackpad fires deltaX every frame for the whole flick, so
+  // without a latch a single gesture travels five. Settle first, then count.
+  await sleep(700);
+  const mSettled = await title();
+  const monthNo = (t) => (t || '').replace(/(\d+)年(\d+)月/, (_, y, mo) => +y * 12 + +mo);
+  check(monthNo(mSettled) - monthNo(m0) === 1,
+    `and by exactly one month, not five (${m0} → ${mSettled})`);
+  const mBack = await swipeTo('.month', -400, mSettled);
+  check(mBack === m0, `and back the other way (${mSettled} → ${mBack})`);
+
+  // The week view scrolls VERTICALLY. Taking its wheel would be worse than not
+  // having the feature at all.
+  await page.click('.seg button:text-is("週")');
+  await page.waitForSelector('.week', { timeout: 5000 });
+  await sleep(700);
+  const w0 = await title();
+  const w1 = await swipeTo('.week', 400, w0);
+  check(w1 !== w0, `swiping the week grid moves it (${w0} → ${w1})`);
+  await sleep(700);
+
+  // A diagonal flick is mostly-vertical scrolling with a wobble. Taking it
+  // would yank the week out from under someone reading it.
+  const w2 = await title();
+  await page.evaluate(() => {
+    const w = document.querySelector('.week');
+    for (let i = 0; i < 12; i++) {
+      w.dispatchEvent(new WheelEvent('wheel', { deltaX: 20, deltaY: 60, bubbles: true, cancelable: true }));
+    }
+  });
+  await sleep(800);
+  check(await title() === w2, `a mostly-vertical flick does not navigate (${w2})`);
+
+  // Drag, the other way in. Two separate claims: dragging the grid navigates,
+  // and dragging that STARTS on an event does not — you were reaching for the
+  // event.
+  const drag = (sel, fromX, toX) => page.evaluate(({ sel: s2, a, b: b2 }) => {
+    const t = document.querySelector(s2);
+    if (!t) return false;
+    const opts = (x) => ({ bubbles: true, cancelable: true, button: 0, clientX: x, clientY: 300 });
+    t.dispatchEvent(new PointerEvent('pointerdown', opts(a)));
+    t.dispatchEvent(new PointerEvent('pointerup', opts(b2)));
+    return true;
+  }, { sel, a: fromX, b: toX });
+
+  const d0 = await title();
+  await drag('.week', 500, 200);
+  await page.waitForFunction((prev) => document.querySelector('.tb-title')?.textContent !== prev,
+    d0, { timeout: 6000 }).catch(() => {});
+  const d1 = await title();
+  check(d1 !== d0, `dragging the grid sideways moves it too (${d0} → ${d1})`);
+  await sleep(700);
+
+  // Put an event in the week that will be ON SCREEN. Skipping this because the
+  // throwaway happens to be empty is how it stays untested forever — and it is
+  // the half that can annoy someone every day.
+  //
+  // For TODAY's week, then jump to 今日. An earlier version read the date out of
+  // the title — which by this point says whatever the swipes above moved to —
+  // created the event there, and then jumped away from it.
+  await page.click('.pill:text-is("今日")');
+  await sleep(600);
+  const grabbed = await page.evaluate(async () => {
+    const cal = [...TTX.store.state.enabled][0];
+    const now = new Date();
+    const at = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate(), 3, 0);  // 12:00 JST today
+    const e = await TTX.api.createEvent(cal, {
+      title: 'TF検証-掴む', allDay: false, startAt: at, endAt: at + 3600000,
+      tz: 'Asia/Tokyo', labelId: 1,
+    });
+    TTX.store.applyEvent(cal, e);
+    return e.uuid;
+  });
+  await page.click('.pill:text-is("今日")');
+  await sleep(900);
+  const hasEv = await page.evaluate(() => !!document.querySelector('.week .w-ev'));
+  check(hasEv, 'an event is on screen in the week grid to drag from');
+  if (hasEv) {
+    const d2 = await title();
+    await drag('.week .w-ev', 500, 200);
+    await sleep(900);
+    check(await title() === d2,
+      `a drag beginning on an event is not a swipe (${d2}) — you were reaching for the event`);
+  }
+  await page.evaluate(async (u) => {
+    const cal = [...TTX.store.state.enabled][0];
+    await TTX.api.deleteEvent(cal, u);
+    TTX.store.markDeleted(cal, u);
+  }, grabbed);
 
   sec('settings');
   await page.keyboard.press(',');

@@ -285,7 +285,7 @@ npm run smoke     # Electron クライアントをヘッドレス起動して健
 ```sh
 cd client && npm run inspect   # --remote-debugging-port=9333 付きで起動
 npm i playwright-core          # CI は依存ゼロのままにしたいので、ここでだけ入れる
-npm run verify:form            # 作成・編集・削除 UI（139 アサーション）
+npm run verify:form            # 作成・編集・削除 UI（146 アサーション）
 npm run verify:recur           # 繰り返しの6操作（46 アサーション）
 npm run verify:notify          # リマインドとトレイ（16 アサーション）
 npm run verify:comment         # コメント（51 アサーション）

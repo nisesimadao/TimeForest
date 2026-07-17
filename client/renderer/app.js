@@ -1019,7 +1019,7 @@
     }
     wrap.appendChild(grid);
     ui.status = `${count}件の予定`;
-    return wrap;
+    return swipeNav(wrap);
   }
 
   // --- render: week (time grid) -----------------------------------------
@@ -1122,7 +1122,7 @@
     ui.status = `${list.length}件の予定`;
     // Open on the working day rather than at midnight.
     requestAnimationFrame(() => { scroll.scrollTop = 7 * HOUR_H; });
-    return wrap;
+    return swipeNav(wrap);
   }
 
   /** Place overlapping events side by side instead of stacking them. */
@@ -3450,6 +3450,12 @@
   function endNav(t) {
     const done = () => { delete document.documentElement.dataset.nav; };
     t.finished.then(done, done);
+    // `ready` rejects too when a transition is skipped — another one started,
+    // or the window isn't visible. Nothing was listening to it, so a normal
+    // thing we already handle surfaced as an unhandled rejection:
+    // "Transition was skipped" in the console, looking like a fault. Swiping
+    // makes overlapping navigations ordinary rather than rare.
+    t.ready.catch(() => {});
   }
 
   function paint() {
@@ -3673,6 +3679,66 @@
     ui.seenMonth = seen;
     const t = $('.tb-title');
     if (t) t.textContent = seen;
+  }
+
+  /**
+   * Swipe or drag sideways to go to the next/previous month or week.
+   *
+   * Both views already move with direction — go(±1) hands render() a 'next' or
+   * 'prev' and the View Transition pushes the old view out the way you came
+   * from. This just gives that a second way in, the one your hand reaches for
+   * on a trackpad.
+   *
+   * The three things that make it feel wrong if you skip them:
+   *
+   *  - A trackpad fires deltaX every frame for the whole flick, so one gesture
+   *    would travel five months. So it LATCHES: once it fires, it ignores the
+   *    rest of that gesture until the wheel goes quiet.
+   *  - The week view scrolls VERTICALLY, and a real swipe is never perfectly
+   *    horizontal. Only take the gesture when it is clearly sideways, and never
+   *    call preventDefault on one that isn't — stealing the odd diagonal frame
+   *    from the time grid makes it stutter.
+   *  - A drag that starts on an event is reaching for the event.
+   */
+  const SWIPE_WHEEL = 90;    // px of sideways wheel before it counts
+  const SWIPE_DRAG = 70;     // px of drag before it counts
+  const SWIPE_QUIET = 140;   // ms of no wheel = gesture over, unlatch
+
+  function swipeNav(wrap) {
+    let acc = 0;
+    let latched = false;
+    let quiet = null;
+
+    wrap.addEventListener('wheel', (e) => {
+      // Diagonal or vertical: not ours. Leave it alone entirely — the week grid
+      // is scrolling on it.
+      if (Math.abs(e.deltaX) <= Math.abs(e.deltaY)) return;
+      e.preventDefault();
+      clearTimeout(quiet);
+      quiet = setTimeout(() => { latched = false; acc = 0; }, SWIPE_QUIET);
+      if (latched) return;
+      acc += e.deltaX;
+      if (Math.abs(acc) < SWIPE_WHEEL) return;
+      latched = true;
+      acc = 0;
+      go(e.deltaX > 0 ? 1 : -1);   // push content left = go forward
+    }, { passive: false });
+
+    let from = null;
+    wrap.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0 || e.target.closest('button, a, input, select, textarea')) return;
+      from = { x: e.clientX, y: e.clientY };
+    });
+    wrap.addEventListener('pointerup', (e) => {
+      if (!from) return;
+      const dx = e.clientX - from.x;
+      const dy = e.clientY - from.y;
+      from = null;
+      if (Math.abs(dx) < SWIPE_DRAG || Math.abs(dx) <= Math.abs(dy)) return;
+      go(dx < 0 ? 1 : -1);         // drag content left = go forward
+    });
+    wrap.addEventListener('pointercancel', () => { from = null; });
+    return wrap;
   }
 
   /** Put the cursor's month at the top of the agenda instead of guessing. */
