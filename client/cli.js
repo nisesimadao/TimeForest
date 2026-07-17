@@ -186,6 +186,21 @@ function jpNext(key) {
 
 const DATE_HELP = `  日付: today 明日 yesterday week nextweek month nextmonth
         7/21  2026-07-21  +7d  -3d`;
+const WHEN_HELP = `  いつ: "7/21 10:00"  "明日 9時"  +7d  ← 時刻を書かなければ終日`;
+const LONG_HELP = '  長さ: 1h  90m  1:30  1.5h  2時間  45';
+
+/** What we just wrote, read back from what the server returned — not from what
+ *  we sent. The server decides; if it moved something, that is what you need to
+ *  see, and a terminal gives you no other clue. */
+function printSaved(calendar, e, what) {
+  console.log(`${bold(e.title || '(無題)')} を${what}`);
+  console.log(`  カレンダー  ${calendar}`);
+  console.log(`  日時        ${e.all_day
+    ? `${jp(new Date(e.start_at).toISOString().slice(0, 10))} 〜 ${jp(new Date(e.end_at).toISOString().slice(0, 10))} (終日)`
+    : `${stamp(e.start_at)} 〜 ${stamp(e.end_at)}`}`);
+  if (e.location) console.log(`  場所        ${e.location}`);
+  console.log(`  ${dim(e.uuid)}`);
+}
 
 const HELP = `TimeForest — TimeTree を端末から
 
@@ -193,13 +208,26 @@ const HELP = `TimeForest — TimeTree を端末から
   tf show <uuid> [--json]
   tf comments <uuid> [--json]
   tf say <uuid> "コメント"
+
+  tf add <タイトル> --at <いつ> [--to …|--for 1h] [--where …] [--note …] [--cal 名前]
+  tf edit <uuid> [--at …] [--to …|--for …] [--title …] [--where …] [--note …]
+  tf rm <uuid> [--all]
+
   tf calendars
   tf accounts
   tf use <メール|id>
 
 ${DATE_HELP}
+${WHEN_HELP}
+${LONG_HELP}
+
+  tf add 歯医者 --at "7/21 10:00" --for 1h --where 駅前歯科
+  tf add 旅行 --at 8/1 --to 8/3
+  tf edit 7110a578 --at "7/21 10:30"     ずらす。長さはそのまま
 
 uuid は ls が出す先頭8文字で足ります（曖昧なら候補を出します）。
+
+⚠ 共有カレンダーへの書き込みは他のメンバーに通知が飛びます。取り消せません。
 
 起動しているアプリに訊きます。動いていなければ起動します（トレイに常駐します）。
 ログインは要りません — アプリのものをそのまま使います。`;
@@ -306,6 +334,74 @@ ${DATE_HELP}`);
         if (!uuid || !text) return die('使い方: tf say <uuid> "コメント"');
         const r = await talk(sock, 'say', { uuid, text });
         console.log(`${r.calendar} の「${r.title}」に投稿しました`);
+        break;
+      }
+
+      case 'add': {
+        const title = args._.slice(1).join(' ').trim();
+        if (!title || !args.flags.at) return die(`使い方: tf add <タイトル> --at <いつ> [--for 1h] [--cal 名前]
+
+  tf add 歯医者 --at "7/21 10:00" --for 1h --where 駅前歯科
+  tf add 旅行 --at 8/1 --to 8/3            # 時刻を書かなければ終日
+${WHEN_HELP}`);
+        const at = dates.when(args.flags.at);
+        if (!at) return die(`--at が読めません: ${args.flags.at}\n${WHEN_HELP}`);
+        const to = args.flags.to ? dates.when(args.flags.to) : null;
+        if (args.flags.to && !to) return die(`--to が読めません: ${args.flags.to}\n${WHEN_HELP}`);
+
+        // --for is the natural one to type for a timed event; --to is for spans.
+        // The minutes go over as minutes: the clock arithmetic lives in the
+        // renderer, which already owns it, and a second copy here would be a
+        // second answer to what time an event really starts.
+        let mins;
+        if (args.flags.for !== undefined) {
+          mins = dates.mins(args.flags.for);
+          if (mins == null) return die(`--for が読めません: ${args.flags.for}\n${LONG_HELP}`);
+        }
+
+        const r = await talk(sock, 'add', {
+          title, cal: args.flags.cal, mins,
+          startKey: at.key, startTime: at.time,
+          endKey: to?.key, endTime: to?.time,
+          location: args.flags.where, note: args.flags.note,
+        });
+        if (args.flags.json) return json(r);
+        printSaved(r.calendar, r.event, '作成しました');
+        break;
+      }
+
+      case 'edit': {
+        const uuid = args._[1];
+        const f = args.flags;
+        if (!uuid || !['title', 'at', 'to', 'for', 'where', 'note'].some((k) => f[k] !== undefined)) {
+          return die(`使い方: tf edit <uuid> [--at …] [--for …] [--title …] [--where …] [--note …]
+
+  tf edit 7110a578 --at "7/21 10:30"     # ずらす。長さはそのまま
+  tf edit 7110a578 --for 90m
+${WHEN_HELP}`);
+        }
+        const at = f.at ? dates.when(f.at) : null;
+        if (f.at && !at) return die(`--at が読めません: ${f.at}\n${WHEN_HELP}`);
+        const to = f.to ? dates.when(f.to) : null;
+        if (f.to && !to) return die(`--to が読めません: ${f.to}\n${WHEN_HELP}`);
+        let mins;
+        if (f.for !== undefined) {
+          mins = dates.mins(f.for);
+          if (mins == null) return die(`--for が読めません: ${f.for}\n${LONG_HELP}`);
+        }
+
+        const r = await talk(sock, 'edit', {
+          uuid, at, to, mins, title: f.title, location: f.where, note: f.note,
+        });
+        if (args.flags.json) return json(r);
+        printSaved(r.calendar, r.event, `直しました  ${dim(r.changed.join(', '))}`);
+        break;
+      }
+
+      case 'rm': {
+        if (!args._[1]) return die('使い方: tf rm <uuid> [--all]');
+        const r = await talk(sock, 'rm', { uuid: args._[1], all: !!args.flags.all });
+        console.log(`${r.calendar} の「${r.title}」を削除しました${r.series ? dim('（繰り返し全部）') : ''}`);
         break;
       }
 

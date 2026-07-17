@@ -123,6 +123,21 @@ const callTool = async (c, name, args) => {
     'add_comment is marked as not read-only, so a client can prompt before it posts');
   check(tools.find((t) => t.name === 'list_events')?.annotations?.readOnlyHint === true,
     'and list_events is marked read-only');
+  // The one tool here that destroys something. A client that only prompts on
+  // destructiveHint has to see it on this one, or a weekly lesson goes without
+  // anyone being asked.
+  check(tools.find((t) => t.name === 'delete_event')?.annotations?.destructiveHint === true,
+    'delete_event is marked destructive');
+  // The tools that reach TimeTree, as opposed to switch_account, which changes
+  // state but only on this desk. Every one of these lands on other people's
+  // phones, so a client has to be able to tell them apart from a local flip.
+  const POSTS = ['add_comment', 'create_event', 'update_event', 'delete_event'];
+  check(POSTS.every((n) => {
+    const a = tools.find((t) => t.name === n)?.annotations;
+    return a?.readOnlyHint === false && a?.openWorldHint === true;
+  }), 'every tool that writes to TimeTree says so, and says it reaches the outside world');
+  check(tools.find((t) => t.name === 'switch_account')?.annotations?.openWorldHint === false,
+    'and switch_account says it does not — openWorldHint defaults to true, so silence would overstate it');
 
   // --- 3. safety ------------------------------------------------------------
   sec('safety guard');
@@ -179,6 +194,82 @@ const callTool = async (c, name, args) => {
     const cm = await callTool(c, 'get_comments', { uuid: short });
     check(cm.data?.items?.some((a) => a.text === 'MCPから'),
       'and the comment is really there when read back');
+  }
+
+  // --- 5b. writing events ---------------------------------------------------
+  //
+  // 「来週の金曜に歯医者入れといて」 is the first thing anyone says to an
+  // assistant with a calendar. Everything reads back through list_events, which
+  // goes the long way round — trusting create_event's own echo would only prove
+  // the server agrees with itself about what it just sent.
+  sec('creating events');
+  {
+    const made = await callTool(c, 'create_event', {
+      title: 'MCP検証-会議', start: '7/23 15:00', duration: '45m', location: '会議室B',
+    });
+    check(!made.isError && made.data?.calendar === EXPECT_CALENDAR,
+      `create_event makes one, and names the calendar (${made.data?.calendar ?? made.text?.slice(0, 60)})`);
+
+    const row = (await callTool(c, 'list_events', { from: '7/23', to: '7/23' }))
+      .data?.events?.find((e) => e.title === 'MCP検証-会議');
+    check(row?.startTime === '15:00' && row?.endTime === '15:45',
+      `and duration sets the length (${row?.startTime}–${row?.endTime})`);
+
+    // A day and no clock is a whole day. A model that writes "7/25" means the
+    // 25th, not one minute past midnight on the 25th.
+    const allDay = await callTool(c, 'create_event', { title: 'MCP検証-終日', start: '7/25' });
+    const adRow = (await callTool(c, 'list_events', { from: '7/25', to: '7/25' }))
+      .data?.events?.find((e) => e.title === 'MCP検証-終日');
+    check(!allDay.isError && adRow?.allDay === true,
+      'a start with no time makes an all-day event, rather than one at 00:00');
+
+    const bad = await callTool(c, 'create_event', { title: 'MCP検証-だめ', start: 'いつか' });
+    check(bad.isError && /読めません/.test(bad.text || ''),
+      'a start it cannot read is isError, with the forms that work, so the model can retry');
+
+    if (row) {
+      const moved = await callTool(c, 'update_event', { uuid: row.uuid.slice(0, 8), start: '7/23 16:30' });
+      const after = (await callTool(c, 'list_events', { from: '7/23', to: '7/23' }))
+        .data?.events?.find((e) => e.uuid === row.uuid);
+      check(!moved.isError && after?.startTime === '16:30' && after?.endTime === '17:15',
+        `update_event moves the start and keeps the length (${after?.startTime}–${after?.endTime})`);
+
+      const del = await callTool(c, 'delete_event', { uuid: row.uuid.slice(0, 8) });
+      check(!del.isError, 'delete_event deletes');
+      check(!(await callTool(c, 'list_events', { from: '7/23', to: '7/23' }))
+        .data?.events?.some((e) => e.uuid === row.uuid), 'and it is really gone when you look again');
+    }
+    if (adRow) await callTool(c, 'delete_event', { uuid: adRow.uuid.slice(0, 8) });
+  }
+
+  // --- 5c. one id, five rows ------------------------------------------------
+  //
+  // Every occurrence carries the master's uuid, so a weekly event comes back as
+  // five entries with one id. An assistant told "cancel Tuesday's piano lesson"
+  // would read that listing, pass the id, and take all five — and on a shared
+  // calendar everyone gets told.
+  sec('repeating events are not one event');
+  {
+    const rec = await seedRepeating();
+    check(!!rec, 'seeded a weekly event');
+    if (rec) {
+      const rows = (await callTool(c, 'list_events', { from: '7/21', to: '8/11' }))
+        .data?.events?.filter((e) => e.title === 'MCP検証-ピアノ') || [];
+      check(rows.length > 1 && new Set(rows.map((e) => e.uuid)).size === 1,
+        `list_events returns ${rows.length} entries carrying one id — this is the trap`);
+
+      const short = rec.slice(0, 8);
+      const nope = await callTool(c, 'delete_event', { uuid: short });
+      check(nope.isError && /繰り返し/.test(nope.text || ''),
+        'delete_event refuses it rather than taking the whole series');
+      const nope2 = await callTool(c, 'update_event', { uuid: short, start: '7/21 11:00' });
+      check(nope2.isError && /繰り返し/.test(nope2.text || ''), 'and so does update_event');
+      check((await callTool(c, 'list_events', { from: '7/21', to: '7/21' }))
+        .data?.events?.some((e) => e.uuid === rec), 'and after both refusals the event is still there');
+
+      const yes = await callTool(c, 'delete_event', { uuid: short, all: true });
+      check(!yes.isError && yes.data?.series === true, 'all:true takes it, and says that is what it did');
+    }
   }
 
   // --- 6. stdout discipline -------------------------------------------------
@@ -261,6 +352,18 @@ const seed = () => withPage((page) => page.evaluate(async () => {
   const e = await TTX.api.createEvent(cal, {
     title: 'MCP検証-歯医者', allDay: false, startAt: at, endAt: at + 3600000,
     tz: 'Asia/Tokyo', labelId: 1, location: '駅前',
+  });
+  TTX.store.applyEvent(cal, e);
+  return e.uuid;
+}));
+
+/** A weekly event, for the trap where one id means five rows. */
+const seedRepeating = () => withPage((page) => page.evaluate(async () => {
+  const cal = [...TTX.store.state.enabled][0];
+  const at = Date.UTC(2026, 6, 21, 1, 0);   // 7/21 10:00 JST
+  const e = await TTX.api.createEvent(cal, {
+    title: 'MCP検証-ピアノ', allDay: false, startAt: at, endAt: at + 3600000,
+    tz: 'Asia/Tokyo', labelId: 1, recurrences: ['RRULE:FREQ=WEEKLY'],
   });
   TTX.store.applyEvent(cal, e);
   return e.uuid;

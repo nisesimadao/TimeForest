@@ -138,8 +138,9 @@ const killApp = () => {
   const made = JSON.parse(tf('ls', '--from', '2026-07-01', '--to', '2026-07-31', '--json').out);
   const before = made.events.filter((e) => !e.holiday).length;
 
-  // Write through the app's own API — the CLI has no `add` yet, and this is
-  // about whether the CLI SEES what the app has.
+  // Write through the app's own API, not through `tf add`: this section is about
+  // whether the CLI SEES what the app holds, and seeding with the thing under
+  // test would only prove it agrees with itself.
   const seeded = await seedViaApp();
   check(!!seeded, 'seeded an event through the app');
   await sleep(1200);
@@ -194,6 +195,167 @@ const killApp = () => {
   }
 
   // --- 7. dates a person types ----------------------------------------------
+  // --- 6c. writing ----------------------------------------------------------
+  //
+  // 「来週の金曜に歯医者入れといて」 is the first thing anyone says to an
+  // assistant with a calendar. Reading everything and writing nothing is a
+  // viewer with opinions.
+  //
+  // Every check reads back through `ls`, which goes the long way round (the
+  // occurrence expansion, the holiday merge). Trusting add's own echo would only
+  // prove the CLI agrees with itself about what it just sent.
+  sec('add / edit / rm');
+  {
+    const made = tf('add', 'CLI検証-会議', '--at', '7/22 10:00', '--for', '90m', '--where', '会議室A', '--json');
+    check(made.code === 0, `add makes an event (${(made.err || made.out).trim().slice(0, 60)})`);
+    const back = JSON.parse(tf('ls', '7/22', '--json').out).events.find((e) => e.title === 'CLI検証-会議');
+    check(back?.startTime === '10:00' && back?.endTime === '11:30',
+      `and --for sets the length (${back?.startTime}–${back?.endTime})`);
+    check(back?.location === '会議室A' && !back?.allDay, 'and --where lands, timed not all-day');
+
+    // A day with no clock is a whole day. Someone typing `--at 8/1` means the
+    // 1st, not one minute past midnight on the 1st.
+    const span = tf('add', 'CLI検証-旅行', '--at', '8/1', '--to', '8/3', '--json');
+    const spanBack = JSON.parse(tf('ls', '--from', '8/1', '--to', '8/3', '--json').out)
+      .events.find((e) => e.title === 'CLI検証-旅行');
+    check(span.code === 0 && spanBack?.allDay,
+      'a start with no time makes an all-day event, rather than one at 00:00');
+    check(spanBack?.startKey === '2026-08-01' && spanBack?.endKey === '2026-08-03',
+      `and --to is the last day, inclusive (${spanBack?.startKey}〜${spanBack?.endKey})`);
+
+    if (back) {
+      const id = back.uuid.slice(0, 8);
+      // Moving the start keeps the length. That is what 「ずらして」 means, and
+      // what dragging does everywhere else — an edit that silently shortened the
+      // event to zero would look like it worked.
+      const moved = tf('edit', id, '--at', '7/22 14:00', '--json');
+      const after = JSON.parse(tf('ls', '7/22', '--json').out).events.find((e) => e.uuid === back.uuid);
+      check(moved.code === 0 && after?.startTime === '14:00' && after?.endTime === '15:30',
+        `--at moves the start and keeps the length (${after?.startTime}–${after?.endTime})`);
+      check(moved.code === 0 && JSON.parse(moved.out).changed.join() === 'start_at,end_at',
+        `and sends only what changed — PUT is a merge (${moved.code === 0 ? JSON.parse(moved.out).changed.join(', ') : '—'})`);
+
+      const kept = tf('edit', id, '--title', 'CLI検証-会議(改)', '--json');
+      const titled = JSON.parse(tf('ls', '7/22', '--json').out).events.find((e) => e.uuid === back.uuid);
+      check(kept.code === 0 && titled?.title === 'CLI検証-会議(改)' && titled?.startTime === '14:00',
+        'a title-only edit leaves the time alone');
+
+      const nothing = tf('edit', id, '--title', 'CLI検証-会議(改)');
+      check(nothing.code === 1 && /変更はありません/.test(nothing.err),
+        'and an edit that changes nothing says so rather than writing');
+
+      const gone = tf('rm', id);
+      check(gone.code === 0 && /dowa/.test(gone.out), `rm deletes, and names the calendar (${gone.out.trim()})`);
+      check(!JSON.parse(tf('ls', '7/22', '--json').out).events.some((e) => e.uuid === back.uuid),
+        'and it is really gone when you look again');
+    }
+    if (spanBack) tf('rm', spanBack.uuid.slice(0, 8));
+  }
+
+  // --- 6c-ii. the window doesn't go stale, and doesn't get yanked -----------
+  //
+  // The store has no subscribers: a CLI write reaches the window only because
+  // the CLI's own path re-renders. Without that, `tf add` says 作成しました and
+  // the window shows nothing — and then nobody trusts either of them.
+  //
+  // Today, so this doesn't quietly depend on which month the window opens on.
+  sec('a write from the CLI reaches the window');
+  {
+    const today = require('../client/dates').today();
+    const put = tf('add', 'CLI検証-窓', '--at', `${today} 9:00`);
+    const shown = await withPage((page) => page.evaluate(() =>
+      document.body.innerText.includes('CLI検証-窓')));
+    check(put.code === 0 && shown === true,
+      'a CLI write shows up in the window without anyone touching it');
+
+    // ...but not over the top of someone. paint() starts by closing the detail
+    // card, so a write arriving while you read one would take it away — the
+    // event is in the store either way, and the next repaint shows it.
+    const opened = await withPage(async (page) => {
+      await page.evaluate(() => {
+        for (const n of document.querySelectorAll('*')) {
+          if (!n.children.length && /CLI検証-窓/.test(n.textContent || '')) return n.closest('[class]').click();
+        }
+      });
+      await page.waitForTimeout(700);
+      return page.evaluate(() => !!document.querySelector('.d-card'));
+    });
+    if (!opened) {
+      ok('detail card — could not open one here, skipped');
+    } else {
+      tf('add', 'CLI検証-邪魔', '--at', `${today} 10:00`);
+      const survived = await withPage((page) => page.evaluate(() => {
+        const still = !!document.querySelector('.d-card');
+        document.querySelector('.d-scrim')?.click();      // put it back the way we found it
+        return still;
+      }));
+      check(survived, 'and does not repaint over a detail card someone is reading');
+    }
+  }
+
+  // --- 6d. the id `ls` prints covers the WHOLE series ------------------------
+  //
+  // model.js gives every occurrence the master's uuid, so a weekly event prints
+  // the same eight characters on all five rows. Someone reading "delete the
+  // piano lesson on the 21st" off that listing would lose all five, and on a
+  // shared calendar everyone gets told.
+  sec('repeating events are not one event');
+  {
+    const rec = await seedRepeating();
+    check(!!rec, 'seeded a weekly event');
+    if (rec) {
+      const rows = JSON.parse(tf('ls', '--from', '7/21', '--to', '8/11', '--json').out)
+        .events.filter((e) => e.title === 'CLI検証-ピアノ');
+      check(rows.length > 1 && new Set(rows.map((e) => e.uuid)).size === 1,
+        `ls prints ${rows.length} rows that all carry the same id — this is the trap`);
+
+      const id = rec.slice(0, 8);
+      const nope = tf('rm', id);
+      check(nope.code === 1 && /繰り返し/.test(nope.err), 'rm refuses it rather than taking the whole series');
+      const nope2 = tf('edit', id, '--at', '7/21 11:00');
+      check(nope2.code === 1 && /繰り返し/.test(nope2.err), 'and so does edit');
+      check(JSON.parse(tf('ls', '7/21', '--json').out).events.some((e) => e.uuid === rec),
+        'and after both refusals the event is still there');
+
+      const yes = tf('rm', id, '--all');
+      check(yes.code === 0 && /繰り返し全部/.test(yes.out), `--all takes it, and says that is what it did (${yes.out.trim()})`);
+      check(!JSON.parse(tf('ls', '--from', '7/21', '--to', '8/11', '--json').out)
+        .events.some((e) => e.title === 'CLI検証-ピアノ'), 'and every occurrence goes');
+    }
+  }
+
+  // --- 6e. it will not guess which calendar ---------------------------------
+  //
+  // Creating on a shared calendar notifies its members, so a guess here tells
+  // the wrong family about your dentist. The throwaway has one calendar, which
+  // is exactly the case the guard doesn't cover — so give the renderer a second
+  // one. It is fake, and its id addresses nothing: if the guard ever breaks,
+  // this test fails loudly instead of posting somewhere real.
+  sec('it will not guess which calendar');
+  {
+    const injected = await withPage((page) => page.evaluate(() => {
+      const st = TTX.store.state;
+      if (st.calendars.length !== 1) return null;          // don't touch a real multi-calendar account
+      st.calendars.push({ id: -99, name: 'CLI検証-偽', color: 0 });
+      return true;
+    }));
+    if (!injected) {
+      ok('two-calendar guard — could not stage it here, skipped');
+    } else {
+      const guessed = tf('add', 'CLI検証-まよい', '--at', '7/23 10:00');
+      check(guessed.code === 1 && /どのカレンダーに作るか/.test(guessed.err),
+        'add refuses rather than picking one of two calendars');
+      const named = tf('add', 'CLI検証-まよい', '--at', '7/23 10:00', '--cal', 'dowa', '--json');
+      check(named.code === 0, `and takes it once you say which (${(named.err || '').trim() || 'ok'})`);
+      await withPage((page) => page.evaluate(() => {
+        TTX.store.state.calendars = TTX.store.state.calendars.filter((c) => c.id !== -99);
+      }));
+      const stray = JSON.parse(tf('ls', '7/23', '--json').out).events.find((e) => e.title === 'CLI検証-まよい');
+      check(!!stray, 'and it landed on the real calendar, not the fake one');
+      if (stray) tf('rm', stray.uuid.slice(0, 8));
+    }
+  }
+
   sec('dates');
   const byWord = tf('ls', '7/21', '--json');
   check(byWord.code === 0 && JSON.parse(byWord.out).from === '2026-07-21',
@@ -328,6 +490,20 @@ async function withPage(fn) {
   const out = await fn(page);
   await b.close();
   return out;
+}
+
+/** A weekly event, for the trap where one id means five rows. */
+async function seedRepeating() {
+  return withPage((page) => page.evaluate(async () => {
+    const cal = [...TTX.store.state.enabled][0];
+    const at = Date.UTC(2026, 6, 21, 1, 0);   // 7/21 10:00 JST
+    const e = await TTX.api.createEvent(cal, {
+      title: 'CLI検証-ピアノ', allDay: false, startAt: at, endAt: at + 3600000,
+      tz: 'Asia/Tokyo', labelId: 1, recurrences: ['RRULE:FREQ=WEEKLY'],
+    });
+    TTX.store.applyEvent(cal, e);
+    return e.uuid;
+  }));
 }
 
 async function seedViaApp() {

@@ -122,6 +122,9 @@ function talk(cmd, args) {
 
 const DATE_WORDS = 'today, tomorrow, yesterday, week, nextweek, lastweek, month, nextmonth, '
   + '7/21, 2026-07-21, +7d, -3d';
+const WHEN_WORDS = '"2026-07-21 10:00", "7/21 10:00", "明日 9時", "today 8:05", "+7d 14:00" — '
+  + 'or a bare day ("7/21", "tomorrow") for an all-day event. A time with no day is '
+  + 'refused rather than guessed at.';
 
 const TOOLS = [
   {
@@ -192,6 +195,84 @@ const TOOLS = [
     run: (a) => talk('say', { uuid: a.uuid, text: a.text }),
   },
   {
+    name: 'create_event',
+    title: '予定を作る',
+    description: 'Put a new event on the calendar. `start` accepts "2026-07-21 10:00", '
+      + '"明日 9時", "7/21" — and a start with NO time makes an all-day event, which is '
+      + 'what a person means when they name a day and no clock. Give `duration` OR '
+      + '`end`, or neither for one hour. On a SHARED calendar this notifies the other '
+      + 'members on their phones; it is not a draft.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'What the event is called' },
+        start: { type: 'string', description: `When it starts. ${WHEN_WORDS}` },
+        end: { type: 'string', description: `When it ends. For an all-day span this is the LAST day, inclusive. ${WHEN_WORDS}` },
+        duration: { type: 'string', description: 'How long: 1h, 90m, 1:30, 1.5h' },
+        calendar: { type: 'string', description: 'Which calendar, by name. Required when the account has more than one — it will not guess.' },
+        location: { type: 'string', description: 'Where' },
+        note: { type: 'string', description: 'Free text on the event' },
+      },
+      required: ['title', 'start'],
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+    run: (a) => {
+      const at = whenOf(a.start, 'start');
+      const to = a.end ? whenOf(a.end, 'end') : null;
+      return talk('add', {
+        title: a.title, cal: a.calendar, mins: minsOf(a.duration),
+        startKey: at.key, startTime: at.time, endKey: to?.key, endTime: to?.time,
+        location: a.location, note: a.note,
+      });
+    },
+  },
+  {
+    name: 'update_event',
+    title: '予定を直す',
+    description: 'Change an event. Anything you leave out stays as it is — including '
+      + 'the half of a time you did not mention: `start: "7/21"` on a 10:00 event means '
+      + 'the 21st at 10:00, not midnight. Moving the start keeps the length. '
+      + 'Repeating events are refused here: one id covers every occurrence, and which '
+      + 'ones you meant is not something this can guess.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        uuid: { type: 'string', description: 'Event uuid, or any prefix of one' },
+        title: { type: 'string' },
+        start: { type: 'string', description: `Move it. ${WHEN_WORDS}` },
+        end: { type: 'string', description: `New end. ${WHEN_WORDS}` },
+        duration: { type: 'string', description: 'New length: 1h, 90m, 1:30' },
+        location: { type: 'string' },
+        note: { type: 'string' },
+      },
+      required: ['uuid'],
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+    run: (a) => talk('edit', {
+      uuid: a.uuid, title: a.title, location: a.location, note: a.note,
+      at: a.start ? whenOf(a.start, 'start') : null,
+      to: a.end ? whenOf(a.end, 'end') : null,
+      mins: minsOf(a.duration),
+    }),
+  },
+  {
+    name: 'delete_event',
+    title: '予定を消す',
+    description: 'Delete an event. If it repeats, one id covers every occurrence, so '
+      + 'this refuses unless `all` says you mean the whole series — deleting a weekly '
+      + 'lesson when someone asked about one Tuesday is not recoverable from here.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        uuid: { type: 'string', description: 'Event uuid, or any prefix of one' },
+        all: { type: 'boolean', description: 'Yes, delete every occurrence of a repeating event' },
+      },
+      required: ['uuid'],
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
+    run: (a) => talk('rm', { uuid: a.uuid, all: !!a.all }),
+  },
+  {
     name: 'list_calendars',
     title: 'カレンダー一覧',
     description: 'The calendars the signed-in account can see.',
@@ -220,7 +301,11 @@ const TOOLS = [
       properties: { account: { type: 'string', description: 'Email, name, or id from list_accounts' } },
       required: ['account'],
     },
-    annotations: { readOnlyHint: false, destructiveHint: false },
+    // Changes state, so not read-only — but it sends nothing to TimeTree and
+    // nobody's phone lights up. openWorldHint defaults to true, so saying false
+    // out loud is the difference between "this might do anything" and "this
+    // flips a switch on your own desk".
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     run: (a) => talk('use', { account: a.account }),
   },
 ];
@@ -228,6 +313,20 @@ const TOOLS = [
 const need = (v, raw) => {
   if (!v) throw new Error(`日付として読めません: ${raw}\n使えるのは: ${DATE_WORDS}`);
   return v;
+};
+
+const whenOf = (raw, field) => {
+  const w = dates.when(raw);
+  if (!w) throw new Error(`${field} を日時として読めません: ${raw}\n使えるのは: ${WHEN_WORDS}`);
+  return w;
+};
+
+/** undefined stays undefined — "not given" and "zero minutes" are different. */
+const minsOf = (raw) => {
+  if (raw === undefined || raw === null || raw === '') return undefined;
+  const m = dates.mins(raw);
+  if (m == null) throw new Error(`duration を長さとして読めません: ${raw}\n使えるのは: 1h, 90m, 1:30, 1.5h`);
+  return m;
 };
 
 // --- json-rpc over stdio ----------------------------------------------------

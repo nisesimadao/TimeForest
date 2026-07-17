@@ -67,6 +67,26 @@
     return hits[0];
   }
 
+  /**
+   * Is this id the head of a repeating series?
+   *
+   * It matters because every occurrence carries the MASTER's uuid — model.js
+   * maps `uuid: raw.uuid` for each expansion — so `tf ls week` prints the same
+   * eight characters on all five rows of a weekly event. Whatever you do with
+   * that id lands on the whole series, not the row you were reading. The window
+   * asks (この回だけ / これ以降 / すべて); a one-shot command can't, so it says
+   * so and stops.
+   */
+  const series = (raw) => (raw.recurrences || []).length > 0;
+
+  /** Put the end `ms` after the start, back in wall-clock fields. */
+  function endAfter(f, ms) {
+    const t = TTX.tz.toEpoch(f.startKey, f.startTime, f.allDay, TZ) + ms;
+    const z = f.allDay ? 'UTC' : TZ;
+    f.endKey = TTX.tz.ymd(t, z);
+    f.endTime = TTX.tz.hm(t, z);
+  }
+
   const commands = {
     ping: () => ({ ok: true, ready: !!TTX.store?.state?.ready }),
 
@@ -150,6 +170,124 @@
       // Name the calendar back. On a shared one this just notified other
       // people, and a terminal gives you no other clue about where it landed.
       return { calendar: cal.name, title: raw.title || '(無題)' };
+    },
+
+    /**
+     * Create an event. `startTime` null means all-day — a person who types a
+     * day and no clock means the whole day, not midnight.
+     *
+     * The calendar must be named unless the account has exactly one. pick()
+     * hands back all of them when nothing is named, which is right for reading
+     * and wrong here: a shared calendar notifies its members, so guessing tells
+     * the wrong family about your dentist.
+     */
+    async add({ title, startKey, startTime, endKey, endTime, mins, cal, location, note } = {}) {
+      const state = ready();
+      const name = String(title || '').trim();
+      if (!name) throw new Error('タイトルを指定してください');
+      if (!startKey) throw new Error('いつの予定か指定してください');
+
+      const cals = pick(state, cal);
+      if (cals.length > 1) {
+        throw new Error(`どのカレンダーに作るか指定してください（--cal）: ${cals.map((c) => c.name).join('、')}`);
+      }
+      const target = cals[0];
+      const allDay = !startTime;
+
+      // toEpoch is the form's own function: it knows all-day is stored at UTC
+      // midnight while a timed event resolves through the zone. Two answers to
+      // "what time is this really" is one too many.
+      const startAt = TTX.tz.toEpoch(startKey, startTime, allDay, TZ);
+      let endAt;
+      if (mins != null) {
+        if (allDay) throw new Error('終日の予定に長さは指定できません');
+        endAt = startAt + mins * 60000;
+      } else if (!allDay && !endKey && !endTime) {
+        endAt = startAt + 3600000;   // an hour. Nobody types an end time for a dentist
+      } else {
+        endAt = TTX.tz.toEpoch(endKey || startKey, endTime || startTime, allDay, TZ);
+      }
+      if (endAt < startAt) throw new Error('終わりが始まりより前です');
+
+      const saved = await TTX.api.createEvent(target.id, {
+        title: name, allDay, startAt, endAt, tz: TZ, labelId: 1,
+        location: location || '', note: note || '',
+      });
+      if (!saved?.uuid) throw new Error('サーバーが予定を返しませんでした');
+      TTX.store.applyEvent(target.id, saved);
+      TTX.cli._render?.();
+      return { calendar: target.name, event: saved };
+    },
+
+    /**
+     * Change one event. Anything not given stays as it is — including the half
+     * of a time you didn't mention: `--at 7/21` on a 10:00 event means the 21st
+     * at 10:00, not the 21st at midnight.
+     *
+     * Moving the start keeps the length, which is what 「ずらして」 means and
+     * what dragging does everywhere else.
+     */
+    async edit({ uuid, title, at, to, mins, location, note } = {}) {
+      const state = ready();
+      const { cal, raw } = locate(state, uuid);
+      if (series(raw)) {
+        throw new Error(`"${raw.title || '(無題)'}" は繰り返しの予定です。この id は全部の回を指すので、`
+          + `ここから直すと毎回が変わります。1回だけ直すならウィンドウから編集してください。`);
+      }
+      if (!TTX.cli._fields || !TTX.cli._patch) throw new Error('編集できません');
+
+      const f = TTX.cli._fields(raw);           // the form's own reading of it
+      if (title !== undefined && String(title).trim()) f.title = String(title).trim();
+      if (location !== undefined) f.location = String(location);
+      if (note !== undefined) f.note = String(note);
+
+      if (at) {
+        const from = TTX.tz.toEpoch(f.startKey, f.startTime, f.allDay, TZ);
+        let span = TTX.tz.toEpoch(f.endKey, f.endTime, f.allDay, TZ) - from;
+        f.startKey = at.key;
+        if (at.time) {
+          // An all-day event handed a clock becomes a timed one — and its old
+          // length was measured in days, which is not what "10時から" means.
+          if (f.allDay) { f.allDay = false; span = 3600000; }
+          f.startTime = at.time;
+        }
+        endAfter(f, span);
+      }
+      if (to) {
+        f.endKey = to.key;
+        if (to.time) { f.allDay = false; f.endTime = to.time; }
+      }
+      if (mins != null) {
+        if (f.allDay) throw new Error('終日の予定に長さは指定できません');
+        endAfter(f, mins * 60000);
+      }
+      if (TTX.tz.toEpoch(f.endKey, f.endTime, f.allDay, TZ)
+        < TTX.tz.toEpoch(f.startKey, f.startTime, f.allDay, TZ)) {
+        throw new Error('終わりが始まりより前です');
+      }
+
+      const patch = TTX.cli._patch(raw, f);     // the form's own diff — PUT is a merge
+      if (!Object.keys(patch).length) throw new Error('変更はありません');
+      const saved = await TTX.api.updateEvent(cal.id, raw.uuid, patch);
+      TTX.store.applyEvent(cal.id, saved?.uuid ? saved : { ...raw, ...patch });
+      TTX.cli._render?.();
+      return { calendar: cal.name, changed: Object.keys(patch), event: saved?.uuid ? saved : { ...raw, ...patch } };
+    },
+
+    async rm({ uuid, all } = {}) {
+      const state = ready();
+      const { cal, raw } = locate(state, uuid);
+      if (series(raw) && !all) {
+        // Not naming a flag: this same message goes to the CLI and to MCP, and
+        // the two say yes differently. The parenthetical is for the person at
+        // the terminal, who has no schema to read.
+        throw new Error(`"${raw.title || '(無題)'}" は繰り返しの予定で、この id は全部の回を指しています。`
+          + `すべての回を消すと明示してください（tf なら --all）。1回だけ消すならウィンドウから。`);
+      }
+      await TTX.api.deleteEvent(cal.id, raw.uuid);
+      TTX.store.markDeleted(cal.id, raw.uuid);
+      TTX.cli._render?.();
+      return { calendar: cal.name, title: raw.title || '(無題)', series: series(raw) };
     },
   };
 

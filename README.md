@@ -86,6 +86,10 @@ npm run tf -- ls week --cal 家族
 npm run tf -- ls 7/21 --json
 npm run tf -- show 7110a578            # ls が出す先頭8文字でいい
 npm run tf -- say 7110a578 "14時でいい？"
+npm run tf -- add 歯医者 --at "7/21 10:00" --for 1h --where 駅前歯科
+npm run tf -- add 旅行 --at 8/1 --to 8/3   # 時刻を書かなければ終日
+npm run tf -- edit 7110a578 --at "7/21 10:30"   # ずらす。長さはそのまま
+npm run tf -- rm 7110a578
 npm run tf -- use you@example.com   # → たろう に切り替えました  家族、プライベート
 ```
 
@@ -123,8 +127,16 @@ claude mcp add timeforest -- node E:/coding/TimeTree/client/mcp.js
 | `list_events` | 期間で予定を読む。日付は `today` `week` `7/21` |
 | `get_event` | 1件の中身（時刻・場所・メモ・繰り返し・通知・参加者） |
 | `get_comments` | やり取りと「誰が何を変えたか」 |
-| `add_comment` | コメントする。**共有カレンダーだと他のメンバーに通知が飛ぶ** |
+| `add_comment` | コメントする |
+| `create_event` | 予定を作る。`start` は `"来週火曜 15:00"` のような書き方が通る。**時刻を書かなければ終日** |
+| `update_event` | 直す。書かなかったものは変わらない。ずらすと長さは付いてくる |
+| `delete_event` | 消す。繰り返しは `all` を明示しない限り断る |
 | `list_calendars` / `list_accounts` / `switch_account` | |
+
+> ⚠ **書き込みは共有カレンダーだと他のメンバーのスマホに通知が飛ぶ。** 下書きではないし、
+> 取り消せない。書き込みツールにはその印（`readOnlyHint: false`、`openWorldHint`、
+> 削除には `destructiveHint`）が付いていて、Claude Code は許可なしには撃たない
+> ── 「確認は一切不要」と命じてもブロックされることを実際に確かめた。
 
 CLI と同じ扉（`client/rpc.js`）に、同じ理由で乗っている。TimeTree の API の知識は
 この中に1行も無い。

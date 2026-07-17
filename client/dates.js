@@ -77,4 +77,49 @@ function range(word, now = Date.now()) {
   return one ? { from: one, to: one } : null;
 }
 
-module.exports = { today, addDays, weekStart, monthEnd, day, range };
+/**
+ * A moment: a day, plus the time after it if there is one.
+ *   `7/21 10:00`   `明日 9:30`   `2026-07-21T10:00`   `7/21 9時`   `today`
+ *
+ * A bare day comes back with `time: null` rather than midnight, because the
+ * caller needs to tell the two apart: a person who types a day and no clock
+ * means an all-day event, not one that starts at 00:00.
+ *
+ * A time with no day is null on purpose. `10:00` looks obvious at 09:00 and
+ * means something else at 15:00, and guessing puts the event on the wrong day.
+ * @returns {{key:string, time:string|null}|null}
+ */
+function when(word, now = Date.now()) {
+  const w = String(word ?? '').trim();
+  if (!w) return null;
+  const m = w.match(/^(.+?)[T\s]+(\d{1,2})(?::(\d{2}))?\s*時?$/);
+  if (!m) {
+    const only = day(w, now);
+    return only ? { key: only, time: null } : null;
+  }
+  const key = day(m[1], now);
+  if (!key) return null;
+  const hh = Number(m[2]);
+  const mm = Number(m[3] || 0);
+  if (hh > 23 || mm > 59) return null;
+  return { key, time: `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}` };
+}
+
+/**
+ * How long something lasts, in minutes: `1h` `90m` `1:30` `1.5h` `45` `2時間`.
+ * @returns {number|null} minutes — 0 is a real answer, so test for null
+ */
+function mins(word) {
+  const w = String(word ?? '').trim().toLowerCase();
+  if (!w) return null;
+  let m = w.match(/^(\d+(?:\.\d+)?)\s*(?:h|時間)$/);
+  if (m) return Math.round(Number(m[1]) * 60);
+  m = w.match(/^(\d+)\s*(?:m|分)$/);
+  if (m) return Number(m[1]);
+  m = w.match(/^(\d{1,2}):(\d{2})$/);
+  if (m) return Number(m[1]) * 60 + Number(m[2]);
+  if (/^\d+$/.test(w)) return Number(w);
+  return null;
+}
+
+module.exports = { today, addDays, weekStart, monthEnd, day, range, when, mins };

@@ -599,6 +599,22 @@
   // reload the store AND re-render, and one of those gets forgotten.
   TTX.cli._switch = switchAccount;
 
+  /**
+   * A write from the CLI has to become visible — the store has no subscribers,
+   * so whoever writes re-renders. Both rules here are the auto-sync's, which
+   * answers the same question (a change arriving that nobody at this window
+   * asked for):
+   *
+   *   · Don't paint over someone. paint() closes the detail card and rebuilds
+   *     the row the form is anchored to. The event is in the store either way,
+   *     and the next repaint shows it.
+   *   · Don't navigate. The form calls showKey() after a save because you were
+   *     looking at the form when you saved; the person at this window didn't
+   *     run the command and shouldn't have their month yanked out from under
+   *     them.
+   */
+  TTX.cli._render = () => { if (!busy()) render(); };
+
   async function removeAccount(a) {
     const wasActive = a.id === ui.activeId;
     const r = await window.host.accounts.remove(a.id);
@@ -1984,6 +2000,15 @@
 
   const startEpoch = (f) => TTX.tz.toEpoch(f.startKey, f.startTime, f.allDay, TZ);
   const endEpoch = (f) => TTX.tz.toEpoch(f.endKey, f.endTime, f.allDay, TZ);
+
+  // `tf edit` reads and writes an event through these two, the same as the form.
+  // They carry the all-day dance — stored at UTC midnight, with latent
+  // wall-clock times so toggling has somewhere to land — and the rule that PUT
+  // is a merge, not a replace. A second copy of that in cli-host.js would
+  // drift, and this particular drift moves a family event to the wrong time
+  // without telling anybody.
+  TTX.cli._fields = fieldsFromRaw;
+  TTX.cli._patch = diffPatch;
 
   /**
    * PUT is a merge, not a replace — send only what changed. A full-object PUT

@@ -263,6 +263,39 @@ for (const [input, from, to] of rangeCases) {
   else bad(`range(${JSON.stringify(input)}): expected ${from}〜${to}, got ${JSON.stringify(got)}`);
 }
 
+/* A moment, for `add`. The bare-day case is the load-bearing one: it has to
+ * come back distinguishable from midnight, because that is how `add` knows the
+ * person meant an all-day event. */
+const whenCases = [
+  ['7/21 10:00', '2026-07-21', '10:00'],
+  ['7/21 9:30', '2026-07-21', '09:30'],
+  ['2026-07-21T10:00', '2026-07-21', '10:00'],
+  ['明日 9時', '2026-07-18', '09:00'],
+  ['today 8:05', '2026-07-17', '08:05'],
+  ['+7d 14:00', '2026-07-24', '14:00'],
+  ['7/21', '2026-07-21', null],          // no clock → all-day, not 00:00
+  ['明日', '2026-07-18', null],
+  ['7/21 0:00', '2026-07-21', '00:00'],  // ...but midnight asked for is midnight
+  ['7/21 25:00', null, null],
+  ['7/21 10:70', null, null],
+  ['10:00', null, null],                 // a time with no day is a wrong guess
+  ['ごはん', null, null],
+];
+for (const [input, key, time] of whenCases) {
+  const got = dates.when(input, NOW);
+  const okd = key === null ? got === null : (got && got.key === key && got.time === time);
+  if (okd) ok(`when(${JSON.stringify(input)}) = ${got ? `${got.key} ${got.time ?? '(終日)'}` : 'null'}`);
+  else bad(`when(${JSON.stringify(input)}): expected ${key} ${time}, got ${JSON.stringify(got)}`);
+}
+
+const minsCases = [['1h', 60], ['90m', 90], ['1:30', 90], ['1.5h', 90], ['45', 45],
+  ['2時間', 120], ['30分', 30], ['0', 0], ['あとで', null], ['', null]];
+for (const [input, want] of minsCases) {
+  const got = dates.mins(input);
+  if (got === want) ok(`mins(${JSON.stringify(input)}) = ${JSON.stringify(got)}`);
+  else bad(`mins(${JSON.stringify(input)}): expected ${want}, got ${got}`);
+}
+
 /* The JST rule, which is the whole reason this doesn't just use `new Date()`.
  * 2026-07-17 15:30Z is already the 18th in Tokyo. A machine in UTC would say
  * the 17th, and `tf ls today` would quietly list the wrong day. */
