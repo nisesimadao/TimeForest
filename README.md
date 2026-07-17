@@ -1,6 +1,21 @@
-# TimeForest
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/banner-dark.svg">
+  <img alt="TimeForest — TimeTree 非公式クライアント" src="docs/banner-light.svg" width="100%">
+</picture>
 
 [![CI](../../actions/workflows/ci.yml/badge.svg)](../../actions/workflows/ci.yml)
+&nbsp;![dependencies 0](docs/badge-deps.svg)
+&nbsp;![build step none](docs/badge-build.svg)
+&nbsp;![node 20 · 24](docs/badge-node.svg)
+&nbsp;![Electron 43](docs/badge-electron.svg)
+&nbsp;![extension MV3](docs/badge-mv3.svg)
+
+<!-- Static SVGs, not shields.io endpoints: this repo is private, so shields
+     cannot read it. scripts/check.js verifies each badge's claim against the
+     source (dependencies really 0, node really 20+24, Electron really 43) — a
+     badge that drifts from the truth fails CI, the same rule as everything else
+     here. A test-count badge is deliberately absent: it would lie the moment a
+     test was added. -->
 
 TimeTree 非公式クライアント。3つの形で同じものを届ける。
 

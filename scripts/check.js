@@ -69,6 +69,50 @@ for (const p of [...cs.js, ...cs.css, manifest.background.service_worker]) {
 }
 if (manifest.manifest_version !== 3) bad('manifest_version must be 3');
 
+// --- 2b. README badges tell the truth ---------------------------------------
+//
+// The badges are static SVGs (shields.io can't read a private repo), so nothing
+// stops one saying "dependencies 0" while a dependency creeps in, or "Electron
+// 43" after a major bump. A badge you can't trust is worse than none — this is
+// the same "green for the wrong reason" this file exists to prevent. So each
+// badge's claim is checked against the source it claims to summarise.
+section('README badges match reality');
+{
+  const rootPkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
+  const clientPkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'client/package.json'), 'utf8'));
+  const badge = (file) => {
+    const p = path.join(ROOT, 'docs', file);
+    if (!fs.existsSync(p)) return null;
+    return fs.readFileSync(p, 'utf8');
+  };
+  const claims = (file, needle, why) => {
+    const svg = badge(file);
+    if (svg === null) bad(`docs/${file} is referenced by the README but missing`);
+    else if (svg.includes(needle)) ok(`${file} says "${needle}", and ${why}`);
+    else bad(`${file} no longer says "${needle}" — update the badge or the README stops matching`);
+  };
+
+  // dependencies 0: the runtime really has none. devDependencies (electron,
+  // electron-builder) are build-time and don't count against this claim.
+  const runtimeDeps = Object.keys(rootPkg.dependencies || {}).length
+    + Object.keys(clientPkg.dependencies || {}).length;
+  if (runtimeDeps === 0) claims('badge-deps.svg', '>0<', 'there really are no runtime dependencies');
+  else bad(`badge says 0 dependencies but there are ${runtimeDeps} — ${JSON.stringify({ ...rootPkg.dependencies, ...clientPkg.dependencies })}`);
+
+  // Electron 43: the badge names a major version, so read the major off the range.
+  const major = (clientPkg.devDependencies.electron || '').match(/(\d+)/)?.[1];
+  claims('badge-electron.svg', `Electron ${major}`, `client/package.json pins electron ^${major}`);
+
+  // node 20 · 24: exactly the matrix CI runs. If ci.yml changes, this should too.
+  const ci = fs.readFileSync(path.join(ROOT, '.github/workflows/ci.yml'), 'utf8');
+  const matrix = (ci.match(/node:\s*\[([^\]]+)\]/)?.[1] || '').replace(/\s/g, '');
+  if (matrix === '20,24') claims('badge-node.svg', '20', 'CI runs exactly that matrix');
+  else bad(`badge says node 20·24 but CI matrix is [${matrix}] — keep them in step`);
+
+  claims('badge-mv3.svg', 'MV3', `manifest_version is ${manifest.manifest_version}`);
+  claims('badge-build.svg', 'none', 'there is no build step for the checks (check.js has zero deps)');
+}
+
 // --- 3. the client loads the same libs, not copies --------------------------
 
 section('shared library (no drift)');
