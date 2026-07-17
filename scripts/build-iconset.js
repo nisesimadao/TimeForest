@@ -64,6 +64,8 @@ const WANTED = {
   info: 'info',
   keyboard: 'keyboard',
   palette: 'palette',
+  send: 'send-horizontal',
+  'message-circle': 'message-circle',
 };
 
 const dir = path.join(ROOT, 'node_modules', 'lucide-static', 'icons');

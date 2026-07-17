@@ -57,6 +57,15 @@
       if (!items.length) return;
       const first = items[0];
       const last = items[items.length - 1];
+      // Focus may sit on the dialog CONTAINER rather than a control inside it —
+      // that's where the detail card starts, so a screen reader announces what
+      // the dialog IS before reading its buttons. Tab from there falls inward
+      // on its own, but Shift+Tab would walk straight out of the trap.
+      if (document.activeElement === root || !root.contains(document.activeElement)) {
+        e.preventDefault();
+        (e.shiftKey ? last : first).focus();
+        return;
+      }
       if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
       else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
     };
@@ -1134,6 +1143,14 @@
       card.appendChild(n);
     }
 
+    // The comments. This is the half of TimeTree that isn't a calendar: an
+    // event says 「10:30 歯医者」, and the thread under it says 「予約変えた」
+    // 「ありがとう」. A client that shows only the first half is a viewer.
+    //
+    // Holidays and birthdays are derived rows, not events on a calendar —
+    // there is nothing on the server to hang a comment on.
+    if (canEdit(o)) card.appendChild(commentFeed(o));
+
     if (canEdit(o)) {
       const acts = el('div', 'd-acts');
       const edit = el('button', 'btn', '編集');
@@ -1148,34 +1165,49 @@
     document.body.appendChild(scrim);
 
     // Position beside the row, clamped into the window.
-    const a = anchor.getBoundingClientRect();
+    //
+    // A function, not a straight line of code, because the comment feed lands
+    // AFTER this runs — an async fetch can't be measured before it answers.
+    // Placing once against the pre-feed height put a card that later grew by
+    // 200px straight through the bottom of the window.
     const w = 320;
-    card.style.width = w + 'px';
-    const left = Math.min(Math.max(8, a.left), innerWidth - w - 8);
-    card.style.left = left + 'px';
-    const h = card.offsetHeight;
-    const below = a.bottom + 6;
-    const flip = below + h > innerHeight - 8;
-    // Preferred spot: under the row, or above it when it won't fit. Then clamp
-    // to BOTH edges. Clamping only the top used to let a tall card hang off the
-    // bottom, which put 編集/削除 somewhere you couldn't click.
-    const top = Math.min(
-      Math.max(8, flip ? a.top - h - 6 : below),
-      Math.max(8, innerHeight - h - 8)
-    );
-    card.style.top = top + 'px';
-    // Grow from wherever the row actually is relative to the card we landed on.
-    card.style.transformOrigin =
-      `${Math.min(Math.max(0, a.left - left + 20), w)}px ` +
-      `${Math.min(Math.max(0, a.top - top), h)}px`;
+    const place = () => {
+      const a = anchor.getBoundingClientRect();
+      card.style.width = w + 'px';
+      const left = Math.min(Math.max(8, a.left), innerWidth - w - 8);
+      card.style.left = left + 'px';
+      const h = card.offsetHeight;
+      const below = a.bottom + 6;
+      const flip = below + h > innerHeight - 8;
+      // Preferred spot: under the row, or above it when it won't fit. Then clamp
+      // to BOTH edges. Clamping only the top used to let a tall card hang off the
+      // bottom, which put 編集/削除 somewhere you couldn't click.
+      const top = Math.min(
+        Math.max(8, flip ? a.top - h - 6 : below),
+        Math.max(8, innerHeight - h - 8)
+      );
+      card.style.top = top + 'px';
+      // Grow from wherever the row actually is relative to the card we landed on.
+      card.style.transformOrigin =
+        `${Math.min(Math.max(0, a.left - left + 20), w)}px ` +
+        `${Math.min(Math.max(0, a.top - top), h)}px`;
+    };
+    place();
+    ui.detailPlace = place;
 
     requestAnimationFrame(() => card.classList.add('in'));
     scrim.onclick = (e) => { if (e.target === scrim) closeDetail(); };
     ui.detail = scrim;
     ui.detailRelease = dialog(card, { label: o.title });
     // Focus has to ENTER the card, or its 編集/削除 are unreachable by keyboard
-    // even though they are real buttons.
-    (card.querySelector(FOCUSABLE) || card).focus();
+    // even though they are real buttons. It lands on the card ITSELF, not on
+    // the first control: since the card grew a comment box, "first control" is
+    // the textarea, and opening an event would announce 「コメントを書く」 to a
+    // screen reader and plant a cursor as if you'd come here to type. The card
+    // is the dialog and its label is the title — announce that, and let Tab go
+    // looking.
+    card.tabIndex = -1;
+    card.focus();
   }
 
   function closeDetail() {
@@ -1183,6 +1215,152 @@
     ui.detailRelease = null;
     ui.detail?.remove();
     ui.detail = null;
+    ui.detailPlace = null;
+  }
+
+  /**
+   * When a comment was written. A thread is read newest-last and mostly in one
+   * sitting, so the useful precision is "today at 10:30" — the year is noise
+   * and 「3日前」 is worse than a date you can compare to the event's own.
+   */
+  function stampText(ms) {
+    const d = new Date(ms);
+    const today = TTX.tz.ymd(Date.now(), TZ) === TTX.tz.ymd(ms, TZ);
+    const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    return today ? hm : `${d.getMonth() + 1}/${d.getDate()} ${hm}`;
+  }
+
+  /**
+   * An event's comment thread, loaded lazily.
+   *
+   * Lazily because it has to be: a comment doesn't touch the event object (not
+   * even `updated_at`) and there is no calendar-wide activity feed, so nothing
+   * in the synced data can tell us a thread exists. Asking per event, when the
+   * card opens, is the only way — and it's what the real app does too.
+   */
+  function commentFeed(o) {
+    const wrap = el('div', 'd-cmt');
+    const feed = el('div', 'd-feed');
+    const status = el('div', 'd-fmsg', 'コメントを読み込んでいます…');
+    feed.appendChild(status);
+    wrap.appendChild(feed);
+
+    const me = TTX.store.state.me?.id ?? null;
+    const members = TTX.store.state.members.get(o.calendarId);
+
+    const row = (a) => {
+      if (!a.comment) {
+        // The system entries: 「日時を変更しました」. Quieter than what people
+        // said, because nobody opened this card to read them — but they're the
+        // difference between "the time is wrong" and "someone moved it".
+        const r = el('div', 'd-fi sys');
+        r.append(
+          el('span', null, a.authorName ? `${a.authorName}が${a.text}` : a.text),
+          el('span', 'd-ft', stampText(a.at))
+        );
+        return r;
+      }
+      const r = el('div', 'd-fi');
+      const av = el('span', 'acct-av sm');
+      av.textContent = (a.authorName || '?').slice(0, 1);
+      av.style.background = acctColor(String(a.authorId));
+      const b = el('div', 'd-fb');
+      const who = el('div', 'd-fw');
+      who.append(el('span', 'd-fn', a.authorName || '(名前なし)'), el('span', 'd-ft', stampText(a.at)));
+      // Chat apps all say this, and for the same reason: without it the text
+      // silently stops matching what somebody replied to.
+      if (a.edited) who.appendChild(el('span', 'd-ft', '編集済み'));
+      b.append(who, el('div', 'd-fx', a.text));
+      r.append(av, b);
+      return r;
+    };
+
+    const paint = (list) => {
+      feed.textContent = '';
+      const items = TTX.model.normalizeActivities(list, { membersById: members }, me);
+      if (!items.some((i) => i.comment)) {
+        feed.appendChild(el('div', 'd-fmsg', 'まだコメントはありません'));
+      }
+      for (const a of items) feed.appendChild(row(a));
+      // The newest comment is the one you opened this for.
+      feed.scrollTop = feed.scrollHeight;
+      // The card was placed against its pre-feed height; it just grew.
+      ui.detailPlace?.();
+    };
+
+    let raw = [];
+    const load = async () => {
+      try {
+        raw = await TTX.api.activities(o.calendarId, o.uuid);
+        paint(raw);
+      } catch {
+        feed.textContent = '';
+        const err = el('div', 'd-fmsg', 'コメントを読み込めませんでした');
+        const again = el('button', 'lnk', '再試行');
+        again.onclick = () => { feed.textContent = ''; feed.appendChild(status); load(); };
+        err.appendChild(again);
+        feed.appendChild(err);
+        ui.detailPlace?.();
+      }
+    };
+    load();
+
+    // --- compose ---
+    const box = el('div', 'd-cbox');
+    const ta = el('textarea', 'd-cin');
+    ta.placeholder = 'コメントを書く';
+    ta.rows = 1;
+    ta.setAttribute('aria-label', 'コメントを書く');
+    const send = el('button', 'd-csend');
+    send.appendChild(TTX.icon('send', 14));
+    send.title = '送信';
+    send.setAttribute('aria-label', '送信');
+    send.disabled = true;
+
+    const grow = () => {
+      ta.style.height = 'auto';
+      ta.style.height = Math.min(ta.scrollHeight, 88) + 'px';
+    };
+    ta.oninput = () => { send.disabled = !ta.value.trim(); grow(); };
+
+    let sending = false;
+    const post = async () => {
+      const text = ta.value.trim();
+      if (!text || sending) return;
+      sending = true;
+      send.disabled = true;
+      ta.disabled = true;
+      try {
+        const a = await TTX.api.postComment(o.calendarId, o.uuid, text);
+        // Trust the server's record over the text we typed — it carries the id
+        // and the timestamp, and it's what a reload will show.
+        raw = raw.concat(a ? [a] : []);
+        paint(raw);
+        ta.value = '';
+        grow();
+      } catch (e) {
+        toast('コメントを送信できませんでした');
+        console.error(e);
+      } finally {
+        sending = false;
+        ta.disabled = false;
+        send.disabled = !ta.value.trim();
+        ta.focus();
+      }
+    };
+    send.onclick = post;
+    // Enter sends, Shift+Enter breaks the line — what the real app does, and
+    // what every other box shaped like this one does.
+    ta.onkeydown = (e) => {
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); post(); }
+      // The card is a modal: without this, Escape in the box closes the whole
+      // thing and throws away what you were typing.
+      if (e.key === 'Escape' && ta.value.trim()) { e.stopPropagation(); ta.value = ''; grow(); send.disabled = true; }
+    };
+
+    box.append(ta, send);
+    wrap.appendChild(box);
+    return wrap;
   }
 
   // --- confirm ----------------------------------------------------------

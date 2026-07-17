@@ -12,6 +12,7 @@
     "verify:form": "node scripts/verify-form.js",
     "verify:recur": "node scripts/verify-recur.js",
     "verify:notify": "node scripts/verify-notify.js",
+    "verify:comment": "node scripts/verify-comment.js",
     "icons": "node scripts/build-icons.js",
     "dist": "node client/node_modules/electron-builder/out/cli/cli.js --config electron-builder.config.js",
     "dist:dir": "node client/node_modules/electron-builder/out/cli/cli.js --config electron-builder.config.js --dir"

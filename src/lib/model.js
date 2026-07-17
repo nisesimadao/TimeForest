@@ -190,5 +190,40 @@
     return q.toLowerCase().split(/\s+/).filter(Boolean).every((t) => hay.includes(t));
   }
 
-  TTX.model = { occurrences, holidayOccurrences, groupByDay, matchesQuery, normalize, alertAt };
+  /**
+   * One entry in an event's comment feed, ready to render.
+   *
+   * Deleted records are dropped, not tombstoned: the server soft-deletes so
+   * that other clients can sync the removal, but a person who deleted a
+   * comment meant it to be gone, and 「削除されました」 rows would be a worse
+   * calendar than no rows.
+   *
+   * `me` is the signed-in user id, and drives nothing but whether the edit and
+   * delete affordances appear — the server is the one that enforces it.
+   */
+  function normalizeActivities(list, ctx, me) {
+    return (list || [])
+      .filter((a) => !a.deactivated_at)
+      .map((a) => ({
+        id: a.id,
+        type: a.type,
+        authorId: a.author_id ?? null,
+        authorName: (ctx?.membersById?.get(a.author_id)?.name) || '',
+        comment: a.type === TTX.api.ACTIVITY.COMMENT,
+        text: a.type === TTX.api.ACTIVITY.COMMENT
+          ? (a.attachment?.content || '')
+          : TTX.api.activityText(a),
+        at: a.created_at,
+        // A comment that was edited says so, the way every chat app does —
+        // otherwise the text silently differs from what someone replied to.
+        edited: a.type === TTX.api.ACTIVITY.COMMENT && a.updated_at > a.created_at + 1000,
+        mine: me != null && a.author_id === me,
+      }))
+      .sort((a, b) => a.at - b.at);
+  }
+
+  TTX.model = {
+    occurrences, holidayOccurrences, groupByDay, matchesQuery, normalize, alertAt,
+    normalizeActivities,
+  };
 })();

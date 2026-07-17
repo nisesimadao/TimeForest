@@ -196,6 +196,72 @@ for (const [name, got, want] of timing) {
   else bad(`${name}: expected ${want}, got ${got}`);
 }
 
+// --- 5b2. the comment feed says what actually happened -----------------------
+//
+// The item codes were measured one field at a time against the real server, so
+// the mapping is knowledge that cost something and is easy to break silently:
+// get it wrong and the app calmly tells someone their partner changed the DATE
+// when they changed the LOCATION. The last two cases are the load-bearing ones
+// — an unmeasured code must degrade to a vaguer sentence, never a wrong one.
+
+section('comment feed (behavioural)');
+require(path.join(ROOT, 'src/lib/api.js'));
+const { api } = globalThis.TTX;
+const act = (type, items) => ({ type, attachment: items ? { items } : {} });
+
+const stories = [
+  ['created', api.activityText(act(1, [1])), '予定を作成しました'],
+  ['title', api.activityText(act(2, [0])), 'タイトルを変更しました'],
+  ['date', api.activityText(act(2, [1])), '日時を変更しました'],
+  ['label', api.activityText(act(2, [2])), 'ラベルを変更しました'],
+  ['note', api.activityText(act(2, [3])), 'メモを変更しました'],
+  ['location', api.activityText(act(2, [4])), '場所を変更しました'],
+  ['alerts', api.activityText(act(2, [6])), '通知を変更しました'],
+  ['url', api.activityText(act(2, [8])), 'URLを変更しました'],
+  ['combined edit', api.activityText(act(2, [0, 1, 3])), 'タイトル・日時・メモを変更しました'],
+  ['a comment tells no story', api.activityText(act(0)), ''],
+  // 5 and 7 were never observed. Guessing puts a false sentence in a family's
+  // calendar; this is the assertion that keeps the guess out.
+  ['an unmeasured code degrades', api.activityText(act(2, [5])), '予定を変更しました'],
+  ['a known code survives an unknown one', api.activityText(act(2, [4, 7])), '場所を変更しました'],
+];
+for (const [name, got, want] of stories) {
+  if (got === want) ok(`${name} — ${JSON.stringify(got)}`);
+  else bad(`${name}: expected ${JSON.stringify(want)}, got ${JSON.stringify(got)}`);
+}
+
+/* The id the client mints for a comment. The real app sends a bare 32-hex
+ * string — a dashed UUID is a different thing and the server may or may not
+ * care, so don't find out in production. */
+const aid = api.newActivityId();
+if (/^[0-9a-f]{32}$/.test(aid)) ok(`newActivityId is 32 hex — ${aid}`);
+else bad(`newActivityId must be 32 lowercase hex, got ${JSON.stringify(aid)}`);
+if (api.newActivityId() !== aid) ok('and it is not a constant');
+else bad('newActivityId returned the same id twice');
+
+/* Soft-deleted comments must not render: the server keeps them so other
+ * clients can sync the removal, but somebody meant them to be gone. */
+require(path.join(ROOT, 'src/lib/model.js'));
+const feed = globalThis.TTX.model.normalizeActivities([
+  { id: 'a', type: 0, author_id: 1, attachment: { content: 'あとで' }, created_at: 300, updated_at: 300 },
+  { id: 'b', type: 0, author_id: 2, attachment: { content: '消した' }, created_at: 200, updated_at: 200,
+    deactivated_at: 999 },
+  { id: 'c', type: 1, author_id: 1, attachment: { items: [1] }, created_at: 100, updated_at: 100 },
+  { id: 'd', type: 0, author_id: 1, attachment: { content: 'なおした' }, created_at: 400, updated_at: 99400 },
+], { membersById: new Map([[1, { name: 'たろう' }], [2, { name: 'はなこ' }]]) }, 1);
+
+const ids = feed.map((f) => f.id).join(',');
+if (ids === 'c,a,d') ok(`deleted dropped, rest oldest-first — ${ids}`);
+else bad(`expected c,a,d (b deleted), got ${ids}`);
+if (feed[0].text === '予定を作成しました' && !feed[0].comment) ok('system rows carry their story');
+else bad(`system row wrong: ${JSON.stringify(feed[0])}`);
+if (feed[1].authorName === 'たろう') ok('author resolved through membersById');
+else bad(`author unresolved: ${JSON.stringify(feed[1].authorName)}`);
+if (feed[2].edited && !feed[1].edited) ok('an edited comment is marked, an untouched one is not');
+else bad(`edited flag wrong: ${feed.map((f) => f.edited).join(',')}`);
+if (feed[1].mine && !feed.find((f) => f.id === 'c' && !f.mine)) ok('own comments are identified');
+else bad('mine flag wrong');
+
 // --- 5c. the package includes what the renderer loads ------------------------
 //
 // electron-builder's `files` is an ALLOWLIST, and it has to be: the app root is

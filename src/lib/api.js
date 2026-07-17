@@ -244,6 +244,94 @@
   const deleteEvent = (calendarId, uuid) =>
     request('DELETE', `/api/v1/calendar/${calendarId}/event/${uuid}`);
 
+  // --- comments (the "activity" feed) ----------------------------------
+  //
+  // Captured from the web app itself (on a throwaway account):
+  //   GET    /api/v1/calendar/{id}/event/{uuid}/activities      read the feed
+  //   POST   /api/v1/calendar/{id}/event/{uuid}/activity        post a comment
+  //   PUT    /api/v1/calendar/{id}/event/{uuid}/activity/{aid}  edit one
+  //   DELETE /api/v1/calendar/{id}/event/{uuid}/activity/{aid}  delete one
+  // Plural to read, singular to write — the same split as events.
+  //
+  // The feed mixes what people SAID with what people DID, which is the point:
+  // 「明日雨だから中止？」 sitting under 「日時を変更しました」 is the story.
+  //
+  //   type 0 — a comment.  attachment.content is the text.
+  //   type 1 — created.
+  //   type 2 — edited.     attachment.items lists WHICH FIELDS changed.
+  //
+  // DELETE is a soft delete: the record stays in the feed with
+  // `deactivated_at` set, exactly like an event.
+  //
+  // There is no calendar-wide feed (tried /activities, /event_activities,
+  // /feed — all 404), and posting a comment does not touch the event object at
+  // all, not even `updated_at`. So there is no way to know an event HAS
+  // comments without asking for that event specifically. That's why this loads
+  // lazily, per event, when the detail panel opens — same as the real app.
+  const ACTIVITY = { COMMENT: 0, CREATED: 1, EDITED: 2 };
+
+  /**
+   * `attachment.items` on an edit record, measured one field at a time against
+   * the real server (change exactly one thing, read back which code appears):
+   *
+   *   0 タイトル   1 日時   2 ラベル   3 メモ   4 場所   6 通知   8 URL
+   *
+   * A combined title+date+note edit answered [0,1,3], which confirms the codes
+   * compose. 5 and 7 never came back — probably 参加者 and チェックリスト, but
+   * a one-member throwaway can't produce the first and the second is rejected
+   * on this plan, so they are UNMEASURED and deliberately absent: an unknown
+   * code degrades to a plain 「予定を変更しました」 rather than a confident
+   * guess that could put a wrong sentence in someone's family calendar.
+   */
+  const ACTIVITY_FIELDS = {
+    0: 'タイトル', 1: '日時', 2: 'ラベル', 3: 'メモ', 4: '場所', 6: '通知', 8: 'URL',
+  };
+
+  /** The one-line story an activity record tells. */
+  function activityText(a) {
+    if (a.type === ACTIVITY.CREATED) return '予定を作成しました';
+    if (a.type !== ACTIVITY.EDITED) return '';
+    const names = (a.attachment?.items || []).map((i) => ACTIVITY_FIELDS[i]).filter(Boolean);
+    // Unknown codes: say only what's true.
+    if (!names.length) return '予定を変更しました';
+    return `${names.join('・')}を変更しました`;
+  }
+
+  /**
+   * The 32-hex id the client generates for a comment. The real web app sends
+   * one on POST rather than letting the server mint it, so we do too.
+   */
+  function newActivityId() {
+    const c = globalThis.crypto;
+    if (c?.randomUUID) return c.randomUUID().replace(/-/g, '');
+    const b = new Uint8Array(16);
+    c.getRandomValues(b);
+    return Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+  }
+
+  async function activities(calendarId, uuid) {
+    const j = await get(`/api/v1/calendar/${calendarId}/event/${uuid}/activities`);
+    return j?.event_activities || [];
+  }
+
+  async function postComment(calendarId, uuid, text) {
+    const j = await request('POST', `/api/v1/calendar/${calendarId}/event/${uuid}/activity`, {
+      attachment: { content: text },
+      id: newActivityId(),
+    });
+    return j?.event_activity ?? j;
+  }
+
+  async function editComment(calendarId, uuid, id, text) {
+    const j = await request('PUT', `/api/v1/calendar/${calendarId}/event/${uuid}/activity/${id}`, {
+      attachment: { content: text },
+    });
+    return j?.event_activity ?? j;
+  }
+
+  const deleteComment = (calendarId, uuid, id) =>
+    request('DELETE', `/api/v1/calendar/${calendarId}/event/${uuid}/activity/${id}`);
+
   // --- recurring series ------------------------------------------------
   //
   // There is no "edit this occurrence" endpoint. A series is edited by
@@ -448,6 +536,8 @@
   TTX.api = {
     calendars, currentCalendar, allEvents, labels, members, memorialdays, me,
     createEvent, updateEvent, deleteEvent, buildEvent, buildAttachment,
+    activities, postComment, editComment, deleteComment,
+    activityText, newActivityId, ACTIVITY, ACTIVITY_FIELDS,
     excludeOccurrence, truncateSeries, editOccurrence, splitSeries,
     icalStamp, ruleOf, isMaster, withRule, withUntil,
     alldayAlert, alldayAlertDays, alertLabel,
