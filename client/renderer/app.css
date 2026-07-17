@@ -1017,7 +1017,7 @@ button { background: none; border: 0; cursor: default; text-align: left; }
   color: var(--label-3);
   padding: 2px 0;
 }
-.d-fi { display: grid; grid-template-columns: 22px 1fr; gap: 7px; align-items: start; }
+.d-fi { display: grid; grid-template-columns: 22px 1fr auto; gap: 7px; align-items: start; }
 /* System rows aren't from a person, so they don't get a face — the avatar
    column collapses and the line runs full width, quieter than what was said. */
 .d-fi.sys {
@@ -1043,6 +1043,41 @@ button { background: none; border: 0; cursor: default; text-align: left; }
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+/* 編集/削除 on your own comments. Hidden until you reach for the row — but
+   `:focus-within` is not optional here: without it these stay invisible while
+   holding focus, and Tab would appear to send focus nowhere. */
+.d-fa { display: flex; gap: 1px; opacity: 0; transition: opacity 0.12s; }
+.d-fi:hover .d-fa,
+.d-fi:focus-within .d-fa { opacity: 1; }
+.d-fab {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--r-sm);
+  color: var(--label-3);
+}
+.d-fab:hover { background: var(--bg-hover); color: var(--label); }
+
+/* The edit box takes over the comment's own line, so the row doesn't jump. */
+.d-fe { display: flex; flex-direction: column; gap: 5px; margin-top: 1px; }
+.d-fe-acts { display: flex; gap: 5px; justify-content: flex-end; }
+.d-fe-acts .btn { padding: 3px 9px; font-size: var(--t-xs); }
+
+/* Inline confirm, rather than a second modal stacked on this one. */
+.d-fd {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  margin-top: 5px;
+  padding: 6px 7px;
+  border-radius: var(--r-md);
+  background: var(--bg-hover);
+}
+.d-fd-q { flex: 1; font-size: var(--t-xs); color: var(--label-2); }
+.d-fd .btn { padding: 3px 9px; font-size: var(--t-xs); }
 
 .d-cbox {
   display: grid;

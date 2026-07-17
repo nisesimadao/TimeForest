@@ -1279,7 +1279,113 @@
       if (a.edited) who.appendChild(el('span', 'd-ft', '編集済み'));
       b.append(who, el('div', 'd-fx', a.text));
       r.append(av, b);
+      // Your own comments can be fixed or taken back. The server decides this
+      // too — these only appear where it would say yes.
+      if (a.mine) r.appendChild(ownActions(a, r, b));
       return r;
+    };
+
+    /**
+     * 編集 / 削除 for a comment you wrote.
+     *
+     * Revealed on hover AND focus-within, never hover alone: they stay in the
+     * DOM and stay focusable, so Tab reaches them and they show up when it
+     * does. Hover-only would hide them from the keyboard entirely.
+     */
+    function ownActions(a, rowNode, body) {
+      const acts = el('div', 'd-fa');
+      const edit = iconBtn('pencil', 'このコメントを編集', () => beginEdit(a, rowNode, body), 'd-fab');
+      const del = iconBtn('trash', 'このコメントを削除', () => askDelete(a, rowNode), 'd-fab');
+      acts.append(edit, del);
+      return acts;
+    }
+
+    function beginEdit(a, rowNode, body) {
+      const fx = body.querySelector('.d-fx');
+      if (!fx || rowNode.querySelector('.d-fe')) return;
+      const box = el('div', 'd-fe');
+      const ta = el('textarea', 'd-cin');
+      ta.value = a.text;
+      ta.rows = 1;
+      ta.setAttribute('aria-label', 'コメントを編集');
+      const acts = el('div', 'd-fe-acts');
+      const save = el('button', 'btn primary', '保存');
+      const cancel = el('button', 'btn', 'キャンセル');
+      acts.append(cancel, save);
+      box.append(ta, acts);
+      fx.replaceWith(box);
+      const grow = () => { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 88) + 'px'; };
+      grow();
+      ta.focus();
+      ta.setSelectionRange(ta.value.length, ta.value.length);
+      ui.detailPlace?.();
+
+      const stop = () => { box.replaceWith(fx); ui.detailPlace?.(); };
+      cancel.onclick = stop;
+      const commit = async () => {
+        const text = ta.value.trim();
+        // Empty is not an edit. Deleting is a different button, on purpose —
+        // clearing the box and saving should not silently destroy the comment.
+        if (!text) { toast('コメントを空にはできません（消すなら削除）'); ta.focus(); return; }
+        if (text === a.text) return stop();
+        save.disabled = true; cancel.disabled = true; ta.disabled = true;
+        try {
+          const updated = await TTX.api.editComment(o.calendarId, o.uuid, a.id, text);
+          replaceRaw(a.id, updated);
+        } catch (e) {
+          save.disabled = false; cancel.disabled = false; ta.disabled = false;
+          toast('コメントを編集できませんでした');
+          console.error(e);
+        }
+      };
+      save.onclick = commit;
+      ta.oninput = grow;
+      ta.onkeydown = (e) => {
+        if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); commit(); }
+        // Escape backs out of the edit, not out of the whole card.
+        if (e.key === 'Escape') { e.stopPropagation(); stop(); }
+      };
+    }
+
+    /**
+     * Deleting asks first, inline. A second dialog stacked on this one would be
+     * a modal inside a modal for a one-line comment; and the card would have to
+     * close to make room, which is exactly where you don't want to be sent.
+     */
+    function askDelete(a, rowNode) {
+      if (rowNode.querySelector('.d-fd')) return;
+      const bar = el('div', 'd-fd');
+      const yes = el('button', 'btn danger', '削除');
+      const no = el('button', 'btn', 'やめる');
+      bar.append(el('span', 'd-fd-q', 'このコメントを削除しますか？'), no, yes);
+      rowNode.appendChild(bar);
+      ui.detailPlace?.();
+      no.focus();
+      const close = () => { bar.remove(); ui.detailPlace?.(); };
+      no.onclick = close;
+      bar.onkeydown = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+      yes.onclick = async () => {
+        yes.disabled = true; no.disabled = true;
+        try {
+          await TTX.api.deleteComment(o.calendarId, o.uuid, a.id);
+          dropRaw(a.id);
+        } catch (e) {
+          yes.disabled = false; no.disabled = false;
+          toast('コメントを削除できませんでした');
+          console.error(e);
+        }
+      };
+    }
+
+    /* The feed is rebuilt from `raw`, so an edit or a delete has to land there
+     * and not just in the DOM — otherwise the next paint puts it back. */
+    const replaceRaw = (id, updated) => {
+      raw = raw.map((x) => (x.id === id ? (updated?.id ? updated : x) : x));
+      paint(raw);
+    };
+    const dropRaw = (id) => {
+      raw = raw.filter((x) => x.id !== id);
+      paint(raw);
     };
 
     const paint = (list) => {

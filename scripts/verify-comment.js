@@ -147,6 +147,84 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   check(onServer.length === 1 && onServer[0] === '駐車場ってある？',
     `a fresh fetch finds it on the server (${JSON.stringify(onServer)})`);
 
+  // --- 2b. editing and deleting your own comment ----------------------------
+  //
+  // Every assertion here re-reads from the server. "The DOM changed" is not the
+  // claim — the claim is that the comment a family will see tomorrow changed.
+  sec('editing your own comment');
+  const serverText = () => page.evaluate(async ({ cid, uuid }) =>
+    (await TTX.api.activities(cid, uuid)).filter((a) => a.type === 0 && !a.deactivated_at)
+      .map((a) => a.attachment?.content), { cid: calId, uuid: made.uuid });
+
+  check(await page.evaluate(() => document.querySelectorAll('.d-fi .d-fa .d-fab').length) === 2,
+    '編集/削除 appear on a comment you wrote');
+
+  await page.click('.d-fi .d-fab[aria-label="このコメントを編集"]');
+  await page.waitForSelector('.d-fe .d-cin', { timeout: 4000 });
+  check(await page.inputValue('.d-fe .d-cin') === '駐車場ってある？',
+    'the edit box opens with the current text, not empty');
+
+  // An empty edit must not quietly destroy the comment — deleting is its own
+  // button for a reason.
+  //
+  // The server refuses empty content with a 400 anyway (measured), so
+  // "the comment survived" passes with our own check DELETED — it was testing
+  // TimeTree, not us. What only our code can do is say something useful instead
+  // of a generic failure, and skip a pointless round-trip. So assert the words.
+  await page.fill('.d-fe .d-cin', '   ');
+  await page.click('.d-fe .btn.primary');
+  await sleep(600);
+  const emptyMsg = await page.evaluate(() => document.querySelector('.toast.show')?.textContent || '');
+  check(emptyMsg.includes('空にはできません') && emptyMsg.includes('削除'),
+    `an empty edit is refused by US, naming the way out (${JSON.stringify(emptyMsg)})`);
+  check((await serverText())[0] === '駐車場ってある？', 'the comment survives');
+  check(await page.$('.d-fe .d-cin') !== null, 'and the edit box stays open');
+
+  await page.fill('.d-fe .d-cin', '駐車場ってある？あと何時集合？');
+  await page.press('.d-fe .d-cin', 'Enter');
+  await page.waitForFunction(() => !document.querySelector('.d-fe'), { timeout: 6000 });
+  check((await serverText())[0] === '駐車場ってある？あと何時集合？',
+    'Enter saves the edit, and the server has the new text');
+  check(await page.evaluate(() => [...document.querySelectorAll('.d-ft')]
+    .some((n) => n.textContent === '編集済み')), 'the comment is marked 編集済み');
+
+  // Escape backs out of the edit only — losing the whole card here would throw
+  // away what you were fixing.
+  await page.click('.d-fi .d-fab[aria-label="このコメントを編集"]');
+  await page.waitForSelector('.d-fe .d-cin', { timeout: 4000 });
+  await page.fill('.d-fe .d-cin', 'これは捨てる');
+  await page.press('.d-fe .d-cin', 'Escape');
+  await sleep(400);
+  check(await page.$('.d-card') !== null, 'Escape in the edit box does not close the card');
+  check(await page.$('.d-fe') === null, 'it closes the edit box');
+  check((await serverText())[0] === '駐車場ってある？あと何時集合？', 'and the abandoned text was not saved');
+
+  sec('deleting your own comment');
+  await page.click('.d-fi .d-fab[aria-label="このコメントを削除"]');
+  await page.waitForSelector('.d-fd', { timeout: 4000 });
+  ok('削除 asks first, inline');
+  check(await page.evaluate(() => document.querySelectorAll('.d-card').length) === 1,
+    'and does not stack a second dialog on the card');
+  await page.click('.d-fd .btn:not(.danger)');
+  await sleep(400);
+  check(await page.$('.d-fd') === null, 'やめる backs out');
+  check((await serverText()).length === 1, 'and deletes nothing');
+
+  await page.click('.d-fi .d-fab[aria-label="このコメントを削除"]');
+  await page.waitForSelector('.d-fd', { timeout: 4000 });
+  await page.click('.d-fd .btn.danger');
+  await page.waitForFunction(() => !document.querySelector('.d-fx'), { timeout: 6000 });
+  check((await serverText()).length === 0, 'the comment is gone from the server');
+  check(await page.evaluate(() => !!document.querySelector('.d-fmsg')?.textContent.includes('まだコメント')),
+    'and the feed says まだコメントはありません again');
+
+  // Put one back for the sections below.
+  await page.fill('.d-cin', '駐車場ってある？');
+  await page.press('.d-cin', 'Enter');
+  await page.waitForFunction(() => [...document.querySelectorAll('.d-fx')]
+    .some((n) => n.textContent === '駐車場ってある？'), { timeout: 8000 });
+  ok('posted a fresh comment for the rest of the run');
+
   // --- 3. Shift+Enter is a newline, not a send ------------------------------
   sec('Shift+Enter');
   await page.click('.d-cin');
@@ -156,9 +234,12 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await sleep(300);
   const typed = await page.inputValue('.d-cin');
   check(typed === '一行目\n二行目', `Shift+Enter breaks the line instead of sending (${JSON.stringify(typed)})`);
-  const stillOne = await page.evaluate(async ({ cid, uuid }) =>
-    (await TTX.api.activities(cid, uuid)).filter((a) => a.type === 0).length, { cid: calId, uuid: made.uuid });
-  check(stillOne === 1, 'and nothing was posted while typing');
+  // `!deactivated_at` is load-bearing: DELETE is a soft delete, so a comment
+  // the run deleted earlier is still in the feed as a tombstone and counting
+  // raw type-0 rows says 2. This assertion predates delete existing and quietly
+  // started counting graves the moment it did.
+  const stillOne = (await serverText()).length;
+  check(stillOne === 1, `and nothing was posted while typing (${stillOne})`);
   // Escape clears the draft rather than closing the card and losing it.
   await page.keyboard.press('Escape');
   await sleep(300);

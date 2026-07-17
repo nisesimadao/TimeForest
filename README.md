@@ -274,7 +274,7 @@ npm i playwright-core          # CI は依存ゼロのままにしたいので�
 npm run verify:form            # 作成・編集・削除 UI（124 アサーション）
 npm run verify:recur           # 繰り返しの6操作（46 アサーション）
 npm run verify:notify          # リマインドとトレイ（16 アサーション）
-npm run verify:comment         # コメント（31 アサーション）
+npm run verify:comment         # コメント（48 アサーション）
 ```
 
 モックは使わない。`14:00 JST` と入力して保存し、**サーバーに `05:00Z` が
