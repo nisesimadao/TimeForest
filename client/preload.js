@@ -30,6 +30,15 @@ contextBridge.exposeInMainWorld('host', {
     get: () => ipcRenderer.invoke('app:getAutoStart'),
     set: (on) => ipcRenderer.invoke('app:setAutoStart', on),
   },
+  // Tiles come back as data: URIs and searches as plain objects — the renderer
+  // never gets a URL to a third party, so the CSP stays shut and there is one
+  // place that knows OpenStreetMap exists.
+  map: {
+    setEnabled: (on) => ipcRenderer.invoke('map:setEnabled', on),
+    tile: (z, x, y) => ipcRenderer.invoke('map:tile', { z, x, y }),
+    search: (q) => ipcRenderer.invoke('map:search', q),
+    open: (lat, lon, label) => ipcRenderer.invoke('map:open', { lat, lon, label }),
+  },
   theme: {
     set: (mode) => ipcRenderer.invoke('app:setTheme', mode),
     shouldUseDark: () => ipcRenderer.invoke('app:shouldUseDark'),

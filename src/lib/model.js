@@ -70,6 +70,10 @@
       authorId: raw.author_id ?? null,
       authorName: (ctx?.membersById?.get(raw.author_id)?.name) || '',
       location: raw.location || '',
+      // TimeTree's phone app pins places; the API returns the coordinates as
+      // STRINGS ("35.681236"), and its own web app ignores them entirely.
+      lat: raw.location_lat != null ? Number(raw.location_lat) : null,
+      lon: raw.location_lon != null ? Number(raw.location_lon) : null,
       note: raw.note || '',
       // `url` is written inside `attachment` but read back at BOTH levels —
       // the server mirrors it up. Read the top one; prefer the attachment if
@@ -139,7 +143,8 @@
         multiDay: days.length > 1,
         startTime: '', endTime: '',
         labelId: null, authorId: null, authorName: '',
-        location: '', note: '', url: '', checklist: [], attendees: [],
+        location: '', lat: null, lon: null,
+        note: '', url: '', checklist: [], attendees: [],
         recurring: false, isException: false,
         calendarId: null, calendarName: '',
       };

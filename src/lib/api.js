@@ -213,6 +213,12 @@
       label_id: e.labelId ?? 1,
       note: e.note || '',
       location: e.location || '',
+      // Coordinates ride alongside the text, never instead of it: the phone
+      // app shows the text, and a pin with no name is a riddle. Sent only when
+      // we have both — writing nulls would clear a pin the phone app set.
+      ...(Number.isFinite(e.lat) && Number.isFinite(e.lon)
+        ? { location_lat: e.lat, location_lon: e.lon }
+        : {}),
       attendees: e.attendees || [],
       recurrences: e.recurrences || [],
       alerts: e.alerts || [],

@@ -96,6 +96,8 @@
     settings: null,
     settingsRelease: null,
     hideEmpty: true,
+    maps: false,
+    mapPicker: null,
   };
 
   const todayKey = () => ymd(Date.now(), TZ);
@@ -134,6 +136,7 @@
         theme: ui.theme,
         notify: ui.notify,
         hideEmpty: ui.hideEmpty,
+        maps: ui.maps,
         muted: [...ui.mutedLabels],
         disabled: TTX.store.state.calendars
           .filter((c) => !TTX.store.state.enabled.has(c.id)).map((c) => c.id),
@@ -147,6 +150,7 @@
       if (p.theme) ui.theme = p.theme;
       if (p.notify != null) ui.notify = !!p.notify;
       if (p.hideEmpty != null) ui.hideEmpty = !!p.hideEmpty;
+      if (p.maps != null) ui.maps = !!p.maps;
       if (p.muted) ui.mutedLabels = new Set(p.muted);
       return p;
     } catch {
@@ -964,6 +968,15 @@
     rows.push(['clock', when]);
 
     if (o.location) rows.push(['pin', o.location]);
+    // A pin the phone app dropped, which TimeTree's own web app never shows.
+    // Opening it needs no map switch and no tiles: it's a click, and the URL
+    // is built host-side.
+    if (Number.isFinite(o.lat) && Number.isFinite(o.lon)) {
+      rows.push(['map', {
+        text: '地図で開く',
+        act: () => window.host.map.open(o.lat, o.lon, o.location || o.title),
+      }]);
+    }
     if (o.url) rows.push(['link', o.url]);
     const lb = TTX.store.labelOf(o.calendarId, o.labelId);
     if (lb) rows.push(['tag', TTX.api.labelName(lb)]);
@@ -987,10 +1000,12 @@
     if (o.birthday) rows.push(['cake', '誕生日']);
 
     for (const [ic, v] of rows) {
-      const r = el('div', 'd-row');
+      const act = typeof v === 'object';
+      const r = el(act ? 'button' : 'div', 'd-row' + (act ? ' act' : ''));
       const box = el('span', 'd-ic');
       box.appendChild(TTX.icon(ic, 14));
-      r.append(box, el('span', 'd-v', v));
+      r.append(box, el('span', 'd-v', act ? v.text : v));
+      if (act) r.onclick = v.act;
       card.appendChild(r);
     }
     if (o.checklist?.length) {
@@ -1305,6 +1320,8 @@
       endKey: allDay ? startKey : endKey,
       endTime,
       location: '',
+      lat: null,
+      lon: null,
       note: '',
       labelId: labels[0]?.id ?? 1,
       repeat: { freq: '', byday: [], until: '', rest: {} },
@@ -1345,6 +1362,8 @@
       startTime: raw.all_day ? defaultTime(startKey) : hm(startAt, tz),
       endTime: raw.all_day ? '10:00' : hm(endAt, tz),
       location: raw.location || '',
+      lat: raw.location_lat != null ? Number(raw.location_lat) : null,
+      lon: raw.location_lon != null ? Number(raw.location_lon) : null,
       note: raw.note || '',
       labelId: raw.label_id ?? 1,
       repeat: parseRepeat(TTX.api.ruleOf(raw)),
@@ -1683,9 +1702,33 @@
     const loc = el('input', 'f-text');
     loc.placeholder = '任意';
     loc.value = f.location;
-    loc.oninput = () => { f.location = loc.value; };
+    // Typing a new place by hand means the old pin is no longer where this is.
+    loc.oninput = () => {
+      if (loc.value !== f.location) { f.lat = null; f.lon = null; paintPin(); }
+      f.location = loc.value;
+    };
     locRow.appendChild(loc);
+    const pinBtn = el('button', 'f-pin');
+    pinBtn.appendChild(TTX.icon('pin', 13));
+    pinBtn.append(el('span', 'f-pin-t', ''));
+    pinBtn.title = '地図で場所を選ぶ';
+    pinBtn.onclick = () => openMapPicker(f, ({ location, lat, lon }) => {
+      f.location = location;
+      f.lat = lat;
+      f.lon = lon;
+      loc.value = location;
+      paintPin();
+    });
+    locRow.appendChild(pinBtn);
     body.appendChild(locRow);
+
+    function paintPin() {
+      const pinned = Number.isFinite(f.lat) && Number.isFinite(f.lon);
+      pinBtn.classList.toggle('on', pinned);
+      pinBtn.querySelector('.f-pin-t').textContent = pinned ? 'ピン済み' : '地図';
+      pinBtn.setAttribute('aria-label', pinned ? '地図のピンを変更' : '地図で場所を選ぶ');
+    }
+    paintPin();
 
     const urlRow = el('div', 'f-row');
     urlRow.appendChild(el('span', 'f-k', 'URL'));
@@ -1891,6 +1934,8 @@
       labelId: f.labelId,
       note: f.note,
       location: f.location,
+      lat: f.lat,
+      lon: f.lon,
       alerts: f.alerts,
       attendees: f.attendees,
       url: f.url,
@@ -2195,6 +2240,256 @@
     toast(ui.autoStart ? 'Windows 起動時に開始します' : '自動起動をやめました');
   }
 
+  // --- map --------------------------------------------------------------
+  //
+  // TimeTree's phone app can pin a place; its web app can't — the location
+  // there is a text box, and location_lat/location_lon just sit in the API
+  // unread. So this is a thing a third-party client can actually add.
+  //
+  // No map library. A slippy map is a grid of 256px images at
+  // z/x/y plus some arithmetic, and the whole of that arithmetic is the two
+  // functions below. Pulling in Leaflet would mean either widening the CSP to
+  // a CDN or vendoring 140KB to draw nine <img>s.
+
+  const TILE = 256;
+
+  /** WGS84 -> Web Mercator tile space, in fractional tiles at zoom z. */
+  function toTile(lat, lon, z) {
+    const n = 2 ** z;
+    const rad = (lat * Math.PI) / 180;
+    return {
+      x: ((lon + 180) / 360) * n,
+      y: ((1 - Math.log(Math.tan(rad) + 1 / Math.cos(rad)) / Math.PI) / 2) * n,
+    };
+  }
+
+  /** And back. */
+  function fromTile(x, y, z) {
+    const n = 2 ** z;
+    const k = Math.PI - (2 * Math.PI * y) / n;
+    return {
+      lat: (180 / Math.PI) * Math.atan(0.5 * (Math.exp(k) - Math.exp(-k))),
+      lon: (x / n) * 360 - 180,
+    };
+  }
+
+  /**
+   * A pannable map centred on `state`, drawn into `box`.
+   *
+   * Tiles come from the host as data: URIs — the renderer has no route to
+   * OpenStreetMap, by design (see client/main.js).
+   */
+  function mapView(box, state, onMove) {
+    let dragging = null;
+
+    async function paintTiles() {
+      const w = box.clientWidth;
+      const h = box.clientHeight;
+      if (!w || !h) return;
+      const c = toTile(state.lat, state.lon, state.z);
+      // Which tile sits under the top-left corner, and by how much is it off.
+      const left = c.x - w / 2 / TILE;
+      const top = c.y - h / 2 / TILE;
+      const x0 = Math.floor(left);
+      const y0 = Math.floor(top);
+      const cols = Math.ceil(w / TILE) + 1;
+      const rows = Math.ceil(h / TILE) + 1;
+      const n = 2 ** state.z;
+
+      const grid = el('div', 'mp-tiles');
+      grid.style.transform =
+        `translate(${Math.round((x0 - left) * TILE)}px, ${Math.round((y0 - top) * TILE)}px)`;
+      grid.style.gridTemplateColumns = `repeat(${cols}, ${TILE}px)`;
+
+      const want = [];
+      for (let dy = 0; dy < rows; dy++) {
+        for (let dx = 0; dx < cols; dx++) {
+          const img = el('img', 'mp-t');
+          img.width = TILE;
+          img.height = TILE;
+          img.alt = '';
+          grid.appendChild(img);
+          const tx = ((x0 + dx) % n + n) % n;   // wrap round the dateline
+          const ty = y0 + dy;
+          if (ty < 0 || ty >= n) continue;      // no tiles past the poles
+          want.push([img, state.z, tx, ty]);
+        }
+      }
+      box.querySelector('.mp-tiles')?.remove();
+      box.prepend(grid);
+      await Promise.all(want.map(async ([img, z, x, y]) => {
+        try { img.src = await window.host.map.tile(z, x, y); } catch { /* blank */ }
+      }));
+    }
+
+    box.onpointerdown = (e) => {
+      if (e.button !== 0) return;
+      dragging = { x: e.clientX, y: e.clientY, moved: 0 };
+      box.setPointerCapture(e.pointerId);
+      box.classList.add('grabbing');
+    };
+    box.onpointermove = (e) => {
+      if (!dragging) return;
+      const dx = e.clientX - dragging.x;
+      const dy = e.clientY - dragging.y;
+      dragging.moved += Math.abs(dx) + Math.abs(dy);
+      dragging.x = e.clientX;
+      dragging.y = e.clientY;
+      const c = toTile(state.lat, state.lon, state.z);
+      const p = fromTile(c.x - dx / TILE, c.y - dy / TILE, state.z);
+      state.lat = Math.max(-85, Math.min(85, p.lat));
+      state.lon = ((p.lon + 540) % 360) - 180;
+      paintTiles();
+      onMove?.();
+    };
+    const end = (e) => {
+      if (!dragging) return;
+      box.releasePointerCapture(e.pointerId);
+      box.classList.remove('grabbing');
+      dragging = null;
+    };
+    box.onpointerup = end;
+    box.onpointercancel = end;
+    box.onwheel = (e) => {
+      e.preventDefault();
+      const z = Math.max(2, Math.min(18, state.z + (e.deltaY < 0 ? 1 : -1)));
+      if (z === state.z) return;
+      state.z = z;
+      paintTiles();
+      onMove?.();
+    };
+
+    return paintTiles;
+  }
+
+  /**
+   * Ask before the first request. Until the user says yes, this app has spoken
+   * to exactly one host in its life, and that's a property worth not spending
+   * silently on their behalf.
+   */
+  async function ensureMaps() {
+    if (ui.maps) return true;
+    const yes = await confirmDialog({
+      title: '地図を有効にしますか',
+      body: 'このアプリはこれまで TimeTree としか通信していません。地図を使うと、'
+        + '表示する範囲を OpenStreetMap に問い合わせます（予定の内容は送りません）。'
+        + 'あとから設定で切り替えられます。',
+      ok: '有効にする',
+    });
+    if (!yes) return false;
+    ui.maps = true;
+    await window.host.map.setEnabled(true);
+    savePrefs();
+    return true;
+  }
+
+  /** Pick a place: search for it, or drag the map under the pin. */
+  async function openMapPicker(f, onPick) {
+    if (!(await ensureMaps())) return;
+
+    const scrim = el('div', 'scrim mp-scrim');
+    const card = el('div', 'mp-card');
+    const head = el('div', 'f-head');
+    const hid = 'mp-h';
+    const h = el('div', 'f-h-t', '場所を選ぶ');
+    h.id = hid;
+    head.appendChild(h);
+    card.appendChild(head);
+
+    const bar = el('div', 'mp-bar');
+    const q = el('input', 'f-text');
+    q.placeholder = '駅名・住所・店名で検索';
+    q.value = f.location || '';
+    bar.appendChild(q);
+    card.appendChild(bar);
+
+    const results = el('div', 'mp-results');
+    card.appendChild(results);
+
+    const box = el('div', 'mp-box');
+    // The pin is fixed at the centre and the map moves under it — you're
+    // always pinning the middle, so there's no "did I click precisely" step.
+    const pin = el('div', 'mp-pin');
+    pin.appendChild(TTX.icon('pin', 28));
+    box.appendChild(pin);
+    card.appendChild(box);
+
+    const foot = el('div', 'f-foot');
+    const coord = el('div', 'mp-coord');
+    foot.appendChild(coord);
+    foot.appendChild(el('div', 'tb-spacer'));
+    const cancel = el('button', 'btn', 'キャンセル');
+    const use = el('button', 'btn primary', 'この場所にする');
+    foot.append(cancel, use);
+    card.appendChild(foot);
+
+    scrim.appendChild(card);
+    document.body.appendChild(scrim);
+    const release = dialog(card, { labelledBy: hid });
+    ui.mapPicker = scrim;
+
+    // Start where the event already is, else Tokyo — a world view would make
+    // the first drag meaningless.
+    const state = {
+      lat: Number.isFinite(f.lat) ? f.lat : 35.681236,
+      lon: Number.isFinite(f.lon) ? f.lon : 139.767125,
+      z: Number.isFinite(f.lat) ? 16 : 12,
+    };
+    let name = f.location || '';
+    const showCoord = () => { coord.textContent = `${state.lat.toFixed(5)}, ${state.lon.toFixed(5)}`; };
+    const repaint = mapView(box, state, showCoord);
+    showCoord();
+    requestAnimationFrame(repaint);
+
+    let timer;
+    q.oninput = () => {
+      name = q.value;
+      clearTimeout(timer);
+      timer = setTimeout(async () => {
+        const term = q.value.trim();
+        if (term.length < 2) { results.textContent = ''; return; }
+        let list = [];
+        try { list = await window.host.map.search(term); } catch { /* offline */ }
+        results.textContent = '';
+        for (const r of list) {
+          const b = el('button', 'mp-r');
+          b.append(el('span', 'mp-r-n', r.name), el('span', 'mp-r-a', r.address));
+          b.onclick = () => {
+            state.lat = r.lat;
+            state.lon = r.lon;
+            state.z = 17;
+            name = r.name;
+            q.value = r.name;
+            results.textContent = '';
+            showCoord();
+            repaint();
+          };
+          results.appendChild(b);
+        }
+      }, 350);
+    };
+    q.onkeydown = (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); results.querySelector('.mp-r')?.click(); }
+    };
+
+    const close = () => {
+      clearTimeout(timer);
+      release();
+      scrim.remove();
+      ui.mapPicker = null;
+    };
+    cancel.onclick = close;
+    use.onclick = () => {
+      onPick({ location: name.trim(), lat: state.lat, lon: state.lon });
+      close();
+    };
+    scrim.onclick = (e) => { if (e.target === scrim) close(); };
+    card.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); close(); }
+    });
+    q.focus();
+  }
+
   // --- settings ---------------------------------------------------------
   //
   // TimeTree's web app technically has settings: click your avatar, then the
@@ -2270,6 +2565,17 @@
         savePrefs();
         openSettings.refresh();
         refresh('fade');
+      })));
+
+    body.appendChild(setRow('地図',
+      ui.maps
+        ? '場所のピンを地図から選べます。表示する範囲を OpenStreetMap に問い合わせます'
+        : 'オフの間、このアプリは TimeTree としか通信しません',
+      toggleBtn(ui.maps, async (v) => {
+        ui.maps = v;
+        await window.host.map.setEnabled(v);
+        savePrefs();
+        openSettings.refresh();
       })));
 
     // --- notifications
@@ -2809,6 +3115,10 @@
     startAlerts();
     startAutoSync();
     ui.autoStart = await window.host.autoStart.get().catch(() => false);
+    // The switch lives in prefs, which only the renderer can read; the host
+    // starts every run refusing to fetch anything until told otherwise. Say so
+    // once, here, rather than checking a flag at each call site.
+    await window.host.map.setEnabled(ui.maps).catch(() => {});
 
     await refreshAccounts();
     await bootUI();

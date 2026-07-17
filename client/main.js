@@ -373,6 +373,97 @@ ipcMain.handle('notify:show', (_e, { title, body, key } = {}) => {
  * assumed: starting yourself at login without being asked is something a user
  * should get to refuse. Starts hidden — the tray is enough of an announcement.
  */
+// --- maps ------------------------------------------------------------------
+//
+// TimeTree stores location_lat / location_lon on every event — its phone app
+// has a place picker. Its WEB app doesn't; the location there is a plain text
+// box. So a pin is something a third-party client can genuinely add.
+//
+// Everything map-related goes through here rather than the renderer, for three
+// reasons that all point the same way:
+//
+//   1. The renderer's CSP is `img-src 'self' data:`. Tiles arrive as data:
+//      URIs, so the policy stays shut rather than being widened to a tile CDN.
+//   2. OpenStreetMap's tile policy requires a User-Agent that identifies the
+//      app. A file:// renderer can't set one; this can.
+//   3. Until now this app talked to exactly ONE host. Maps make it two. That
+//      belongs in one auditable place, behind one switch, not sprinkled
+//      through the UI — the renderer cannot reach OSM even if it wanted to.
+//
+// The switch is off by default and lives in settings. Turning it on means
+// telling OpenStreetMap roughly where your family's events are, which is a
+// thing to be asked rather than assumed.
+
+const OSM_UA = `TimeForest/${app.getVersion()} (unofficial TimeTree desktop client)`;
+const tileCache = new Map();
+const TILE_CACHE_MAX = 400;
+let mapsEnabled = false;
+
+ipcMain.handle('map:setEnabled', (_e, on) => { mapsEnabled = !!on; return mapsEnabled; });
+
+/**
+ * Open a pin in the user's real map app.
+ *
+ * The renderer hands over coordinates, not a URL — `app:openExternal` only
+ * ever allowed timetreeapp.com, and the way to keep that guarantee is to keep
+ * building the URL on this side rather than widening the allowlist to
+ * "anything that looks like a map". Works with maps switched off: this is the
+ * user clicking a button, and nothing is fetched.
+ */
+ipcMain.handle('map:open', (_e, { lat, lon, label } = {}) => {
+  const la = Number(lat);
+  const lo = Number(lon);
+  if (!Number.isFinite(la) || !Number.isFinite(lo)) throw new Error('bad coordinates');
+  if (Math.abs(la) > 90 || Math.abs(lo) > 180) throw new Error('bad coordinates');
+  const q = encodeURIComponent(String(label || '').slice(0, 120));
+  shell.openExternal(
+    `https://www.google.com/maps/search/?api=1&query=${la},${lo}`
+    + (q ? `&query_place_id=&z=17` : '')
+  );
+  return true;
+});
+
+/** One OSM tile as a data: URI. Cached — panning revisits the same tiles. */
+ipcMain.handle('map:tile', async (_e, { z, x, y } = {}) => {
+  if (!mapsEnabled) throw new Error('地図はオフです');
+  if (![z, x, y].every((n) => Number.isInteger(n) && n >= 0) || z > 19) {
+    throw new Error('bad tile');
+  }
+  const key = `${z}/${x}/${y}`;
+  if (tileCache.has(key)) return tileCache.get(key);
+  const res = await fetch(`https://tile.openstreetmap.org/${key}.png`, {
+    headers: { 'user-agent': OSM_UA },
+  });
+  if (!res.ok) throw new Error('tile ' + res.status);
+  const buf = Buffer.from(await res.arrayBuffer());
+  const uri = 'data:image/png;base64,' + buf.toString('base64');
+  // Cheap FIFO: a Map keeps insertion order, so the oldest key is first.
+  if (tileCache.size >= TILE_CACHE_MAX) tileCache.delete(tileCache.keys().next().value);
+  tileCache.set(key, uri);
+  return uri;
+});
+
+/** Place search, via Nominatim. Returns at most 8 candidates. */
+ipcMain.handle('map:search', async (_e, q) => {
+  if (!mapsEnabled) throw new Error('地図はオフです');
+  const query = String(q || '').trim();
+  if (query.length < 2) return [];
+  const u = new URL('https://nominatim.openstreetmap.org/search');
+  u.searchParams.set('q', query);
+  u.searchParams.set('format', 'jsonv2');
+  u.searchParams.set('limit', '8');
+  u.searchParams.set('accept-language', 'ja');
+  const res = await fetch(u, { headers: { 'user-agent': OSM_UA } });
+  if (!res.ok) throw new Error('search ' + res.status);
+  const j = await res.json();
+  return (Array.isArray(j) ? j : []).map((r) => ({
+    name: r.name || r.display_name.split(',')[0],
+    address: r.display_name,
+    lat: Number(r.lat),
+    lon: Number(r.lon),
+  }));
+});
+
 ipcMain.handle('app:getAutoStart', () => app.getLoginItemSettings().openAtLogin);
 ipcMain.handle('app:setAutoStart', (_e, on) => {
   app.setLoginItemSettings({ openAtLogin: !!on, args: ['--hidden'] });

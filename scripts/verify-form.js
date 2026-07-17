@@ -85,13 +85,15 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   // A previous run may have died with a sheet up. Dismiss it the way a person
   // would — the app tracks what's open, so reaching in and deleting the DOM
   // leaves it believing a form is still there and refusing to open another.
-  for (let i = 0; i < 4 && await page.$('.scrim, .d-scrim'); i++) {
+  for (let i = 0; i < 6 && await page.$('.scrim, .d-scrim'); i++) {
+    // Escape needs focus inside the sheet, and a sheet left over from another
+    // session may not have it — so click the way out when there is one.
+    const cancel = await page.$('.mp-card .btn:not(.primary), .confirm .btn.danger, .f-foot .btn:not(.primary)');
+    if (cancel) { await cancel.click().catch(() => {}); await sleep(300); continue; }
     await page.keyboard.press('Escape');
     await sleep(250);
-    const discard = await page.$('.confirm .btn.danger');
-    if (discard) { await discard.click(); await sleep(250); }
   }
-  ok('no dialog left over from a previous run');
+  check(await page.$('.scrim, .d-scrim') === null, 'no dialog left over from a previous run');
 
   const swept = await page.evaluate(async (cid) => {
     const list = TTX.store.state.events.get(cid) || [];
@@ -590,6 +592,90 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   }
 
   await page.click('.seg button:text-is("アジェンダ")');
+
+  // --- 7b. the map pin ------------------------------------------------------
+  // TimeTree's phone app pins places and its web app ignores them, so this is
+  // the one feature here that beats 本家Web rather than matching it. The point
+  // is the round trip: a pin dropped here has to come back on the phone.
+  sec('map pin — location_lat/lon, which TimeTree Web never writes');
+
+  const mapsWas = await page.evaluate(() => {
+    const p = JSON.parse(localStorage.getItem('ttc.prefs') || '{}');
+    return !!p.maps;
+  });
+  // Off by default is a promise, not a default — check it before turning it on.
+  const refused = await page.evaluate(async () => {
+    await window.host.map.setEnabled(false);
+    try { await window.host.map.tile(12, 3637, 1612); return 'FETCHED'; }
+    catch (e) { return 'refused'; }
+  });
+  check(refused === 'refused', 'with maps off, the host refuses to fetch a tile at all');
+  await page.evaluate(() => window.host.map.setEnabled(true));
+
+  const T8 = `TF検証-地図-${stamp}`;
+  await page.click('.new-btn');
+  await page.waitForSelector('.form', { timeout: 5000 });
+  await page.fill('.f-title', T8);
+  await page.fill('.f-row:has(> .f-k:text-is("開始")) .f-date', DATE);
+  check((await page.textContent('.f-pin')) === '地図', 'the location row offers 地図 when nothing is pinned');
+
+  await page.click('.f-pin');
+  await page.waitForSelector('.mp-box', { timeout: 8000 });
+  ok('picker opened');
+  await page.fill('.mp-bar .f-text', '東京駅');
+  await page.waitForSelector('.mp-r', { timeout: 10000 });
+  await page.click('.mp-r');
+  await sleep(1500);
+  const drawn = await page.evaluate(() => {
+    const t = [...document.querySelectorAll('.mp-t')];
+    return { total: t.length, loaded: t.filter((i) => i.src.startsWith('data:')).length };
+  });
+  check(drawn.total > 0 && drawn.loaded === drawn.total,
+    `the map actually drew (${drawn.loaded}/${drawn.total} tiles, all as data: URIs)`);
+  check(await page.evaluate(() =>
+    ![...document.querySelectorAll('.mp-t')].some((i) => /openstreetmap/.test(i.src))),
+  'no third-party URL reached the renderer — the CSP is untouched');
+
+  await page.click('.mp-card .btn.primary');
+  await page.waitForSelector('.mp-box', { state: 'detached', timeout: 5000 });
+  check((await page.textContent('.f-pin')) === 'ピン済み', 'the form says the place is pinned');
+  check((await page.inputValue('.f-row:has(> .f-k:text-is("場所")) .f-text')).includes('東京駅'),
+    'and filled the location text from the place name');
+
+  await page.click('.btn.primary');
+  await page.waitForSelector('.form', { state: 'detached', timeout: 15000 });
+
+  sec('re-sync — the pin really reached the server');
+  await page.evaluate(() => { TTX.store.state.events.clear(); return TTX.store.syncAll(); });
+  const pinned = await page.evaluate((t) => {
+    const list = TTX.store.state.events.get([...TTX.store.state.enabled][0]) || [];
+    const e = list.find((x) => x.title === t);
+    return e ? { lat: e.location_lat, lon: e.location_lon, loc: e.location } : null;
+  }, T8);
+  check(!!pinned, 'the event survived a re-sync');
+  // The API answers with strings; the reader has to cope with that.
+  check(pinned && Math.abs(Number(pinned.lat) - 35.681) < 0.05
+    && Math.abs(Number(pinned.lon) - 139.767) < 0.05,
+  `the server stored Tokyo Station's coordinates (${pinned?.lat}, ${pinned?.lon})`);
+
+  const occ = await page.evaluate((t) => {
+    const o = TTX.store.occurrences('2026-07-01', '2026-07-31').find((x) => x.title === t);
+    return o ? { lat: o.lat, lon: o.lon, isNum: typeof o.lat === 'number' } : null;
+  }, T8);
+  check(occ?.isNum === true, `the reader turns them back into numbers (${occ?.lat})`);
+
+  await openRow(T8);
+  const mapRow = await page.evaluate(() =>
+    [...document.querySelectorAll('.d-row.act .d-v')].map((n) => n.textContent));
+  check(mapRow.includes('地図で開く'),
+    `the detail popover offers to open the pin (${JSON.stringify(mapRow)})`);
+  await page.click('.d-acts .btn.danger');
+  await page.waitForSelector('.confirm', { timeout: 5000 });
+  await page.click('.confirm .btn.danger');
+  await page.waitForSelector('.confirm', { state: 'detached', timeout: 15000 });
+  await waitRow(T8, false).catch(() => {});
+  await page.evaluate((was) => window.host.map.setEnabled(was), mapsWas);
+  ok('map test event cleaned up, maps switch restored');
 
   // --- 8. settings ----------------------------------------------------------
   sec('settings');
