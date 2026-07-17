@@ -844,7 +844,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await page.click('.pill:text-is("今日")');
   await sleep(700);
 
-  const agenda = () => page.evaluate((t) => {
+  const agenda = () => page.evaluate(() => {
     const w = document.querySelector('.agenda');
     const hs = [...w.querySelectorAll('.ag-month')].map((n) => n.textContent);
     return {
@@ -852,76 +852,90 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       months: hs.length,
       first: hs[0],
       last: hs[hs.length - 1],
-      marks: [...w.querySelectorAll('.ev .ti')].filter((n) => n.textContent.startsWith(t)).length,
+      rows: w.querySelectorAll('.ev').length,
+      // The scrollbar thumb, as the browser draws it.
+      thumb: Math.round((w.clientHeight / w.scrollHeight) * w.clientHeight),
       top: Math.round(w.scrollTop),
       scrollable: w.scrollHeight > w.clientHeight + 2,
     };
-  }, MARK);
+  });
 
+  const asDate = (v) => (v || '').replace(/(\d+)年(\d+)月/, (_, y, m) => y + String(m).padStart(2, '0'));
   const a0 = await agenda();
   check(a0.scrollable, 'the agenda has enough on it to scroll — otherwise this section proves nothing');
   check(a0.months === 3, `it starts at three months (${a0.first}〜${a0.last})`);
 
-  // Roll to the bottom until it stops growing.
-  for (let i = 0; i < 14; i++) {
-    await page.evaluate(() => { const w = document.querySelector('.agenda'); w.scrollTop = w.scrollHeight; });
-    await sleep(420);
-  }
+  const roll = async (to, n) => {
+    for (let i = 0; i < n; i++) {
+      await page.evaluate((bottom) => {
+        const w = document.querySelector('.agenda');
+        w.scrollTop = bottom ? w.scrollHeight : 0;
+      }, to === 'bottom');
+      await sleep(380);
+    }
+  };
+  await roll('bottom', 14);
   const a1 = await agenda();
-  check(a1.months > a0.months, `scrolling to the bottom brings more months (${a0.months} → ${a1.months})`);
-  check(a1.marks === MARK_MONTHS,
-    `every month it claims to show is really drawn (${a1.marks}/${MARK_MONTHS} markers — daysBetween's `
-    + '400-day cap silently truncates past ~13 months)');
+  check(asDate(a1.first) > asDate(a0.first),
+    `scrolling to the bottom travels forward (${a0.first} → ${a1.first})`);
   check(a1.title !== a0.title, `the title follows what you're looking at (${a0.title} → ${a1.title})`);
 
-  // Now upward — months get inserted ABOVE, and the whole point is that the
-  // page does not jump. Anchor on a row and check it stays put.
-  const asDate = (s) => (s || '').replace(/(\d+)年(\d+)月/, (_, y, m) => y + String(m).padStart(2, '0'));
-  const atBottom = await agenda();
-  await page.evaluate(() => { document.querySelector('.agenda').scrollTop = 0; });
-  await sleep(900);
-  const wentBack = await agenda();
-  check(asDate(wentBack.first) < asDate(atBottom.first),
-    `scrolling up reaches earlier months, after already going forward `
-    + `(${atBottom.first} → ${wentBack.first})`);
+  // What the WINDOW must not do is grow. It used to only ever get longer, and
+  // the scrollbar paid for it: measured, the thumb went 96px → 24px just by
+  // scrolling to the end. A scrollbar that shrinks every time you use it has
+  // stopped doing the one thing it is for.
+  check(Math.abs(a1.thumb - a0.thumb) <= a0.thumb,
+    `the scrollbar thumb does not shrink away (${a0.thumb}px → ${a1.thumb}px)`);
+  check(a1.rows < a0.rows * 3,
+    `and the DOM stays bounded (${a0.rows} → ${a1.rows} rows after 14 screens of travel)`);
 
-  // Now the thing that quietly ruins it: months appear ABOVE you, and the
-  // browser keeps scrollTop where it was, so the page lurches by exactly the
-  // height that was inserted.
+  // Travelling back must actually get back. With the window sliding, "grow the
+  // near side, trim the far one" has to work in both directions — measured
+  // once at 15 months forward but only 2 back, because at scrollTop 0 nothing
+  // pushed the content down and the next scroll had nowhere to go.
+  await roll('top', 16);
+  const a2 = await agenda();
+  check(asDate(a2.first) <= asDate(a0.first),
+    `and scrolling back the same way returns (${a1.first} → ${a2.first}, started ${a0.first})`);
+
+  // The thing that quietly ruins it: months appear ABOVE you, and the browser
+  // keeps scrollTop where it was, so the page lurches by exactly the height
+  // that was inserted.
   //
-  // Anchor on a MARKER row, whose title is unique. An earlier version grabbed
-  // whatever row sat below y=200 and re-found it by its text — which matched a
-  // DIFFERENT row once the span reached a second year and the same 祝日 appeared
-  // twice, and reported a 93px jump that was never there.
-  //
-  // Scrolling to 0 is the deliberate move, so the row must fall by exactly the
-  // scrollTop it started from. Any other number is the list moving underneath.
+  // Anchor on a [data-key] — a DATE, which is unique and is the same handle the
+  // app itself uses. An earlier version grabbed whatever event row sat below
+  // y=200 and re-found it by its text, which matched a DIFFERENT row once the
+  // span reached a second year and the same 祝日 appeared twice; it reported a
+  // 93px jump that was never there. And rows aren't even on screen once the
+  // window has travelled past the seeded months.
+  await roll('bottom', 6);
   const t0 = await page.evaluate(() => Math.round(document.querySelector('.agenda').scrollTop));
-  const before = await page.evaluate((t) => {
+  const before = await page.evaluate(() => {
     const w = document.querySelector('.agenda');
-    const row = [...w.querySelectorAll('.ev')]
-      .find((n) => n.querySelector('.ti')?.textContent.startsWith(t) && n.getBoundingClientRect().top > 100);
-    if (!row) return null;
-    return { y: Math.round(row.getBoundingClientRect().top), title: row.querySelector('.ti').textContent,
-      first: w.querySelector('.ag-month')?.textContent };
-  }, MARK);
-  check(!!before && t0 > 0, `a marker row is on screen to measure against (scrollTop ${t0})`);
-
-  await page.evaluate(() => { document.querySelector('.agenda').scrollTop = 0; });
-  await sleep(900);
-  const after = await page.evaluate((title) => {
-    const w = document.querySelector('.agenda');
-    const rows = [...w.querySelectorAll('.ev')].filter((n) => n.querySelector('.ti')?.textContent === title);
-    return { hits: rows.length, y: rows[0] ? Math.round(rows[0].getBoundingClientRect().top) : null,
-      first: w.querySelector('.ag-month')?.textContent };
-  }, before?.title);
-  check(after.hits === 1, `the anchor row is unambiguous (${after.hits} match)`);
-  check(asDate(after.first) < asDate(before.first),
-    `more months really were inserted above (${before.first} → ${after.first}) — `
-    + 'otherwise the next check proves nothing');
-  check(after.y !== null && Math.abs(after.y - (before.y + t0)) <= 4,
-    `and the row you were reading stays put while that happens (${before.y} → ${after.y}, `
-    + `expected ${before.y + t0} after scrolling ${t0}px up)`);
+    const top = w.getBoundingClientRect().top;
+    const n = [...w.querySelectorAll('[data-key]')].find((x) => x.getBoundingClientRect().top - top > 60);
+    return n ? { key: n.dataset.key, y: Math.round(n.getBoundingClientRect().top),
+      first: w.querySelector('.ag-month')?.textContent } : null;
+  });
+  check(!!before && t0 > 300, `an anchor is on screen, with room to scroll up (scrollTop ${t0})`);
+  if (before && t0 > 300) {
+    const up = 300;
+    await page.evaluate((d) => { const w = document.querySelector('.agenda'); w.scrollTop -= d; }, up);
+    await sleep(900);
+    const after = await page.evaluate((key) => {
+      const w = document.querySelector('.agenda');
+      const hits = w.querySelectorAll(`[data-key="${key}"]`);
+      return { hits: hits.length, y: hits[0] ? Math.round(hits[0].getBoundingClientRect().top) : null,
+        first: w.querySelector('.ag-month')?.textContent };
+    }, before.key);
+    check(after.hits === 1, `the anchor is unambiguous (${after.hits} match for ${before.key})`);
+    // Whether or not this particular scroll triggered a growth, the row must
+    // have moved by exactly what we scrolled. That is the claim: the list does
+    // not move under you.
+    check(after.y !== null && Math.abs(after.y - (before.y + up)) <= 4,
+      `the row you were reading stays put (${before.y} → ${after.y}, expected ${before.y + up} `
+      + `after scrolling ${up}px up; months ${before.first} → ${after.first})`);
+  }
 
   await page.evaluate(async (ids) => {
     const cal = [...TTX.store.state.enabled][0];

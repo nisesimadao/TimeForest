@@ -187,11 +187,33 @@
    */
   const AGENDA_RUNWAY = 2;
   /**
+   * And how much may be RENDERED at once, also in screenfuls.
+   *
+   * Without this the list only ever grows, and the scrollbar is the thing that
+   * pays: measured on a 10-month seed, the thumb went from 96px to 24px just by
+   * scrolling to the end — and that was a calendar far quieter than a real
+   * family's. A scrollbar that shrinks every time you use it stops telling you
+   * where you are, which is the only job it has.
+   *
+   * So the window is finite: growing one end trims the far one, and the thumb
+   * keeps roughly the same size no matter how far you go. Nothing is lost —
+   * scrolling back re-grows what was trimmed, because you're heading that way.
+   */
+  const AGENDA_WINDOW = 6;
+  /**
    * And a hard stop per side anyway. The runway is a pixel budget, and a
    * calendar with nothing in it answers "how many months to fill two screens?"
    * with a number in the hundreds.
    */
   const AGENDA_MAX_SPAN = 24;
+  /**
+   * And how far a SINGLE growth may jump. Density decides how many months the
+   * runway needs, and an empty stretch answers "dozens" — which lands deeper in
+   * the empty part, where the answer is bigger still. Measured: 14 scrolls to
+   * the bottom travelled from 2026年7月 to 2030年8月 and left the list showing
+   * nothing at all.
+   */
+  const AGENDA_MAX_STEP = 3;
   /* daysBetween caps at 400 by default. The agenda can ask for far more than
    * that now, and going over doesn't error — it just stops handing back days,
    * so the last months render as nothing at all. Ask for what the cap allows. */
@@ -692,6 +714,11 @@
         const first = run.keys[0];
         const last = run.keys[run.keys.length - 1];
         const b = el('button', 'ag-gap');
+        // Anchorable too — see growAgenda. A stretch of empty days collapses to
+        // one of these, so in a quiet part of the calendar there are NO day
+        // rows at all, and anchoring on days alone finds nothing and strands
+        // the scroll there.
+        b.dataset.key = run.keys[0];
         b.textContent = run.keys.length === 1
           ? `${jp(first)} 予定なし`
           : `${jp(first)} – ${jp(last)} 予定なし（${run.keys.length}日）`;
@@ -708,6 +735,12 @@
       }
       const dow = weekdayOf(key);
       const day = el('div', 'ag-day' + (list.length ? '' : ' empty') + (key === today ? ' today' : ''));
+      // The one thing in this list with a stable identity across a re-render.
+      // growAgenda holds onto a date to put the scroll back where it was, and
+      // it can't use the 月 headers for that: they're `position: sticky`, so
+      // their measured position tracks the scroll instead of their place in the
+      // list, and every reading comes out ~0.
+      day.dataset.key = key;
 
       const date = el('div', 'ag-date' + (dow === 0 ? ' sun' : dow === 6 ? ' sat' : ''));
       date.append(el('div', 'd', String(+key.slice(8))), el('div', 'w', WEEKDAY_JA[dow]));
@@ -750,8 +783,22 @@
       // One screenful from the edge, not a fixed 600px: on a tall window 600px
       // is already the edge, and on a short one it is the whole list.
       const edge = wrap.clientHeight;
-      if (up && top < edge) growAgenda(-1);
-      else if (!up && wrap.scrollHeight - top - wrap.clientHeight < edge) growAgenda(1);
+      const want = up ? (top < edge ? -1 : 0)
+        : (wrap.scrollHeight - top - wrap.clientHeight < edge ? 1 : 0);
+      if (!want) return;
+      // When the scroll SETTLES, and then some — never during it. Growing
+      // re-renders the list, which is both the stall you feel under your
+      // fingers and, worse, the row you were reaching for being replaced
+      // between the scroll and the click: the click then lands on a node that
+      // no longer exists, or on whatever moved into its place.
+      //
+      // The wait is long on purpose. Stopping and clicking is the ordinary
+      // thing to do, and it has to win the race — once the card is open,
+      // busy() holds the growth off for as long as you are reading. The runway
+      // means a screenful or two is normally already in hand, so nothing is
+      // waiting on this.
+      clearTimeout(ui.growTimer);
+      ui.growTimer = setTimeout(() => growAgenda(want), 350);
     };
     return wrap;
   }
@@ -3422,6 +3469,24 @@
     if (ui.view === 'agenda' && scrollTop != null && !ui.keepScroll) $('.agenda').scrollTop = scrollTop;
     if (ui.view === 'agenda') ui.lastTop = $('.agenda')?.scrollTop ?? 0;
     if (ui.view === 'month') requestAnimationFrame(measureCells);
+    if (ui.view === 'agenda') requestAnimationFrame(fillAgenda);
+  }
+
+  /**
+   * Three months of a quiet calendar can be SHORTER than the window — empty
+   * runs collapse to one 「予定なし」 line each — and a list that doesn't
+   * overflow never fires a scroll event. Growing on scroll then means the
+   * agenda can't reach another month at all: the feature is simply absent,
+   * silently, for exactly the people with the least on.
+   *
+   * So give it something to scroll. growAgenda works out how many months that
+   * takes from the density on screen, so this is one paint, not one per month,
+   * and it stops itself: once the list overflows there's nothing to do, and at
+   * the span limit growAgenda returns without painting, so the rAF chain ends.
+   */
+  function fillAgenda() {
+    const w = $('.agenda');
+    if (w && w.scrollHeight <= w.clientHeight + 2) growAgenda(1);
   }
 
   /**
@@ -3458,10 +3523,11 @@
    *    "there is more of the list below you".
    */
   async function growAgenda(dir) {
-    if (ui.growing || ui.view !== 'agenda') return;
-    const side = dir < 0 ? ui.spanBack : ui.spanFwd;
-    if (side >= AGENDA_MAX_SPAN) return;
-
+    // busy() matters here for a reason that isn't obvious: paint() opens with
+    // closeDetail(), because it is about to destroy the row the popover is
+    // anchored to. So a growth while someone has an event open doesn't just
+    // repaint — it takes the card off the screen mid-read.
+    if (ui.growing || ui.view !== 'agenda' || busy()) return;
     const wrap = $('.agenda');
     if (!wrap) return;
     const before = wrap.scrollHeight;
@@ -3477,30 +3543,66 @@
     // reason this isn't a constant: it's ~40px for an empty month and several
     // hundred for a busy one, and guessing either way is what made this either
     // stutter or run away.
-    const perMonth = Math.max(1, before / (ui.spanBack + ui.spanFwd + 1));
-    const add = Math.min(Math.max(1, Math.ceil(need / perMonth)), AGENDA_MAX_SPAN - side);
-    if (add <= 0) return;
+    const months = ui.spanBack + ui.spanFwd + 1;
+    const perMonth = Math.max(1, before / months);
+    const add = Math.min(Math.max(1, Math.ceil(need / perMonth)), AGENDA_MAX_STEP);
+
+    // How many months the window should hold, in the only unit that matters:
+    // enough to fill AGENDA_WINDOW screens. The MAX_SPAN clamp is for a nearly
+    // empty calendar, where that answer runs into the hundreds.
+    const want = Math.max(3, Math.min(AGENDA_MAX_SPAN,
+      Math.ceil(wrap.clientHeight * AGENDA_WINDOW / perMonth)));
+    // Give the same back at the far end. spanBack going NEGATIVE is the point:
+    // it means the window has travelled past the month the cursor sits in,
+    // which is what lets you keep scrolling forward without the list — and the
+    // scrollbar — growing forever.
+    const cut = Math.max(0, months + add - want);
+
+    // Hold a DAY, not a month header: headers are sticky and measure as ~0.
+    // Both ends are about to move, so scrollHeight arithmetic can't say where
+    // you were any more — only a thing with a name can.
+    const wrapTop = wrap.getBoundingClientRect().top;
+    let anchor = null;
+    let into = 0;
+    for (const d of wrap.querySelectorAll('[data-key]')) {
+      const t = d.getBoundingClientRect().top - wrapTop;
+      // The last day at or above the top edge — or, if you're already at the
+      // very top, the first one below it. There has to be an anchor either way:
+      // sitting at scrollTop 0 and adding months ABOVE without pushing the
+      // content down leaves you still at 0, looking at different rows, with no
+      // scroll left to make and therefore no way to ask for more. Measured: 15
+      // scrolls down travelled 15 months, 30 scrolls up travelled 2.
+      if (t <= 0) { anchor = d.dataset.key; into = -t; continue; }
+      if (!anchor) { anchor = d.dataset.key; into = -t; }
+      break;
+    }
 
     ui.growing = true;
     try {
-      if (dir < 0) ui.spanBack += add; else ui.spanFwd += add;
+      if (dir < 0) { ui.spanBack += add; ui.spanFwd -= cut; }
+      else { ui.spanFwd += add; ui.spanBack -= cut; }
 
       // Cached by year, so this is free within a year and one fetch across a
       // boundary. Painting first would flash a month with no holidays in it.
       await ensureHolidays();
+      // Ask again. That await can last a network round-trip on a year we
+      // haven't seen, and a card opened during it would be destroyed by the
+      // paint below — checking only on the way in is checking the wrong moment.
+      if (busy() || ui.view !== 'agenda') return;
       paint();
       const after = $('.agenda');
       if (!after) return;
-      // Only ONE end moves — the span never slides — so the height difference is
-      // exactly what appeared, and it appeared above you iff you grew backwards.
-      // paint() has already restored the old scrollTop, which is the whole
-      // answer for forward growth.
-      //
-      // (An earlier version anchored on the month header you were reading
-      // instead. It silently did nothing: .ag-month is `position: sticky`, so
-      // its offsetTop tracks the scroll rather than its place in the list, and
-      // every measurement came out ~0.)
-      after.scrollTop = dir < 0 ? at + (after.scrollHeight - before) : at;
+      const back = anchor && after.querySelector(`[data-key="${anchor}"]`);
+      if (back) {
+        // Put that day back exactly `into` px above the top edge, wherever it
+        // has landed. paint() restored the old scrollTop, so measure from there.
+        const now = back.getBoundingClientRect().top - after.getBoundingClientRect().top;
+        after.scrollTop += now + into;
+      } else {
+        // No day above you — you're at the very top, so nothing was trimmed on
+        // this side and the height difference IS what appeared above.
+        after.scrollTop = dir < 0 ? at + (after.scrollHeight - before) : at;
+      }
       // The handler reads direction by comparing against this. Leaving it at
       // the pre-jump value makes the next scroll look like a huge move upward.
       ui.lastTop = after.scrollTop;
