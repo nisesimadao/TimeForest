@@ -252,6 +252,67 @@ const killApp = () => {
     if (spanBack) tf('rm', spanBack.uuid.slice(0, 8));
   }
 
+  // --- 6b-ii. a hidden calendar is hidden from the WINDOW, not from you -----
+  //
+  // occurrences() expands the enabled calendars, because that is what the view
+  // shows. `ls` used to filter that result, so unticking a calendar's sidebar
+  // box made `tf ls --cal プライベート` answer 「予定はありません」 about a
+  // calendar that was named out loud and had events in it. Same question, one
+  // checkbox later, opposite answer, nothing in the reply to catch it — and via
+  // MCP an assistant cannot know the box exists at all.
+  sec('a calendar hidden in the sidebar is still yours');
+  {
+    const day = '2026-07-31';
+    tf('add', 'CLI検証-隠', '--at', `${day} 10:00`);
+    const lit = JSON.parse(tf('ls', day, '--json').out).events.some((e) => e.title === 'CLI検証-隠');
+    const off = await withPage((page) => page.evaluate(() => {
+      const id = [...TTX.store.state.enabled][0];
+      TTX.store.state.enabled.delete(id);          // untick it, the way the sidebar does
+      return id;
+    }));
+    check(lit && off != null, 'staged an event on a calendar, then hid it in the sidebar');
+
+    const named = JSON.parse(tf('ls', day, '--cal', 'dowa', '--json').out).events;
+    check(named.some((e) => e.title === 'CLI検証-隠'),
+      'naming it still answers about it — the checkbox is a window control');
+    const unnamed = JSON.parse(tf('ls', day, '--json').out).events;
+    check(unnamed.some((e) => e.title === 'CLI検証-隠'),
+      'and so does asking generally — hiding an event you have is a missed appointment');
+
+    await withPage((page) => page.evaluate((id) => TTX.store.state.enabled.add(id), off));
+    check((await withPage((page) => page.evaluate(() => TTX.store.state.enabled.size))) === 1,
+      'and the sidebar is back the way we found it');
+  }
+
+  // --- 6c-i. the ways a shell hands you something you didn't mean -----------
+  //
+  // Both of these got past the section above, and both write silently.
+  sec('typos that used to land');
+  {
+    // `--where` with nothing after it. parse() cannot tell that from `--json`,
+    // so it answers `true` for both — which went over the wire as JSON true,
+    // through `location || ''`, into TimeTree, which stored the location as `t`.
+    const bare = tf('add', 'CLI検証-裸フラグ', '--at', '7/30 10:00', '--where');
+    check(bare.code === 1 && /値が要ります/.test(bare.err),
+      `a flag with no value is refused, not sent (${(bare.err || bare.out).trim()})`);
+    check(!JSON.parse(tf('ls', '7/30', '--json').out).events.some((e) => e.title === 'CLI検証-裸フラグ'),
+      'and nothing was written');
+
+    // `--at 7/21 10:00` without the quotes: the shell hands the time over as its
+    // own word. It landed in the title and made an all-day event called
+    // 「歯医者 10:00」 — nothing about which looks like an error.
+    const unquoted = tf('add', 'CLI検証-引用符', '--at', '7/30', '11:00');
+    check(unquoted.code === 1 && /引用符/.test(unquoted.err),
+      `a time left loose is caught rather than folded into the title (${(unquoted.err || '').trim().split('\n')[0]})`);
+    check(!JSON.parse(tf('ls', '7/30', '--json').out).events.some((e) => /CLI検証-引用符/.test(e.title)),
+      'and nothing was written');
+
+    // Same word, same silence, different damage: edit drops it and moves the
+    // event to the right day at whatever time it already had.
+    const badEdit = tf('edit', 'deadbeef', '--at', '7/30', '11:00');
+    check(badEdit.code === 1 && /引用符/.test(badEdit.err), 'edit catches it too');
+  }
+
   // --- 6c-ii. the window doesn't go stale, and doesn't get yanked -----------
   //
   // The store has no subscribers: a CLI write reaches the window only because

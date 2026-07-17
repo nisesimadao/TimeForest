@@ -62,6 +62,34 @@ function parse(argv) {
 
 const die = (msg) => { console.error(msg); process.exit(1); };
 
+/**
+ * The value of a flag that needs one.
+ *
+ * parse() cannot tell `--where` (a typo, or a shell that ate the argument) from
+ * `--json` (a real switch): it hands back `true` for both. Passed on, that
+ * boolean goes over the wire as JSON `true`, through `location || ''`, and into
+ * TimeTree — which stored it as the location `t`. On a family calendar that is
+ * a wrong edit that notifies everybody.
+ */
+const val = (flags, k) => {
+  if (flags[k] === true) die(`--${k} には値が要ります`);
+  return flags[k];
+};
+
+/**
+ * `tf add 歯医者 --at 7/21 10:00` without the quotes. The shell hands the time
+ * over as its own word: `add` puts it in the title and makes an all-day event
+ * called 「歯医者 10:00」, and `edit` drops it and moves the event to the right
+ * day at the wrong time. Neither looks like anything went wrong.
+ */
+const noStrayTime = (words) => {
+  const t = words.find((w) => /^\d{1,2}:\d{2}$/.test(w));
+  if (t) {
+    die(`"${t}" が余っています。時刻は日付とひとまとめに引用符で囲んでください:\n`
+      + `  --at "7/21 ${t}"    ← こう`);
+  }
+};
+
 // --- the door ---------------------------------------------------------------
 
 const connect = (file) => new Promise((resolve, reject) => {
@@ -291,13 +319,13 @@ async function main() {
         let span = word ? dates.range(word) : null;
         if (word && !span) return die(`日付として読めません: ${word}
 ${DATE_HELP}`);
-        const from = args.flags.from ? dates.day(args.flags.from) : span?.from;
-        const to = args.flags.to ? dates.day(args.flags.to) : span?.to;
+        const from = args.flags.from ? dates.day(val(args.flags, 'from')) : span?.from;
+        const to = args.flags.to ? dates.day(val(args.flags, 'to')) : span?.to;
         if (args.flags.from && !from) return die(`--from が読めません: ${args.flags.from}
 ${DATE_HELP}`);
         if (args.flags.to && !to) return die(`--to が読めません: ${args.flags.to}
 ${DATE_HELP}`);
-        const r = await talk(sock, 'ls', { from, to, cal: args.flags.cal });
+        const r = await talk(sock, 'ls', { from, to, cal: val(args.flags, 'cal') });
         if (args.flags.json) json(r); else printLs(r);
         break;
       }
@@ -338,34 +366,36 @@ ${DATE_HELP}`);
       }
 
       case 'add': {
+        const f = args.flags;
+        noStrayTime(args._.slice(1));
         const title = args._.slice(1).join(' ').trim();
-        if (!title || !args.flags.at) return die(`使い方: tf add <タイトル> --at <いつ> [--for 1h] [--cal 名前]
+        if (!title || !f.at) return die(`使い方: tf add <タイトル> --at <いつ> [--for 1h] [--cal 名前]
 
   tf add 歯医者 --at "7/21 10:00" --for 1h --where 駅前歯科
   tf add 旅行 --at 8/1 --to 8/3            # 時刻を書かなければ終日
 ${WHEN_HELP}`);
-        const at = dates.when(args.flags.at);
-        if (!at) return die(`--at が読めません: ${args.flags.at}\n${WHEN_HELP}`);
-        const to = args.flags.to ? dates.when(args.flags.to) : null;
-        if (args.flags.to && !to) return die(`--to が読めません: ${args.flags.to}\n${WHEN_HELP}`);
+        const at = dates.when(val(f, 'at'));
+        if (!at) return die(`--at が読めません: ${f.at}\n${WHEN_HELP}`);
+        const to = f.to ? dates.when(val(f, 'to')) : null;
+        if (f.to && !to) return die(`--to が読めません: ${f.to}\n${WHEN_HELP}`);
 
         // --for is the natural one to type for a timed event; --to is for spans.
         // The minutes go over as minutes: the clock arithmetic lives in the
         // renderer, which already owns it, and a second copy here would be a
         // second answer to what time an event really starts.
         let mins;
-        if (args.flags.for !== undefined) {
-          mins = dates.mins(args.flags.for);
-          if (mins == null) return die(`--for が読めません: ${args.flags.for}\n${LONG_HELP}`);
+        if (f.for !== undefined) {
+          mins = dates.mins(val(f, 'for'));
+          if (mins == null) return die(`--for が読めません: ${f.for}\n${LONG_HELP}`);
         }
 
         const r = await talk(sock, 'add', {
-          title, cal: args.flags.cal, mins,
+          title, cal: val(f, 'cal'), mins,
           startKey: at.key, startTime: at.time,
           endKey: to?.key, endTime: to?.time,
-          location: args.flags.where, note: args.flags.note,
+          location: val(f, 'where'), note: val(f, 'note'),
         });
-        if (args.flags.json) return json(r);
+        if (f.json) return json(r);
         printSaved(r.calendar, r.event, '作成しました');
         break;
       }
@@ -373,6 +403,7 @@ ${WHEN_HELP}`);
       case 'edit': {
         const uuid = args._[1];
         const f = args.flags;
+        noStrayTime(args._.slice(2));
         if (!uuid || !['title', 'at', 'to', 'for', 'where', 'note'].some((k) => f[k] !== undefined)) {
           return die(`使い方: tf edit <uuid> [--at …] [--for …] [--title …] [--where …] [--note …]
 
@@ -380,20 +411,23 @@ ${WHEN_HELP}`);
   tf edit 7110a578 --for 90m
 ${WHEN_HELP}`);
         }
-        const at = f.at ? dates.when(f.at) : null;
+        const at = f.at ? dates.when(val(f, 'at')) : null;
         if (f.at && !at) return die(`--at が読めません: ${f.at}\n${WHEN_HELP}`);
-        const to = f.to ? dates.when(f.to) : null;
+        const to = f.to ? dates.when(val(f, 'to')) : null;
         if (f.to && !to) return die(`--to が読めません: ${f.to}\n${WHEN_HELP}`);
         let mins;
         if (f.for !== undefined) {
-          mins = dates.mins(f.for);
+          mins = dates.mins(val(f, 'for'));
           if (mins == null) return die(`--for が読めません: ${f.for}\n${LONG_HELP}`);
         }
 
         const r = await talk(sock, 'edit', {
-          uuid, at, to, mins, title: f.title, location: f.where, note: f.note,
+          uuid, at, to, mins,
+          title: f.title === undefined ? undefined : val(f, 'title'),
+          location: f.where === undefined ? undefined : val(f, 'where'),
+          note: f.note === undefined ? undefined : val(f, 'note'),
         });
-        if (args.flags.json) return json(r);
+        if (f.json) return json(r);
         printSaved(r.calendar, r.event, `直しました  ${dim(r.changed.join(', '))}`);
         break;
       }

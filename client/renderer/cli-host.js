@@ -79,6 +79,9 @@
    */
   const series = (raw) => (raw.recurrences || []).length > 0;
 
+  /** Whatever came over the wire, as the string the API expects. */
+  const text = (v) => (v === undefined || v === null || typeof v === 'boolean' ? '' : String(v));
+
   /** Put the end `ms` after the start, back in wall-clock fields. */
   function endAfter(f, ms) {
     const t = TTX.tz.toEpoch(f.startKey, f.startTime, f.allDay, TZ) + ms;
@@ -121,12 +124,23 @@
       const b = to || TTX.tz.ymd(Date.now() + 30 * 86400000, TZ);
       const cals = pick(state, cal);
 
-      // Ask for exactly the calendars named, without disturbing what the window
-      // is showing — the person at the keyboard didn't run this command.
+      // Every calendar the account has — not just the ones ticked in the
+      // sidebar — and without disturbing what the window is showing, because
+      // the person at the keyboard didn't run this command.
+      //
+      // That checkbox is a window control: it hides a calendar from the view
+      // you are looking at. This has no window. Honouring it here meant `tf ls
+      // --cal プライベート` answered 「予定はありません」 about a calendar that
+      // was named out loud and had events in it — the same question, one
+      // checkbox later, with the opposite answer and nothing to suggest it was
+      // not true. MCP made it worse: an assistant cannot know the box exists,
+      // so it repeats the lie with confidence.
+      //
+      // Of the two ways to be wrong, showing an event you had hidden is an
+      // annoyance; hiding one you have is a missed appointment.
       const ids = new Set(cals.map((c) => c.id));
       const holidays = await TTX.store.holidaysFor(a, b).catch(() => []);
-      const occs = TTX.store.occurrences(a, b, { holidays })
-        .filter((o) => o.holiday || ids.has(o.calendarId));
+      const occs = TTX.store.occurrences(a, b, { holidays, only: ids });
 
       return {
         from: a,
@@ -209,9 +223,13 @@
       }
       if (endAt < startAt) throw new Error('終わりが始まりより前です');
 
+      // String(), not `|| ''`: a caller that hands us a boolean — the CLI's
+      // parser turns a value-less `--where` into `true` — would otherwise pass
+      // it straight through to TimeTree, which stored it as the location `t`.
+      // The CLI refuses that now; this is so the next caller can't reintroduce it.
       const saved = await TTX.api.createEvent(target.id, {
         title: name, allDay, startAt, endAt, tz: TZ, labelId: 1,
-        location: location || '', note: note || '',
+        location: text(location), note: text(note),
       });
       if (!saved?.uuid) throw new Error('サーバーが予定を返しませんでした');
       TTX.store.applyEvent(target.id, saved);
@@ -237,9 +255,9 @@
       if (!TTX.cli._fields || !TTX.cli._patch) throw new Error('編集できません');
 
       const f = TTX.cli._fields(raw);           // the form's own reading of it
-      if (title !== undefined && String(title).trim()) f.title = String(title).trim();
-      if (location !== undefined) f.location = String(location);
-      if (note !== undefined) f.note = String(note);
+      if (title !== undefined && text(title).trim()) f.title = text(title).trim();
+      if (location !== undefined) f.location = text(location);
+      if (note !== undefined) f.note = text(note);
 
       if (at) {
         const from = TTX.tz.toEpoch(f.startKey, f.startTime, f.allDay, TZ);

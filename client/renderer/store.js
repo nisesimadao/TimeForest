@@ -152,18 +152,27 @@
     return out;
   }
 
-  /** Occurrences across all enabled calendars for [fromKey, toKey]. */
+  /**
+   * Occurrences for [fromKey, toKey], across the enabled calendars.
+   *
+   * `opts.only` (a Set of calendar ids) asks about those instead, enabled or
+   * not. The sidebar checkbox says what the WINDOW shows; someone who names a
+   * calendar out loud — `tf ls --cal プライベート` — is asking about that
+   * calendar, and answering 「予定はありません」 because a box is unticked is
+   * a lie they have no way to catch.
+   */
   function occurrences(fromKey, toKey, opts = {}) {
     const from = parseYmd(fromKey);
     const to = parseYmd(toKey) + DAY - 1;
+    const use = opts.only || store.enabled;
     let all = [];
     for (const cal of store.calendars) {
-      if (!store.enabled.has(cal.id)) continue;
+      if (!use.has(cal.id)) continue;
       const raw = store.events.get(cal.id);
       if (!raw) continue;
       all = all.concat(TTX.model.occurrences(raw, from, to, cal, { membersById: store.members.get(cal.id) }));
     }
-    if (store.enabled.size > 1) all = dedupeMirrors(all);
+    if (use.size > 1) all = dedupeMirrors(all);
     if (opts.mutedLabels) {
       all = all.filter((o) => !opts.mutedLabels.has(o.calendarId + ':' + o.labelId));
     }
