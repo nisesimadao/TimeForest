@@ -1,10 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="100" height="20" role="img" aria-label="node: 20 · 24">
-  <linearGradient id="s" x2="0" y2="100%"><stop offset="0" stop-color="#fff" stop-opacity=".1"/><stop offset="1" stop-opacity=".1"/></linearGradient>
-  <clipPath id="r"><rect width="100" height="20" rx="3" fill="#fff"/></clipPath>
-  <g clip-path="url(#r)">
+  <linearGradient id="g_node" x2="0" y2="100%"><stop offset="0" stop-color="#fff" stop-opacity=".1"/><stop offset="1" stop-opacity=".1"/></linearGradient>
+  <clipPath id="r_node"><rect width="100" height="20" rx="3" fill="#fff"/></clipPath>
+  <g clip-path="url(#r_node)">
     <rect width="40" height="20" fill="#42474e"/>
     <rect x="40" width="60" height="20" fill="#417e38"/>
-    <rect width="100" height="20" fill="url(#s)"/>
+    <rect width="100" height="20" fill="url(#g_node)"/>
   </g>
   <g fill="#fff" text-anchor="middle" font-family="Verdana,Geneva,DejaVu Sans,sans-serif" font-size="11">
     <text x="20" y="15" fill="#010101" fill-opacity=".3">node</text>

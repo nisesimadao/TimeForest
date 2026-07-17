@@ -111,6 +111,17 @@ section('README badges match reality');
 
   claims('badge-mv3.svg', 'MV3', `manifest_version is ${manifest.manifest_version}`);
   claims('badge-build.svg', 'none', 'there is no build step for the checks (check.js has zero deps)');
+
+  // The claims above catch a value going stale. This catches the SVG being
+  // hand-edited away from its generator — same idea as the userscript's
+  // reproducible-build check in CI. tools/badges.js reads its values from the
+  // repo, so "up to date" means both the shape and the numbers are current.
+  try {
+    execFileSync(process.execPath, [path.join(ROOT, 'tools/badges.js'), '--check'], { stdio: 'pipe' });
+    ok('badges reproduce from tools/badges.js — no hand-edits');
+  } catch (e) {
+    bad(`docs/badge-*.svg drift from tools/badges.js — run \`node tools/badges.js\`\n${String(e.stderr || '').trim()}`);
+  }
 }
 
 // --- 3. the client loads the same libs, not copies --------------------------
