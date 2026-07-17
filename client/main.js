@@ -453,15 +453,6 @@ async function dispatchCli({ cmd, args }) {
   // Accounts belong to this side — session.js owns the list. Answering here
   // also means `tf accounts` works before the renderer has finished syncing.
   if (cmd === 'accounts') return S.publicAccounts();
-  if (cmd === 'use') {
-    const want = String(args?.account || '');
-    const hit = S.all().find((a) => a.email === want || a.id === want || a.name === want);
-    if (!hit) throw new Error(`アカウント "${want}" がありません`);
-    await switchAccount(hit.id);
-    mainWindow?.webContents.send('accounts:changed', S.publicAccounts());
-    return S.publicAccounts();
-  }
-
   if (!mainWindow || mainWindow.isDestroyed()) throw new Error('ウィンドウがありません');
   // Straight into the page's own world, so preload.js stays as narrow as it is.
   // Only strings this process built reach it — the CLI's argv never does.

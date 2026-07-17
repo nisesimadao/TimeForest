@@ -28,6 +28,7 @@ const os = require('node:os');
 const fs = require('node:fs');
 const { spawn } = require('node:child_process');
 const { socketPath } = require('./rpc');
+const dates = require('./dates');
 
 const TZ = 'Asia/Tokyo';
 
@@ -175,15 +176,22 @@ function jpNext(key) {
 
 // --- commands ---------------------------------------------------------------
 
+const DATE_HELP = `  日付: today 明日 yesterday week nextweek month nextmonth
+        7/21  2026-07-21  +7d  -3d`;
+
 const HELP = `TimeForest — TimeTree を端末から
 
-  tf ls [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--cal 名前] [--json]
+  tf ls [today|week|month|7/21] [--from …] [--to …] [--cal 名前] [--json]
   tf show <uuid> [--json]
   tf comments <uuid> [--json]
   tf say <uuid> "コメント"
   tf calendars
   tf accounts
   tf use <メール|id>
+
+${DATE_HELP}
+
+uuid は ls が出す先頭8文字で足ります（曖昧なら候補を出します）。
 
 起動しているアプリに訊きます。動いていなければ起動します（トレイに常駐します）。
 ログインは要りません — アプリのものをそのまま使います。`;
@@ -228,8 +236,9 @@ async function main() {
       case 'use': {
         if (!args._[1]) return die('使い方: tf use <メール|id>');
         const r = await talk(sock, 'use', { account: args._[1] });
-        const a = r.accounts.find((x) => x.id === r.activeId);
-        console.log(`${a.name || a.id} に切り替えました`);
+        // Name the calendars, not just the account. That is the thing you
+        // actually needed to know before typing the next command.
+        console.log(`${r.account} に切り替えました  ${dim(r.calendars.join('、'))}`);
         break;
       }
 
@@ -240,7 +249,19 @@ async function main() {
       }
 
       case 'ls': {
-        const r = await talk(sock, 'ls', { from: args.flags.from, to: args.flags.to, cal: args.flags.cal });
+        // `tf ls today`, `tf ls week`, `tf ls 7/21` — and --from/--to still take
+        // the same words, so `--from today --to +7d` reads the way you'd say it.
+        const word = args._[1];
+        let span = word ? dates.range(word) : null;
+        if (word && !span) return die(`日付として読めません: ${word}
+${DATE_HELP}`);
+        const from = args.flags.from ? dates.day(args.flags.from) : span?.from;
+        const to = args.flags.to ? dates.day(args.flags.to) : span?.to;
+        if (args.flags.from && !from) return die(`--from が読めません: ${args.flags.from}
+${DATE_HELP}`);
+        if (args.flags.to && !to) return die(`--to が読めません: ${args.flags.to}
+${DATE_HELP}`);
+        const r = await talk(sock, 'ls', { from, to, cal: args.flags.cal });
         if (args.flags.json) json(r); else printLs(r);
         break;
       }

@@ -1,0 +1,80 @@
+/* Dates a person types.
+ *
+ * `--from 2026-07-01 --to 2026-07-31` is correct and nobody types it twice.
+ * The reason to be at a terminal is that it's quicker than reaching for the
+ * window, and that isn't.
+ *
+ * Everything resolves in Asia/Tokyo, like the rest of the app — never the
+ * machine's zone. `tf ls today` has to mean the same day on a laptop that
+ * travelled, for the same reason the app pins every clock to JST.
+ *
+ * Its own file because it is pure and testable: scripts/check.js runs these
+ * without an app, an Electron, or a calendar.
+ */
+
+/** Today in JST. Shift, then read UTC fields — same trick as src/lib/tz.js. */
+function today(now = Date.now()) {
+  return new Date(now + 9 * 3600000).toISOString().slice(0, 10);
+}
+
+function addDays(key, n) {
+  const d = new Date(key + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+/** Monday of the week containing `key` — this app starts weeks on Monday. */
+function weekStart(key) {
+  const dow = new Date(key + 'T00:00:00Z').getUTCDay();   // 0 = Sunday
+  return addDays(key, -((dow + 6) % 7));
+}
+
+function monthEnd(key) {
+  const d = new Date(key.slice(0, 8) + '01T00:00:00Z');
+  d.setUTCMonth(d.getUTCMonth() + 1);
+  d.setUTCDate(0);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * One day: `2026-07-21`, `7/21` (this year), `today`, `+7d`.
+ * @returns {string|null} YYYY-MM-DD, or null if it isn't a date
+ */
+function day(word, now = Date.now()) {
+  const t = today(now);
+  const w = String(word ?? '').trim().toLowerCase();
+  if (!w) return null;
+  if (w === 'today' || w === '今日') return t;
+  if (w === 'tomorrow' || w === '明日') return addDays(t, 1);
+  if (w === 'yesterday' || w === '昨日') return addDays(t, -1);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(w)) return w;
+  let m = w.match(/^(\d{1,2})\/(\d{1,2})$/);
+  if (m) return `${t.slice(0, 4)}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`;
+  m = w.match(/^([+-])(\d+)d$/);
+  if (m) return addDays(t, (m[1] === '-' ? -1 : 1) * Number(m[2]));
+  return null;
+}
+
+/**
+ * A span: `today`, `week`, `month`, or any single day.
+ * @returns {{from:string,to:string}|null}
+ */
+function range(word, now = Date.now()) {
+  const t = today(now);
+  const w = String(word ?? '').trim().toLowerCase();
+  if (!w) return null;
+  if (w === 'week' || w === '今週') { const a = weekStart(t); return { from: a, to: addDays(a, 6) }; }
+  if (w === 'nextweek' || w === '来週') { const a = addDays(weekStart(t), 7); return { from: a, to: addDays(a, 6) }; }
+  if (w === 'lastweek' || w === '先週') { const a = addDays(weekStart(t), -7); return { from: a, to: addDays(a, 6) }; }
+  if (w === 'month' || w === '今月') { const a = t.slice(0, 8) + '01'; return { from: a, to: monthEnd(a) }; }
+  if (w === 'nextmonth' || w === '来月') {
+    const d = new Date(t.slice(0, 8) + '01T00:00:00Z');
+    d.setUTCMonth(d.getUTCMonth() + 1);
+    const a = d.toISOString().slice(0, 10);
+    return { from: a, to: monthEnd(a) };
+  }
+  const one = day(w, now);
+  return one ? { from: one, to: one } : null;
+}
+
+module.exports = { today, addDays, weekStart, monthEnd, day, range };

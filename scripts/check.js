@@ -216,6 +216,71 @@ for (const [name, got, want] of timing) {
   else bad(`${name}: expected ${want}, got ${got}`);
 }
 
+// --- 5a. dates a person types -----------------------------------------------
+//
+// Pure, so it runs here with no app and no calendar. `now` is injected on
+// purpose: a date helper whose tests only pass on the day you wrote them is
+// the classic version of this file.
+
+section('CLI dates (behavioural)');
+const dates = require(path.join(ROOT, 'client/dates.js'));
+
+// 2026-07-17 is a Friday, 09:00 JST (= 00:00Z).
+const NOW = Date.UTC(2026, 6, 17, 0, 0);
+
+const dayCases = [
+  ['today', '2026-07-17'],
+  ['tomorrow', '2026-07-18'],
+  ['yesterday', '2026-07-16'],
+  ['今日', '2026-07-17'],
+  ['2026-08-01', '2026-08-01'],
+  ['7/21', '2026-07-21'],
+  ['12/3', '2026-12-03'],
+  ['+7d', '2026-07-24'],
+  ['-3d', '2026-07-14'],
+  ['ごはん', null],
+  ['', null],
+];
+for (const [input, want] of dayCases) {
+  const got = dates.day(input, NOW);
+  if (got === want) ok(`day(${JSON.stringify(input)}) = ${JSON.stringify(got)}`);
+  else bad(`day(${JSON.stringify(input)}): expected ${JSON.stringify(want)}, got ${JSON.stringify(got)}`);
+}
+
+const rangeCases = [
+  // Weeks start Monday here, same as the grid. 7/17 is a Friday.
+  ['week', '2026-07-13', '2026-07-19'],
+  ['nextweek', '2026-07-20', '2026-07-26'],
+  ['lastweek', '2026-07-06', '2026-07-12'],
+  ['month', '2026-07-01', '2026-07-31'],
+  ['nextmonth', '2026-08-01', '2026-08-31'],
+  ['today', '2026-07-17', '2026-07-17'],
+  ['7/21', '2026-07-21', '2026-07-21'],
+];
+for (const [input, from, to] of rangeCases) {
+  const got = dates.range(input, NOW);
+  if (got && got.from === from && got.to === to) ok(`range(${JSON.stringify(input)}) = ${from}〜${to}`);
+  else bad(`range(${JSON.stringify(input)}): expected ${from}〜${to}, got ${JSON.stringify(got)}`);
+}
+
+/* The JST rule, which is the whole reason this doesn't just use `new Date()`.
+ * 2026-07-17 15:30Z is already the 18th in Tokyo. A machine in UTC would say
+ * the 17th, and `tf ls today` would quietly list the wrong day. */
+if (dates.today(Date.UTC(2026, 6, 17, 15, 30)) === '2026-07-18') {
+  ok('today() is JST — 15:30Z on the 17th is already the 18th in Tokyo');
+} else {
+  bad(`today() must resolve in JST, got ${dates.today(Date.UTC(2026, 6, 17, 15, 30))}`);
+}
+if (dates.today(Date.UTC(2026, 6, 17, 14, 59)) === '2026-07-17') ok('and 14:59Z is still the 17th');
+else bad('today() rolled over too early');
+
+/* Month ends are the thing people get wrong by hand. */
+for (const [key, want] of [['2026-02-05', '2026-02-28'], ['2024-02-05', '2024-02-29'], ['2026-12-31', '2026-12-31']]) {
+  const got = dates.monthEnd(key);
+  if (got === want) ok(`monthEnd(${key}) = ${got}`);
+  else bad(`monthEnd(${key}): expected ${want}, got ${got}`);
+}
+
 // --- 5b0. the agenda doesn't lose its tail ----------------------------------
 //
 // daysBetween has a 400-day runaway guard, and going over it doesn't throw — it

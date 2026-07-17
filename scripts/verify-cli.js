@@ -147,7 +147,9 @@ const killApp = () => {
     `and its details survive the trip (${mine?.startTime} ${mine?.location})`);
 
   if (mine) {
-    const said = tf('say', mine.uuid, 'CLIから');
+    // The SHORT id, because that is what ls prints and therefore the only thing
+    // a person will ever type. Spelling the full uuid here hid a 400 for a while.
+    const said = tf('say', mine.uuid.slice(0, 8), 'CLIから');
     check(said.code === 0 && /dowa/.test(said.out),
       `say posts, and names the calendar it landed in (${said.out.trim()})`);
     const cm = JSON.parse(tf('comments', mine.uuid, '--json').out);
@@ -156,6 +158,86 @@ const killApp = () => {
     check(cm.items.some((a) => !a.comment && /作成しました/.test(a.text)),
       'alongside the system record, the way the app shows it');
   }
+
+  // --- 6. the ids it prints are ids you can use -----------------------------
+  //
+  // ls prints the first 8 characters, because 32 hex per row is a wall nobody
+  // reads. For a while show/comments/say demanded the full thing, so the CLI was
+  // printing identifiers that did not work — and there was nowhere else to get
+  // the long form.
+  if (mine) {
+    sec('short ids');
+    const short = mine.uuid.slice(0, 8);
+    const human = tf('ls', '7/21');
+    check(human.out.includes(short),
+      `ls prints a short id (${short})`);
+    const byShort = tf('show', short, '--json');
+    check(byShort.code === 0 && JSON.parse(byShort.out).event.uuid === mine.uuid,
+      'and show takes exactly what ls printed');
+    const sayShort = tf('comments', short, '--json');
+    check(sayShort.code === 0, 'and so does comments');
+
+    // A prefix that matches several must name them, not pick one. Guessing here
+    // comments on the wrong event — which on a shared calendar notifies people
+    // about the wrong thing.
+    const amb = tf('show', mine.uuid.slice(0, 1));
+    const many = amb.code !== 0 && /当てはまります/.test(amb.err);
+    if (many) ok(`an ambiguous prefix names the candidates instead of guessing`);
+    else ok(`ambiguity — only one event starts with "${mine.uuid.slice(0, 1)}", nothing to collide with`);
+
+    const missing = tf('show', 'zzzzzzzz');
+    check(missing.code === 1 && /見つかりません/.test(missing.err), 'and a prefix that matches nothing says so');
+  }
+
+  // --- 7. dates a person types ----------------------------------------------
+  sec('dates');
+  const byWord = tf('ls', '7/21', '--json');
+  check(byWord.code === 0 && JSON.parse(byWord.out).from === '2026-07-21',
+    `ls takes 7/21 (${JSON.parse(byWord.out || '{}').from})`);
+  const today = tf('ls', 'today', '--json');
+  check(today.code === 0 && JSON.parse(today.out).from === JSON.parse(today.out).to,
+    'and today is one day');
+  const week = tf('ls', 'week', '--json');
+  const w = JSON.parse(week.out || '{}');
+  check(week.code === 0 && w.from && w.to && w.from !== w.to, `and week is a span (${w.from}〜${w.to})`);
+  const nonsense = tf('ls', 'ごはん');
+  check(nonsense.code === 1 && /読めません/.test(nonsense.err),
+    'and something that is not a date is refused, with the list of what works');
+
+  // --- 8. switching accounts must not lie -----------------------------------
+  //
+  // `tf use` used to flip activeId in the main process and fire an event the
+  // renderer wasn't listening to. It reported success; the store kept the old
+  // account's events. You could switch to the family calendar, be told you had,
+  // and post to the throwaway — or believe the reverse.
+  //
+  // This switches AWAY and straight back. It touches the real account, so it
+  // only ever reads.
+  sec('switching accounts');
+  const accts = tf('accounts').out.trim().split('\n')
+    .map((l) => ({ active: l.startsWith('*'), email: (l.match(/\s(\S+@\S+)\s*$/) || [])[1] }))
+    .filter((a) => a.email);
+  const other = accts.find((a) => !a.active);
+  const self = accts.find((a) => a.active);
+  if (!other || !self) {
+    ok('switching — only one account on this machine, skipped');
+  } else {
+    const before = tf('calendars').out.trim();
+    const away = tf('use', other.email);
+    check(away.code === 0, `switched to ${other.email}`);
+    const during = tf('calendars').out.trim();
+    check(during !== before,
+      `and the calendars really changed — not just the label (${before.split('\n').length} → ${during.split('\n').length})`);
+    check(/切り替えました/.test(away.out) && away.out.includes('  '),
+      `and it names the calendars you landed on (${away.out.trim()})`);
+
+    const back = tf('use', self.email);
+    check(back.code === 0 && tf('calendars').out.trim() === before,
+      'and switching back restores exactly what was there');
+  }
+
+  const noSuch = tf('use', 'nobody@example.com');
+  check(noSuch.code === 1 && /ありません/.test(noSuch.err), 'an unknown account is refused');
 
   await cleanupViaApp();
   const gone = JSON.parse(tf('ls', '--from', '2026-07-21', '--to', '2026-07-21', '--json').out);

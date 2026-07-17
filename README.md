@@ -81,12 +81,20 @@ OpenStreetMap のタイル利用ポリシーが要求する User-Agent を名乗
 ## 端末から使う（CLI）
 
 ```sh
-npm run tf -- ls --from 2026-07-01 --to 2026-07-31
-npm run tf -- ls --cal 家族 --json
-npm run tf -- show|comments <uuid>
-npm run tf -- say <uuid> "14時でいい？"
-npm run tf -- calendars / accounts / use <メール>
+npm run tf -- ls today
+npm run tf -- ls week --cal 家族
+npm run tf -- ls 7/21 --json
+npm run tf -- show 7110a578            # ls が出す先頭8文字でいい
+npm run tf -- say 7110a578 "14時でいい？"
+npm run tf -- use you@example.com   # → たろう に切り替えました  家族、プライベート
 ```
+
+日付は `today 明日 week nextweek month 7/21 2026-07-21 +7d -3d`。
+`--from 2026-07-01 --to 2026-07-31` は正しいが、端末に来た理由が
+「窓を開くより速いから」なら、それは速くない。
+
+uuid は **ls が出した先頭8文字がそのまま使える**。曖昧なら候補を名指しする
+（勝手に1つ選ぶと、共有カレンダーでは違う人に違う通知が飛ぶ）。
 
 **ログインは要らないし、待たされもしない。** 起動しているアプリに訊くだけ。
 動いていなければ起動する（トレイに常駐する）。**実測 118ms。**

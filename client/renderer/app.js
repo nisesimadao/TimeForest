@@ -593,6 +593,11 @@
     ui.activeId = r.activeId;
     await loadActiveAccount();
   }
+  // The CLI switches accounts through this same function, so the window ends up
+  // showing what the CLI is talking about. Handing the function over rather than
+  // letting cli-host.js re-implement the sequence: it would have to know to
+  // reload the store AND re-render, and one of those gets forgotten.
+  TTX.cli._switch = switchAccount;
 
   async function removeAccount(a) {
     const wasActive = a.id === ui.activeId;
