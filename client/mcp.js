@@ -85,8 +85,20 @@ function talk(cmd, args) {
   return new Promise((resolve, reject) => {
     const id = nextId++;
     let buf = '';
-    const done = (fn, v) => { sock.off('data', onData); sock.off('error', onErr); fn(v); };
+    const done = (fn, v) => {
+      sock.off('data', onData); sock.off('error', onErr); sock.off('end', onEnd);
+      fn(v);
+    };
     const onErr = (e) => done(reject, e);
+    // The user quits the tray app while a tool call is in flight. That is not an
+    // error, it is a FIN: measured, the socket emits 'end' and nothing else — no
+    // 'error', no 'close'. Settling only on a reply or an 'error' means this
+    // promise never settles, and the assistant waits forever with no way to know
+    // why. The CLI never noticed because it is a one-shot process; this server
+    // outlives the app it talks to. Say so instead, and let open() reconnect —
+    // it will spawn the app again on the next call.
+    const onEnd = () => done(reject, new Error(
+      'TimeForest が終了しました。もう一度呼べば起動し直します。'));
     const onData = (chunk) => {
       buf += chunk;
       let nl;
@@ -101,6 +113,7 @@ function talk(cmd, args) {
     };
     sock.on('data', onData);
     sock.on('error', onErr);
+    sock.on('end', onEnd);
     sock.write(JSON.stringify({ id, cmd, args }) + '\n');
   });
 }

@@ -17,9 +17,14 @@
  */
 const { spawn } = require('node:child_process');
 const path = require('node:path');
+const net = require('node:net');
+const fs = require('node:fs');
+const os = require('node:os');
+const { socketPath } = require('../client/rpc');
 
 const SERVER = path.join(__dirname, '..', 'client', 'mcp.js');
 const EXPECT_CALENDAR = 'dowa';
+const PROTOCOL = '2025-06-18';
 
 let pass = 0, fail = 0;
 const ok = (m) => { pass++; console.log('  \x1b[32m✓\x1b[0m ' + m); };
@@ -27,9 +32,13 @@ const bad = (m) => { fail++; console.log('  \x1b[31m✗\x1b[0m ' + m); };
 const sec = (t) => console.log('\n' + t);
 const check = (c, m) => (c ? ok(m) : bad(m));
 
-/** A live server, spoken to the way a client does. */
-function client() {
-  const proc = spawn(process.execPath, [SERVER], { stdio: ['pipe', 'pipe', 'pipe'] });
+/** A live server, spoken to the way a client does.
+ *  `env` overrides let a test point the server at an app of its own making. */
+function client(env) {
+  const proc = spawn(process.execPath, [SERVER], {
+    stdio: ['pipe', 'pipe', 'pipe'],
+    env: { ...process.env, ...env },
+  });
   let buf = '';
   const waiting = new Map();
   const notes = [];
@@ -182,6 +191,45 @@ const callTool = async (c, name, args) => {
   check(junk.length === 0,
     junk.length ? `something non-JSON reached stdout: ${JSON.stringify(junk[0].garbage).slice(0, 80)}`
       : 'nothing but JSON-RPC ever reached stdout');
+
+  // --- 7. the app goes away mid-call ----------------------------------------
+  //
+  // A tray app can be quit at any moment, including while a tool call is in
+  // flight. Measured: the socket then emits 'end' — not 'error', and not
+  // 'close'. A talk() that settles only on a reply or an 'error' never settles
+  // at all, and the assistant waits forever with nothing to report and no way
+  // to find out why. The CLI never noticed because it is a one-shot process.
+  //
+  // Rather than kill the real app — the rest of the suite is talking to it —
+  // point a server at an app of our own making: userDataDir() is built from
+  // APPDATA and the pipe name is derived from that, so an APPDATA of our
+  // choosing buys us a peer we can make vanish on cue.
+  sec('the app goes away mid-call');
+  {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tf-verify-'));
+    const profile = path.join(dir, 'TimeForest');
+    fs.mkdirSync(profile);
+
+    const fakeApp = net.createServer((s) => {
+      s.on('data', () => { fakeApp.close(); s.end(); });   // the user quits
+    });
+    await new Promise((r) => fakeApp.listen(socketPath(profile), r));
+
+    const c3 = client({ APPDATA: dir, XDG_CONFIG_HOME: dir });
+    await c3.rpc('initialize', { protocolVersion: PROTOCOL, capabilities: {}, clientInfo: { name: 'x', version: '0' } });
+
+    const answered = await Promise.race([
+      callTool(c3, 'list_calendars'),
+      new Promise((r) => setTimeout(() => r(null), 15000)),
+    ]);
+    check(answered !== null, 'quitting the app mid-call still gets an answer, instead of hanging forever');
+    check(!!answered?.isError && /終了/.test(answered.text || ''),
+      `and the answer says the app quit (${JSON.stringify(answered?.text || '(hung)')})`);
+
+    c3.stop();
+    try { fakeApp.close(); } catch { /* already closed on quit */ }
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 
   await cleanup();
   c.stop();

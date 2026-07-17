@@ -17,6 +17,10 @@
  */
 const { spawn, spawnSync } = require('node:child_process');
 const path = require('node:path');
+const net = require('node:net');
+const fs = require('node:fs');
+const os = require('node:os');
+const { socketPath } = require('../client/rpc');
 
 const ROOT = path.join(__dirname, '..');
 const CLI = path.join(ROOT, 'client', 'cli.js');
@@ -238,6 +242,46 @@ const killApp = () => {
 
   const noSuch = tf('use', 'nobody@example.com');
   check(noSuch.code === 1 && /ありません/.test(noSuch.err), 'an unknown account is refused');
+
+  // Quit the app while a command is in flight. Measured: the socket then emits
+  // 'end' — not 'error'. Waiting only for a reply or an 'error' means waiting
+  // forever, and a hang is not an answer. (The MCP server has the same talk()
+  // and the same test; there it is worse, because an assistant cannot Ctrl-C.)
+  //
+  // The real app is busy holding up the rest of this file, so point the CLI at
+  // an app of our own: userDataDir() is built from APPDATA and the pipe name
+  // comes from that, so an APPDATA of our choosing buys a peer we can make
+  // vanish on cue.
+  sec('the app goes away mid-command');
+  {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tf-verify-'));
+    const profile = path.join(dir, 'TimeForest');
+    fs.mkdirSync(profile);
+    const fakeApp = net.createServer((s) => {
+      s.on('data', () => { fakeApp.close(); s.end(); });
+    });
+    await new Promise((r) => fakeApp.listen(socketPath(profile), r));
+
+    // spawn, not spawnSync: the fake app lives in this process, and a blocked
+    // event loop cannot accept the connection it is waiting to answer.
+    const said = await new Promise((resolve) => {
+      const p = spawn(process.execPath, [CLI, 'ls'], {
+        encoding: 'utf8', env: { ...process.env, APPDATA: dir, XDG_CONFIG_HOME: dir },
+      });
+      let out = '';
+      p.stdout.on('data', (d) => { out += d; });
+      p.stderr.on('data', (d) => { out += d; });
+      const t = setTimeout(() => { p.kill(); resolve(null); }, 15000);
+      p.on('exit', (code) => { clearTimeout(t); resolve({ code, out }); });
+    });
+
+    check(!!said, 'quitting the app mid-command still ends, instead of hanging forever');
+    check(said?.code === 1 && /終了しました/.test(said.out || ''),
+      `and it says so, without a stack trace (${JSON.stringify((said?.out || '(hung)').trim())})`);
+
+    try { fakeApp.close(); } catch { /* already closed on quit */ }
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 
   await cleanupViaApp();
   const gone = JSON.parse(tf('ls', '--from', '2026-07-21', '--to', '2026-07-21', '--json').out);

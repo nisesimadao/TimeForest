@@ -101,11 +101,18 @@ function talk(sock, cmd, args) {
   return new Promise((resolve, reject) => {
     const id = nextId++;
     let buf = '';
-    // Both listeners come off on the way out, whichever way it goes. Leaving
+    // Every listener comes off on the way out, whichever way it goes. Leaving
     // them on leaked one per call — the cold-start path polls ping until the app
     // is synced, and Node started warning about it at ten.
-    const done = (fn, v) => { sock.off('data', onData); sock.off('error', onErr); fn(v); };
+    const done = (fn, v) => {
+      sock.off('data', onData); sock.off('error', onErr); sock.off('end', onEnd);
+      fn(v);
+    };
     const onErr = (e) => done(reject, e);
+    // Quitting the app is not an error, it is a FIN: measured, the socket emits
+    // 'end' and nothing else. Settling only on a reply or an 'error' means the
+    // promise never settles at all, and the caller waits forever.
+    const onEnd = () => done(reject, new Error('TimeForest が終了しました。'));
     const onData = (chunk) => {
       buf += chunk;
       let nl;
@@ -120,6 +127,7 @@ function talk(sock, cmd, args) {
     };
     sock.on('data', onData);
     sock.on('error', onErr);
+    sock.on('end', onEnd);
     sock.write(JSON.stringify({ id, cmd, args }) + '\n');
   });
 }
