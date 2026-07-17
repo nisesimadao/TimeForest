@@ -112,6 +112,30 @@ CLI は素の Node。Electron ではない。理由は3つとも測って決め�
 窓口は**名前付きパイプ**（mac/Linux は userData 下の unix socket）。ポートは開かない。
 同じユーザーしか触れないので、認証は OS が既に済ませている。
 
+## アシスタントから使う（MCP）
+
+```sh
+claude mcp add timeforest -- node E:/coding/TimeTree/client/mcp.js
+```
+
+| tool | |
+| --- | --- |
+| `list_events` | 期間で予定を読む。日付は `today` `week` `7/21` |
+| `get_event` | 1件の中身（時刻・場所・メモ・繰り返し・通知・参加者） |
+| `get_comments` | やり取りと「誰が何を変えたか」 |
+| `add_comment` | コメントする。**共有カレンダーだと他のメンバーに通知が飛ぶ** |
+| `list_calendars` / `list_accounts` / `switch_account` | |
+
+CLI と同じ扉（`client/rpc.js`）に、同じ理由で乗っている。TimeTree の API の知識は
+この中に1行も無い。
+
+MCP SDK は使っていない。この repo は依存ゼロで build step も無く、必要なのは
+stdio 上の JSON-RPC 4メソッドだけなので、手で書いた（形は仕様書から取った。記憶からではない）。
+
+> ⚠ **stdout はプロトコルのもの。** 途中のどこかで `console.log` を1回撃つだけで、
+> クライアントにはツールではなくパースエラーが見える。だから MCP サーバーは何も
+> 印字せず、進捗は stderr に出す。`npm run verify:mcp` がそれをガードしている。
+
 ## インストール（PC / Chrome 拡張）## インストール（PC / Chrome 拡張）
 
 ビルド不要。
