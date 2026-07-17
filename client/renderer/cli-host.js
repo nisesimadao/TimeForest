@@ -165,7 +165,12 @@
       const holidays = await TTX.store.holidaysFor(a, b).catch(() => []);
       const occs = TTX.store.occurrences(a, b, { holidays, only: ids });
 
-      return { from: a, to: b, events: occs.map(shape) };
+      // Name the calendars, even when there are events. An empty list is the
+      // reason: 「予定はありません」 could equally mean "nothing on" or "I
+      // reached nothing", and a model reading this has no other way to tell
+      // them apart — it said so itself, unprompted, the first time it saw a
+      // zero. Same rule as `find` returning the window it searched.
+      return { from: a, to: b, calendars: cals.map((c) => c.name), events: occs.map(shape) };
     },
 
     /**

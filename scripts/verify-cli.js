@@ -252,6 +252,22 @@ const killApp = () => {
     if (spanBack) tf('rm', spanBack.uuid.slice(0, 8));
   }
 
+  // --- 6a-ii. an empty answer says where it looked --------------------------
+  //
+  // A real model, handed a bare `{events: []}`, said so itself: 「件数がゼロだと
+  // 『本当に予定がない』のか『取得先が空/未接続』なのかは、この結果だけでは
+  // 区別がつきません」. It was right, and it is the same rule as `find` naming
+  // the window it searched.
+  sec('an empty listing still says which calendars');
+  {
+    const empty = JSON.parse(tf('ls', '--from', '2030-01-01', '--to', '2030-01-02', '--json').out);
+    check(empty.events.length === 0 && empty.calendars?.length > 0,
+      `no events, but it still names where it looked (${JSON.stringify(empty.calendars)})`);
+    const said = tf('ls', '--from', '2030-01-01', '--to', '2030-01-02').out;
+    check(new RegExp(EXPECT_CALENDAR).test(said),
+      `which the terminal prints too (${said.trim()})`);
+  }
+
   // --- 6b-i. finding something when you don't know the date -----------------
   //
   // 「先月の歯医者いつだっけ」. Without this the only way to answer is to guess

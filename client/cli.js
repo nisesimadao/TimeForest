@@ -202,8 +202,9 @@ function printLs(data) {
       n++;
     }
   }
-  if (!n) console.log(dim(`${data.from} 〜 ${data.to} に予定はありません`));
-  else console.log(dim(`\n${n}件  ${data.from} 〜 ${data.to}`));
+  const where = (data.calendars || []).join('、');
+  if (!n) console.log(dim(`${data.from} 〜 ${data.to}、${where || 'カレンダー'} に予定はありません`));
+  else console.log(dim(`\n${n}件  ${data.from} 〜 ${data.to}  ${where}`));
 }
 
 /** next day for a YYYY-MM-DD key, without dragging in a date library */

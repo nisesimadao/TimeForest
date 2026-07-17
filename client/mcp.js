@@ -132,7 +132,10 @@ const TOOLS = [
     title: '予定を読む',
     description: 'List calendar events in a date range. Dates accept plain words: '
       + DATE_WORDS + '. Omit both to get the next 30 days. '
-      + 'Every event comes back with a uuid — pass that to the other tools.',
+      + 'Every event comes back with a uuid — pass that to the other tools. '
+      + 'The reply names the calendars it read; with no `calendar` argument that is '
+      + 'EVERY calendar on the account, so an empty list means those dates really are '
+      + 'clear — not that nothing was reached, and not that some calendar was skipped.',
     inputSchema: {
       type: 'object',
       properties: {
