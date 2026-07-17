@@ -216,7 +216,14 @@
         at: a.created_at,
         // A comment that was edited says so, the way every chat app does —
         // otherwise the text silently differs from what someone replied to.
-        edited: a.type === TTX.api.ACTIVITY.COMMENT && a.updated_at > a.created_at + 1000,
+        //
+        // Exactly `>`, with no slack: measured, a fresh comment comes back with
+        // updated_at - created_at == 0 (both on the POST reply and on a
+        // refetch), and a real edit showed +343ms. An earlier version allowed
+        // 1000ms of slop "to be safe", which did the opposite — it swallowed
+        // the most common edit there is, fixing your own typo right after
+        // sending.
+        edited: a.type === TTX.api.ACTIVITY.COMMENT && a.updated_at > a.created_at,
         mine: me != null && a.author_id === me,
       }))
       .sort((a, b) => a.at - b.at);

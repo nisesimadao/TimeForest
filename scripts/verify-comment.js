@@ -210,6 +210,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   // it, and the throwaway calendar is too small for the agenda to scroll at all
   // (scrollHeight == clientHeight, measured). So: make today busy. This is the
   // real case anyway — a full day, and you open the last thing on it.
+  const FILLERS = 22;
   await page.evaluate(async ({ cid, n }) => {
     const base = new Date(); base.setHours(0, 30, 0, 0);
     for (let i = 0; i < n; i++) {
@@ -220,9 +221,14 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       });
       TTX.store.applyEvent(cid, e);
     }
-  }, { cid: calId, n: 22 });
+  }, { cid: calId, n: FILLERS });
   await page.click('.pill:text-is("今日")');
-  await sleep(600);
+  // Wait for the paint, don't sleep at it. refresh() awaits ensureHolidays() —
+  // a network call — before it renders, so a fixed sleep is a race: it passed
+  // locally and then measured a pre-paint screen, silently reporting "the row
+  // isn't low" on a build where nothing was wrong.
+  await page.locator('.ev', { hasText: `NF検証-埋め${FILLERS - 1}` }).first()
+    .waitFor({ timeout: 15000 });
 
   const rowY = await page.evaluate((t) => {
     const row = [...document.querySelectorAll('.ev')].find((n) => n.textContent.includes(t));

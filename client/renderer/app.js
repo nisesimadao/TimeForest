@@ -1224,10 +1224,17 @@
    * and 「3日前」 is worse than a date you can compare to the event's own.
    */
   function stampText(ms) {
-    const d = new Date(ms);
-    const today = TTX.tz.ymd(Date.now(), TZ) === TTX.tz.ymd(ms, TZ);
-    const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-    return today ? hm : `${d.getMonth() + 1}/${d.getDate()} ${hm}`;
+    // Through TTX.tz, like every other clock in this app — never
+    // `new Date(ms).getHours()`, which reads the MACHINE's timezone. The app
+    // pins everything to Asia/Tokyo, so on a machine set to anything else the
+    // comment clock would disagree with the event times right above it, and
+    // 「今日」 (resolved in JST) could contradict the hour printed beside it.
+    // Getting this exact confusion wrong by 9 hours is the oldest bug in this
+    // codebase; see HANDOFF §3 alerts.
+    const key = TTX.tz.ymd(ms, TZ);
+    const time = TTX.tz.hm(ms, TZ);
+    if (TTX.tz.ymd(Date.now(), TZ) === key) return time;
+    return `${+key.slice(5, 7)}/${+key.slice(8)} ${time}`;
   }
 
   /**

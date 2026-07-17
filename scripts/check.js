@@ -113,6 +113,26 @@ if (netFetch.length) {
   bad(`client/main.js uses net.fetch at line(s) ${netFetch.map(([n]) => n).join(', ')} — use ses.fetch (see README)`);
 } else ok('client/main.js does not call net.fetch');
 
+/* The app pins every clock to Asia/Tokyo and reads it through TTX.tz, which
+ * shifts to the target zone and then uses the UTC getters. `new Date(ms)`
+ * followed by .getHours()/.getDate() reads the MACHINE's zone instead — on a
+ * machine set to anything but JST that silently disagrees with every other time
+ * on screen, and it passes every test on a JST box.
+ *
+ * This is the same confusion that put all-day reminders 9 hours out (§3), and
+ * it has already sneaked back in once, in the comment timestamps. There is no
+ * legitimate use of these in the renderer: the model formats times, and TTX.tz
+ * does the rest. */
+const appJs = fs.readFileSync(path.join(ROOT, 'client/renderer/app.js'), 'utf8');
+const localGetters = appJs.split('\n')
+  .map((l, i) => [i + 1, l])
+  .filter(([, l]) => /\.get(Hours|Minutes|Date|Month|FullYear|Day)\s*\(\s*\)/.test(l)
+    && !l.trim().startsWith('*') && !l.trim().startsWith('//'));
+if (localGetters.length) {
+  bad(`client/renderer/app.js reads the machine's timezone at line(s) `
+    + `${localGetters.map(([n]) => n).join(', ')} — use TTX.tz.hm/ymd with TZ`);
+} else ok("app.js reads no clock in the machine's timezone — all times go through TTX.tz");
+
 /* TimeTree's all-day end_at is inclusive; iCal DTEND is exclusive. Dropping the
  * +1 makes every multi-day export a day short. */
 const exportJs = fs.readFileSync(path.join(ROOT, 'src/lib/export.js'), 'utf8');
@@ -247,7 +267,12 @@ const feed = globalThis.TTX.model.normalizeActivities([
   { id: 'b', type: 0, author_id: 2, attachment: { content: '消した' }, created_at: 200, updated_at: 200,
     deactivated_at: 999 },
   { id: 'c', type: 1, author_id: 1, attachment: { items: [1] }, created_at: 100, updated_at: 100 },
-  { id: 'd', type: 0, author_id: 1, attachment: { content: 'なおした' }, created_at: 400, updated_at: 99400 },
+  // +343ms: a real edit, measured. Not a round number on purpose — an earlier
+  // version allowed 1000ms of slack and would have called this "not edited",
+  // which is the most common edit there is (fixing your own typo right after
+  // sending). A fresh comment comes back with updated_at - created_at == 0
+  // exactly, so the predicate needs no slack at all.
+  { id: 'd', type: 0, author_id: 1, attachment: { content: 'なおした' }, created_at: 400, updated_at: 743 },
 ], { membersById: new Map([[1, { name: 'たろう' }], [2, { name: 'はなこ' }]]) }, 1);
 
 const ids = feed.map((f) => f.id).join(',');
