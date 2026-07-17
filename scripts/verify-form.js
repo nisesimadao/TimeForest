@@ -825,6 +825,46 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   // 13 = the cursor's month + AGENDA_MAX_SPAN. Asking for 14 tests nothing but
   // this test's own arithmetic — the 14th month is past where the agenda ever
   // grows, so its marker is correctly absent.
+  const agenda = () => page.evaluate(() => {
+    const w = document.querySelector('.agenda');
+    const hs = [...w.querySelectorAll('.ag-month')].map((n) => n.textContent);
+    return {
+      title: document.querySelector('.tb-title')?.textContent,
+      months: hs.length,
+      first: hs[0],
+      last: hs[hs.length - 1],
+      rows: w.querySelectorAll('.ev').length,
+      // The scrollbar thumb, as the browser draws it.
+      thumb: Math.round((w.clientHeight / w.scrollHeight) * w.clientHeight),
+      top: Math.round(w.scrollTop),
+      scrollable: w.scrollHeight > w.clientHeight + 2,
+    };
+  });
+
+  // Before seeding anything. A quiet calendar's three months don't fill the
+  // window, and a list that doesn't overflow never fires a scroll event — so
+  // without fillAgenda() the agenda can't reach another month at ALL: the
+  // feature is simply absent, silently, for the people with the least on.
+  // Measured on the empty throwaway: 0px of scroll before, 492px after.
+  const quiet = await agenda();
+  // LIVE events. totalEvents() counts cached rows, and a delete is a SOFT
+  // delete — every test event this suite has ever created is still in there as
+  // a tombstone. It answered 3315 for a calendar with nothing on it, which
+  // skipped this case entirely. Same mistake as counting comments without
+  // filtering deactivated_at; second time.
+  const total = await page.evaluate(() => {
+    let n = 0;
+    for (const list of TTX.store.state.events.values()) n += list.filter((e) => !e.deactivated_at).length;
+    return n;
+  });
+  if (total < 20) {
+    check(quiet.scrollable, `even a near-empty calendar has something to scroll (${total} events)`);
+    check(quiet.months > 3,
+      `and it filled past the default three months on its own (${quiet.months}: ${quiet.first}〜${quiet.last})`);
+  } else {
+    ok(`quiet-calendar case skipped — ${total} events on this calendar`);
+  }
+
   const MARK = 'TF検証-月印';
   const MARK_MONTHS = 13;
   const marks = await page.evaluate(async ({ t, n }) => {
@@ -844,21 +884,6 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await page.click('.pill:text-is("今日")');
   await sleep(700);
 
-  const agenda = () => page.evaluate(() => {
-    const w = document.querySelector('.agenda');
-    const hs = [...w.querySelectorAll('.ag-month')].map((n) => n.textContent);
-    return {
-      title: document.querySelector('.tb-title')?.textContent,
-      months: hs.length,
-      first: hs[0],
-      last: hs[hs.length - 1],
-      rows: w.querySelectorAll('.ev').length,
-      // The scrollbar thumb, as the browser draws it.
-      thumb: Math.round((w.clientHeight / w.scrollHeight) * w.clientHeight),
-      top: Math.round(w.scrollTop),
-      scrollable: w.scrollHeight > w.clientHeight + 2,
-    };
-  });
 
   const asDate = (v) => (v || '').replace(/(\d+)年(\d+)月/, (_, y, m) => y + String(m).padStart(2, '0'));
   const a0 = await agenda();
