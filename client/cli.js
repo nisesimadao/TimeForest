@@ -1,46 +1,48 @@
 #!/usr/bin/env node
-/* TimeForest from a terminal.
+/* TimeForest from a terminal. Plain Node — no Electron here.
  *
  *   tf ls [--from 2026-07-01] [--to 2026-07-31] [--cal 家族] [--json]
- *   tf show <uuid>
- *   tf comments <uuid>
- *   tf say <uuid> "text"
+ *   tf show <uuid> [--json]
+ *   tf comments <uuid> [--json]
+ *   tf say <uuid> "14時でいい？"
  *   tf accounts
+ *   tf use <メール|id>
  *
- * Why this is an Electron process and not plain Node: the sessions belong to
- * Electron partitions — Chromium cookie jars under userData, SQLite encrypted
- * with DPAPI. Nothing outside Electron can read them. Running here means the
- * CLI reuses the login you already did in the app: no second sign-in, no
- * credentials on disk anywhere new, and one place (session.js) that knows how
- * to be authenticated.
+ * It asks the running app. That is the whole design:
  *
- * And why it shares src/lib with the app rather than talking to the API itself:
- * everything hard-won about TimeTree lives there — that writes are singular and
- * reads are plural, that all-day events store UTC midnight, how a recurrence is
- * really edited. A CLI with its own client would be a second place for all of
- * that to be wrong.
+ *  - The login is a browser session cookie in a Chromium jar (DPAPI-encrypted
+ *    SQLite). Only Electron can read it, and only one process at a time — two
+ *    on the same profile don't fail cleanly, they answer a good CSRF token and
+ *    then an empty calendar list. So a standalone CLI would have to close the
+ *    app, and the app is a TRAY app: it is normally running. That's the wrong
+ *    way round.
+ *  - The app already holds every event in memory. Asking it is instant; a
+ *    separate process re-syncs 4298 events first (measured: 8 seconds).
  *
- * ⚠ Not while the app is running. They share userData, and a second Electron on
- *   the same profile does not fail — it answers a CSRF token and then an empty
- *   calendar list, which reads as "you have no calendars".
+ * If the app isn't running, this starts it. One code path either way — the only
+ * difference is who opened the door.
  */
-const { app } = require('electron');
-const S = require('./session');
-
-S.pin();                 // before whenReady: userData is derived from the name
-app.disableHardwareAcceleration();
-
-// The libs are IIFEs that hang themselves off globalThis, so requiring them
-// runs the real thing. Order matters: model reads api, api reads tz.
-require('../src/lib/tz.js');
-require('../src/lib/recur.js');
-require('../src/lib/api.js');
-require('../src/lib/model.js');
-require('../src/lib/export.js');
-require('./renderer/store.js');
-const { TTX } = globalThis;
+const net = require('node:net');
+const path = require('node:path');
+const os = require('node:os');
+const fs = require('node:fs');
+const { spawn } = require('node:child_process');
+const { socketPath } = require('./rpc');
 
 const TZ = 'Asia/Tokyo';
+
+/**
+ * Where Electron puts userData for app.setName('TimeForest'). Recomputed here
+ * because this process has no Electron to ask — if these two ever disagree, the
+ * CLI talks to a profile that doesn't exist and reports "start the app" at an
+ * app that is running. scripts/check.js guards the name.
+ */
+function userDataDir() {
+  const name = 'TimeForest';
+  if (process.platform === 'win32') return path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), name);
+  if (process.platform === 'darwin') return path.join(os.homedir(), 'Library', 'Application Support', name);
+  return path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config'), name);
+}
 
 // --- argv -------------------------------------------------------------------
 
@@ -57,139 +59,121 @@ function parse(argv) {
   return out;
 }
 
-const die = (msg) => { console.error(msg); app.exit(1); };
+const die = (msg) => { console.error(msg); process.exit(1); };
+
+// --- the door ---------------------------------------------------------------
+
+const connect = (file) => new Promise((resolve, reject) => {
+  const sock = net.connect(file);
+  sock.once('connect', () => resolve(sock));
+  sock.once('error', reject);
+});
+
+/** Start the app and wait for its door to open. Windowless is not an option —
+ *  the store lives in the renderer — but it opens to the tray, which is where
+ *  this app lives anyway. */
+async function startApp(file) {
+  const root = path.join(__dirname);
+  const electron = process.platform === 'win32'
+    ? path.join(root, 'node_modules', 'electron', 'dist', 'electron.exe')
+    : path.join(root, 'node_modules', 'electron', 'dist', 'electron');
+  if (!fs.existsSync(electron)) {
+    die('TimeForest が起動しておらず、起動もできません（electron が見つかりません）。\n'
+      + 'アプリを手で起動してから、もう一度実行してください。');
+  }
+  console.error('TimeForest を起動しています…');
+  const child = spawn(electron, [root], { detached: true, stdio: 'ignore' });
+  child.unref();
+
+  // Poll for the door. The app has to sync before it can answer anything, and
+  // that is the 8 seconds we're avoiding on every LATER call.
+  const until = Date.now() + 60000;
+  while (Date.now() < until) {
+    try { return await connect(file); } catch { /* not yet */ }
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  return die('TimeForest を起動しましたが、応答がありません。');
+}
+
+let nextId = 1;
+function talk(sock, cmd, args) {
+  return new Promise((resolve, reject) => {
+    const id = nextId++;
+    let buf = '';
+    // Both listeners come off on the way out, whichever way it goes. Leaving
+    // them on leaked one per call — the cold-start path polls ping until the app
+    // is synced, and Node started warning about it at ten.
+    const done = (fn, v) => { sock.off('data', onData); sock.off('error', onErr); fn(v); };
+    const onErr = (e) => done(reject, e);
+    const onData = (chunk) => {
+      buf += chunk;
+      let nl;
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, nl);
+        buf = buf.slice(nl + 1);
+        if (!line.trim()) continue;
+        const res = JSON.parse(line);
+        if (res.id !== id) continue;
+        return res.ok ? done(resolve, res.data) : done(reject, new Error(res.error));
+      }
+    };
+    sock.on('data', onData);
+    sock.on('error', onErr);
+    sock.write(JSON.stringify({ id, cmd, args }) + '\n');
+  });
+}
 
 // --- output -----------------------------------------------------------------
 
-const DIM = '\x1b[2m';
-const OFF = '\x1b[0m';
-const BOLD = '\x1b[1m';
 const tty = process.stdout.isTTY;
-const dim = (s) => (tty ? DIM + s + OFF : s);
-const bold = (s) => (tty ? BOLD + s + OFF : s);
+const dim = (s) => (tty ? '\x1b[2m' + s + '\x1b[0m' : s);
+const bold = (s) => (tty ? '\x1b[1m' + s + '\x1b[0m' : s);
 
 const WEEK = ['日', '月', '火', '水', '木', '金', '土'];
-const jp = (key) => `${+key.slice(5, 7)}/${+key.slice(8)}(${WEEK[TTX.tz.weekdayOf(key)]})`;
+const jp = (key) => {
+  const d = new Date(`${key}T00:00:00Z`);
+  return `${+key.slice(5, 7)}/${+key.slice(8)}(${WEEK[d.getUTCDay()]})`;
+};
+const stamp = (ms) => new Date(ms).toLocaleString('ja-JP', { timeZone: TZ });
 
-function line(o) {
-  const when = o.allDay ? '終日   ' : `${o.startTime}–${o.endTime}`;
-  const bits = [o.title];
-  if (o.location) bits.push(dim(o.location));
-  return `  ${dim(when)}  ${bits.join('  ')}`;
+function printLs(data) {
+  const byDay = new Map();
+  for (const e of data.events) {
+    // A span belongs to every day it covers, the way the agenda reads it.
+    for (let k = e.startKey; k <= e.endKey; k = jpNext(k)) {
+      if (k < data.from || k > data.to) continue;
+      if (!byDay.has(k)) byDay.set(k, []);
+      byDay.get(k).push(e);
+      if (!e.multiDay) break;
+    }
+  }
+  let n = 0;
+  for (const key of [...byDay.keys()].sort()) {
+    console.log(bold(jp(key)));
+    for (const e of byDay.get(key)) {
+      const when = e.holiday ? '祝' : e.allDay ? '終日   ' : `${e.startTime}–${e.endTime}`;
+      const bits = [e.title];
+      if (e.location) bits.push(dim(e.location));
+      if (e.calendar && !e.holiday) bits.push(dim('[' + e.calendar + ']'));
+      // The uuid is what every other command takes, so it earns its place —
+      // except on holidays, whose ids are synthesised here and address nothing.
+      if (!e.holiday && e.uuid) bits.push(dim(e.uuid.slice(0, 8)));
+      console.log(`  ${dim(when)}  ${bits.join('  ')}`);
+      n++;
+    }
+  }
+  if (!n) console.log(dim(`${data.from} 〜 ${data.to} に予定はありません`));
+  else console.log(dim(`\n${n}件  ${data.from} 〜 ${data.to}`));
+}
+
+/** next day for a YYYY-MM-DD key, without dragging in a date library */
+function jpNext(key) {
+  const d = new Date(`${key}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
 }
 
 // --- commands ---------------------------------------------------------------
-
-async function cmdAccounts() {
-  const list = S.all();
-  if (!list.length) return console.log('アカウントがありません。先にアプリでログインしてください。');
-  for (const a of list) {
-    const mark = a.id === S.activeIdOf() ? '*' : ' ';
-    console.log(`${mark} ${a.name || '(名前なし)'}  ${dim(a.email || a.id)}`);
-  }
-}
-
-async function cmdLs(args) {
-  const from = args.flags.from || TTX.tz.ymd(Date.now(), TZ);
-  const to = args.flags.to || TTX.tz.ymd(Date.now() + 30 * 86400000, TZ);
-  await TTX.store.syncAll();
-  const state = TTX.store.state;
-
-  let cals = state.calendars;
-  if (args.flags.cal) {
-    const want = String(args.flags.cal);
-    cals = cals.filter((c) => c.name === want || String(c.id) === want);
-    if (!cals.length) {
-      return die(`カレンダー "${want}" がありません。あるのは: ${state.calendars.map((c) => c.name).join(', ')}`);
-    }
-    state.enabled.clear();
-    for (const c of cals) state.enabled.add(c.id);
-  }
-
-  // holidaysFor(), not state.holidays — that one is a Map of year → list, and
-  // occurrences() wants the flat array. Passing the Map doesn't throw where you
-  // wrote it; it throws four frames down inside model.js.
-  const holidays = await TTX.store.holidaysFor(from, to).catch(() => []);
-  const occs = TTX.store.occurrences(from, to, { holidays });
-  if (args.flags.json) {
-    return console.log(JSON.stringify(occs.map((o) => ({
-      uuid: o.uuid, title: o.title, startKey: o.startKey, endKey: o.endKey,
-      allDay: o.allDay, start: o.start, end: o.end,
-      location: o.location, note: o.note, calendar: o.calendarName,
-      author: o.authorName, lat: o.lat, lon: o.lon,
-    })), null, 2));
-  }
-
-  const byDay = TTX.model.groupByDay(occs, from, to);
-  let shown = 0;
-  for (const key of Object.keys(byDay).sort()) {
-    const list = byDay[key];
-    if (!list.length) continue;
-    console.log(bold(jp(key)));
-    for (const o of list) console.log(line(o));
-    shown += list.length;
-  }
-  if (!shown) console.log(dim(`${from} 〜 ${to} に予定はありません`));
-  else console.log(dim(`\n${shown}件  ${from} 〜 ${to}`));
-}
-
-async function cmdShow(args) {
-  const uuid = args._[1];
-  if (!uuid) return die('使い方: tf show <uuid>');
-  await TTX.store.syncAll();
-  const state = TTX.store.state;
-  for (const cal of state.calendars) {
-    const raw = TTX.store.rawEvent(cal.id, uuid);
-    if (!raw) continue;
-    if (args.flags.json) return console.log(JSON.stringify(raw, null, 2));
-    console.log(bold(raw.title || '(無題)'));
-    console.log(`  カレンダー  ${cal.name}`);
-    console.log(`  日時        ${new Date(raw.start_at).toLocaleString('ja-JP', { timeZone: TZ })}`
-      + ` 〜 ${new Date(raw.end_at).toLocaleString('ja-JP', { timeZone: TZ })}${raw.all_day ? ' (終日)' : ''}`);
-    if (raw.location) console.log(`  場所        ${raw.location}`);
-    if (raw.note) console.log(`  メモ        ${raw.note.replace(/\n/g, '\n              ')}`);
-    if (raw.recurrences?.length) console.log(`  繰り返し    ${raw.recurrences.join(' / ')}`);
-    return;
-  }
-  die(`予定 ${uuid} が見つかりません`);
-}
-
-async function withEvent(uuid, fn) {
-  await TTX.store.syncAll();
-  for (const cal of TTX.store.state.calendars) {
-    if (TTX.store.rawEvent(cal.id, uuid)) return fn(cal);
-  }
-  return die(`予定 ${uuid} が見つかりません`);
-}
-
-async function cmdComments(args) {
-  const uuid = args._[1];
-  if (!uuid) return die('使い方: tf comments <uuid>');
-  await withEvent(uuid, async (cal) => {
-    const raw = await TTX.api.activities(cal.id, uuid);
-    const me = TTX.store.state.me?.id ?? null;
-    const items = TTX.model.normalizeActivities(raw, { membersById: TTX.store.state.members.get(cal.id) }, me);
-    if (args.flags.json) return console.log(JSON.stringify(items, null, 2));
-    if (!items.length) return console.log(dim('（何もありません）'));
-    for (const a of items) {
-      const when = new Date(a.at).toLocaleString('ja-JP', { timeZone: TZ });
-      if (a.comment) console.log(`${bold(a.authorName || '(名前なし)')} ${dim(when)}${a.edited ? dim(' 編集済み') : ''}\n  ${a.text}`);
-      else console.log(dim(`— ${a.authorName ? a.authorName + 'が' : ''}${a.text}  ${when}`));
-    }
-  });
-}
-
-async function cmdSay(args) {
-  const [, uuid, ...rest] = args._;
-  const text = rest.join(' ').trim();
-  if (!uuid || !text) return die('使い方: tf say <uuid> "text"');
-  await withEvent(uuid, async (cal) => {
-    // Naming the calendar matters: on a shared one this notifies the other
-    // members, and a terminal gives you no other clue about where it landed.
-    await TTX.api.postComment(cal.id, uuid, text);
-    console.log(`${cal.name} の「${TTX.store.rawEvent(cal.id, uuid).title}」に投稿しました`);
-  });
-}
 
 const HELP = `TimeForest — TimeTree を端末から
 
@@ -197,54 +181,113 @@ const HELP = `TimeForest — TimeTree を端末から
   tf show <uuid> [--json]
   tf comments <uuid> [--json]
   tf say <uuid> "コメント"
+  tf calendars
   tf accounts
+  tf use <メール|id>
 
-  --account <メール|id>   使うアカウント（既定はアプリで選んでいるもの）
+起動しているアプリに訊きます。動いていなければ起動します（トレイに常駐します）。
+ログインは要りません — アプリのものをそのまま使います。`;
 
-アプリを起動したまま実行しないこと。同じ profile を奪い合って、
-CSRF は取れるのにカレンダーが空、という嘘の結果になります。`;
-
-// --- main -------------------------------------------------------------------
-
-const COMMANDS = { ls: cmdLs, show: cmdShow, comments: cmdComments, say: cmdSay, accounts: cmdAccounts };
-
-(async () => {
-  const args = parse(process.argv.slice(app.isPackaged ? 1 : 2));
+async function main() {
+  const args = parse(process.argv.slice(2));
   const cmd = args._[0];
-  if (!cmd || cmd === 'help' || args.flags.help) { console.log(HELP); return app.exit(0); }
-  if (!COMMANDS[cmd]) { console.error(`知らないコマンド: ${cmd}\n`); console.log(HELP); return app.exit(1); }
+  if (!cmd || cmd === 'help' || args.flags.help) { console.log(HELP); return; }
 
-  // The app holds a single-instance lock on this profile. If we can't take it,
-  // it's running — and going ahead anyway does not fail cleanly: two Electrons
-  // fighting over one Chromium profile produce a good CSRF token and then an
-  // empty calendar list, or a 400 with code -493. Both read as "you have no
-  // calendars", which is a lie. Measured both ways. Say the true thing instead.
-  if (!app.requestSingleInstanceLock()) {
-    return die('TimeForest のアプリが起動しています。同じログイン情報を奪い合って\n'
-      + '結果が嘘になるので、アプリを閉じてから実行してください。');
+  const file = socketPath(userDataDir());
+  let sock;
+  let started = false;
+  try { sock = await connect(file); } catch { sock = await startApp(file); started = true; }
+
+  // The door opens before the app has finished syncing, and a half-synced app
+  // answers "no events" — which is a lie, and the worst possible one for a
+  // calendar. Wait for it. Only on a cold start: once it's up it stays synced.
+  if (started && cmd !== 'ping' && cmd !== 'accounts') {
+    const until = Date.now() + 60000;
+    for (;;) {
+      const p = await talk(sock, 'ping').catch(() => ({ ready: false }));
+      if (p.ready) break;
+      if (Date.now() > until) { sock.end(); return die('TimeForest の同期が終わりません。'); }
+      await new Promise((r) => setTimeout(r, 300));
+    }
   }
 
-  await app.whenReady();
-  S.load();
-
-  if (args.flags.account) {
-    const want = String(args.flags.account);
-    const hit = S.all().find((a) => a.email === want || a.id === want || a.name === want);
-    if (!hit) return die(`アカウント "${want}" がありません。tf accounts で一覧が見られます。`);
-    S.setActive(hit.id);
-  }
-  const acct = S.active();
-  if (!acct) return die('アカウントがありません。先にアプリでログインしてください。');
-
-  // Everything in src/lib goes through this. Same code as the app, same
-  // session as the app.
-  TTX.api.setTransport((path, { method, body } = {}) => S.apiJSON(acct, path, method || 'GET', body));
+  const json = (d) => console.log(JSON.stringify(d, null, 2));
 
   try {
-    await COMMANDS[cmd](args);
-    app.exit(0);
-  } catch (e) {
-    console.error(String(e.message || e));
-    app.exit(1);
+    switch (cmd) {
+      case 'ping': json(await talk(sock, 'ping')); break;
+
+      case 'accounts': {
+        const r = await talk(sock, 'accounts');
+        for (const a of r.accounts) {
+          console.log(`${a.id === r.activeId ? '*' : ' '} ${a.name || '(名前なし)'}  ${dim(a.email || a.id)}`);
+        }
+        break;
+      }
+
+      case 'use': {
+        if (!args._[1]) return die('使い方: tf use <メール|id>');
+        const r = await talk(sock, 'use', { account: args._[1] });
+        const a = r.accounts.find((x) => x.id === r.activeId);
+        console.log(`${a.name || a.id} に切り替えました`);
+        break;
+      }
+
+      case 'calendars': {
+        const r = await talk(sock, 'calendars');
+        for (const c of r) console.log(`${c.enabled ? '*' : ' '} ${c.name}  ${dim(String(c.id))}`);
+        break;
+      }
+
+      case 'ls': {
+        const r = await talk(sock, 'ls', { from: args.flags.from, to: args.flags.to, cal: args.flags.cal });
+        if (args.flags.json) json(r); else printLs(r);
+        break;
+      }
+
+      case 'show': {
+        if (!args._[1]) return die('使い方: tf show <uuid>');
+        const r = await talk(sock, 'show', { uuid: args._[1] });
+        if (args.flags.json) return json(r);
+        const e = r.event;
+        console.log(bold(e.title || '(無題)'));
+        console.log(`  カレンダー  ${r.calendar}`);
+        console.log(`  日時        ${stamp(e.start_at)} 〜 ${stamp(e.end_at)}${e.all_day ? ' (終日)' : ''}`);
+        if (e.location) console.log(`  場所        ${e.location}`);
+        if (e.note) console.log(`  メモ        ${e.note.replace(/\n/g, '\n              ')}`);
+        if (e.recurrences?.length) console.log(`  繰り返し    ${e.recurrences.join(' / ')}`);
+        break;
+      }
+
+      case 'comments': {
+        if (!args._[1]) return die('使い方: tf comments <uuid>');
+        const r = await talk(sock, 'comments', { uuid: args._[1] });
+        if (args.flags.json) return json(r);
+        if (!r.items.length) return console.log(dim('（何もありません）'));
+        for (const a of r.items) {
+          if (a.comment) console.log(`${bold(a.authorName || '(名前なし)')} ${dim(stamp(a.at))}${a.edited ? dim(' 編集済み') : ''}\n  ${a.text}`);
+          else console.log(dim(`— ${a.authorName ? a.authorName + 'が' : ''}${a.text}  ${stamp(a.at)}`));
+        }
+        break;
+      }
+
+      case 'say': {
+        const [, uuid, ...rest] = args._;
+        const text = rest.join(' ').trim();
+        if (!uuid || !text) return die('使い方: tf say <uuid> "コメント"');
+        const r = await talk(sock, 'say', { uuid, text });
+        console.log(`${r.calendar} の「${r.title}」に投稿しました`);
+        break;
+      }
+
+      default:
+        console.error(`知らないコマンド: ${cmd}\n`);
+        console.log(HELP);
+        process.exitCode = 1;
+    }
+  } finally {
+    sock.end();
   }
-})();
+}
+
+main().catch((e) => die(String(e.message || e)));

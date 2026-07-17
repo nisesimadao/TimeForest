@@ -83,28 +83,28 @@ OpenStreetMap のタイル利用ポリシーが要求する User-Agent を名乗
 ```sh
 npm run tf -- ls --from 2026-07-01 --to 2026-07-31
 npm run tf -- ls --cal 家族 --json
-npm run tf -- show <uuid>
-npm run tf -- comments <uuid>
+npm run tf -- show|comments <uuid>
 npm run tf -- say <uuid> "14時でいい？"
-npm run tf -- accounts
+npm run tf -- calendars / accounts / use <メール>
 ```
 
-**ログインは要らない。** アプリでログイン済みのセッションをそのまま使う。
+**ログインは要らないし、待たされもしない。** 起動しているアプリに訊くだけ。
+動いていなければ起動する（トレイに常駐する）。**実測 118ms。**
 
-それができるのは、CLI が **Electron プロセスだから**。セッションは Electron の
-partition（userData の下にある Chromium の cookie jar）にあって、実体は DPAPI で
-暗号化された SQLite なので、素の Node からは読めない。だから CLI も Electron に
-して `client/session.js` を共有する。ウィンドウは1枚も作らない（実測 433ms）。
+CLI は素の Node。Electron ではない。理由は3つとも測って決めた:
 
-API の知識も `src/lib/*` をそのまま共有する。「書き込みは単数形・読み取りは複数形」
-「終日は UTC 深夜で保存される」「繰り返しの本当の編集手順」——全部あそこにある。
-CLI が自前のクライアントを持てば、それが全部間違う場所が2つになる。
+- **ログインはブラウザのセッション Cookie** で、Chromium の cookie jar
+  （DPAPI 暗号化 SQLite）にある。読めるのは Electron だけで、しかも**同時に1つだけ**。
+  2つ動かすと失敗の仕方が悪く、CSRF は取れるのにカレンダーが空になる（実測）。
+  つまり単体の CLI は「アプリを閉じろ」と言うことになる。**トレイ常駐のアプリに対して、それは逆**
+- **アプリは全イベントをメモリに持っている。** 訊けば即座。別プロセスは 4298件を
+  取り直すところから始まる（実測 8.1秒 → 118ms、**54倍**）
+- **重さは理由ではなかった。** Electron 版の起動は 0.195秒で、遅くない
 
-> ⚠ **アプリを起動したまま実行しない。** 同じ profile を2つの Electron が奪い合う。
-> 失敗の仕方が悪くて、CSRF は取れるのにカレンダーが空（あるいは 400 `-493`）になり、
-> 「カレンダーがありません」という嘘に見える。CLI は起動を検出して、そう言って止まる。
+窓口は**名前付きパイプ**（mac/Linux は userData 下の unix socket）。ポートは開かない。
+同じユーザーしか触れないので、認証は OS が既に済ませている。
 
-## インストール（PC / Chrome 拡張）
+## インストール（PC / Chrome 拡張）## インストール（PC / Chrome 拡張）
 
 ビルド不要。
 

@@ -29,6 +29,7 @@ const fs = require('node:fs');
 const crypto = require('node:crypto');
 
 const S = require('./session');
+const rpc = require('./rpc');
 
 const { ORIGIN, CLIENT_TAG, CHROME_UA } = S;
 const DEV = process.argv.includes('--dev');
@@ -442,11 +443,38 @@ function createWindow() {
   });
 }
 
+/**
+ * The CLI's door. The work happens in the renderer because that is where the
+ * store is — the whole cache, the recurrence expansion, the holiday merge.
+ * Asking it costs nothing; a separate process would re-sync 4298 events first
+ * (measured: 8 seconds).
+ */
+async function dispatchCli({ cmd, args }) {
+  // Accounts belong to this side — session.js owns the list. Answering here
+  // also means `tf accounts` works before the renderer has finished syncing.
+  if (cmd === 'accounts') return S.publicAccounts();
+  if (cmd === 'use') {
+    const want = String(args?.account || '');
+    const hit = S.all().find((a) => a.email === want || a.id === want || a.name === want);
+    if (!hit) throw new Error(`アカウント "${want}" がありません`);
+    await switchAccount(hit.id);
+    mainWindow?.webContents.send('accounts:changed', S.publicAccounts());
+    return S.publicAccounts();
+  }
+
+  if (!mainWindow || mainWindow.isDestroyed()) throw new Error('ウィンドウがありません');
+  // Straight into the page's own world, so preload.js stays as narrow as it is.
+  // Only strings this process built reach it — the CLI's argv never does.
+  const call = `globalThis.TTX.cli.handle(${JSON.stringify(String(cmd))}, ${JSON.stringify(args ?? {})})`;
+  return mainWindow.webContents.executeJavaScript(call, true);
+}
+
 app.whenReady().then(async () => {
   S.load();
   await S.adoptLegacy();
   createTray();
   createWindow();
+  rpc.serve({ userDataDir: S.userData(), dispatch: dispatchCli });
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
     else showWindow();
