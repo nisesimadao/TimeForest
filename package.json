@@ -2,6 +2,9 @@
   "name": "timeforest",
   "version": "0.1.0",
   "private": true,
+  "bin": {
+    "tf": "client/cli.js"
+  },
   "description": "TimeTree 非公式クライアント — デスクトップアプリ / Chrome 拡張 / ユーザースクリプト",
   "scripts": {
     "check": "node scripts/check.js",

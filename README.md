@@ -81,17 +81,21 @@ OpenStreetMap のタイル利用ポリシーが要求する User-Agent を名乗
 ## 端末から使う（CLI）
 
 ```sh
-npm run tf -- ls today
-npm run tf -- ls week --cal 家族
-npm run tf -- ls 7/21 --json
-npm run tf -- find 歯医者               # 日付を知らないとき
-npm run tf -- show 7110a578            # ls が出す先頭8文字でいい
-npm run tf -- say 7110a578 "14時でいい？"
-npm run tf -- add 歯医者 --at "7/21 10:00" --for 1h --where 駅前歯科
-npm run tf -- add 旅行 --at 8/1 --to 8/3   # 時刻を書かなければ終日
-npm run tf -- edit 7110a578 --at "7/21 10:30"   # ずらす。長さはそのまま
-npm run tf -- rm 7110a578
-npm run tf -- use you@example.com   # → たろう に切り替えました  家族、プライベート
+npm link          # tf をパスに置く（戻すなら npm unlink -g timeforest）
+```
+
+```sh
+tf ls today
+tf ls week --cal 家族
+tf ls 7/21 --json
+tf find 歯医者               # 日付を知らないとき
+tf show 7110a578            # ls が出す先頭8文字でいい
+tf say 7110a578 "14時でいい？"
+tf add 歯医者 --at "7/21 10:00" --for 1h --where 駅前歯科
+tf add 旅行 --at 8/1 --to 8/3   # 時刻を書かなければ終日
+tf edit 7110a578 --at "7/21 10:30"   # ずらす。長さはそのまま
+tf rm 7110a578
+tf use you@example.com   # → たろう に切り替えました  家族、プライベート
 ```
 
 日付は `today 明日 week nextweek month 7/21 2026-07-21 +7d -3d`。
