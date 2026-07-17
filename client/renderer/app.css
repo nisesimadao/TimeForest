@@ -597,7 +597,15 @@ button { background: none; border: 0; cursor: default; text-align: left; }
 
 /* Six week rows, not 42 loose cells: a span has to be able to reach across
    days, and it can only do that if the week is the thing it lives in. */
-.m-grid { flex: 1; display: grid; grid-template-rows: repeat(6, 1fr); min-height: 0; }
+/* --weeks is set by renderMonth: 5 or 6, whatever the month needs. Hardcoding 6
+   drew a spare week of next month in most months AND shrank every cell by ~17%,
+   which pushed events into 「+N件」 that would otherwise have fit. */
+.m-grid {
+  flex: 1;
+  display: grid;
+  grid-template-rows: repeat(var(--weeks, 6), 1fr);
+  min-height: 0;
+}
 
 .m-week {
   position: relative;

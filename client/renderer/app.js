@@ -84,6 +84,10 @@
     cursor: '',            // any date inside the focused month
     query: '',
     mutedLabels: new Set(),
+    // 0 = 日曜始まり, 1 = 月曜始まり. Defaults to 月曜 because that is what
+    // TimeTree Web renders (measured), so the grid a family already knows keeps
+    // the same shape here. See weekStart() for why this is a setting at all.
+    weekStart: 1,
     theme: 'system',
     dark: false,
     holidays: [],
@@ -125,7 +129,24 @@
     return ymd(Date.UTC(y, m - 1 + n, Math.min(d, last)), 'UTC');
   };
 
-  const weekStart = (key) => addDays(key, -weekdayOf(key));
+  /**
+   * Which day a week begins on, 0 = 日曜 / 1 = 月曜.
+   *
+   * TimeTree Web renders 月火水木金土日 — Monday — and offers no way to change
+   * it (measured: nothing in /api/v1/user/setting, the calendar object, or
+   * localStorage; it is simply hardcoded there). Japanese paper calendars, and
+   * Google Calendar in ja, start on Sunday. Both answers are right for somebody,
+   * so this is a setting — which is the part 本家 doesn't have.
+   *
+   * NOTE this is only about how the GRID is laid out. `weekdayOf()` answers
+   * "what day is this", which is a fact and never moves: the 土/日 colours, the
+   * 「7月21日(火)」 in the detail card and the BYDAY of a recurrence all keep
+   * using it directly. And `recur.js` has its own `weekStart` for RRULE
+   * arithmetic — RFC 5545's WKST, a different thing entirely. Don't wire this
+   * to that.
+   */
+  const weekStartDow = () => (ui.weekStart === 0 ? 0 : 1);
+  const weekStart = (key) => addDays(key, -((weekdayOf(key) - weekStartDow() + 7) % 7));
 
   /** Agenda spans three months; month spans one; week spans seven days. */
   function range() {
@@ -148,6 +169,7 @@
         notify: ui.notify,
         hideEmpty: ui.hideEmpty,
         maps: ui.maps,
+        weekStart: ui.weekStart,
         muted: [...ui.mutedLabels],
         disabled: TTX.store.state.calendars
           .filter((c) => !TTX.store.state.enabled.has(c.id)).map((c) => c.id),
@@ -162,6 +184,7 @@
       if (p.notify != null) ui.notify = !!p.notify;
       if (p.hideEmpty != null) ui.hideEmpty = !!p.hideEmpty;
       if (p.maps != null) ui.maps = !!p.maps;
+      if (p.weekStart != null) ui.weekStart = p.weekStart === 0 ? 0 : 1;
       if (p.muted) ui.mutedLabels = new Set(p.muted);
       return p;
     } catch {
@@ -742,8 +765,17 @@
   function renderMonth() {
     const from = monthStart(ui.cursor);
     const to = monthEnd(ui.cursor);
-    const gridFrom = addDays(from, -weekdayOf(from));
-    const gridTo = addDays(gridFrom, 41);
+    const gridFrom = weekStart(from);
+    // As many weeks as the month actually needs — 5 or 6 — not always 6.
+    //
+    // A fixed 41 draws a whole extra week of next month in most months (4 of
+    // the 6 checked against 本家: it renders 5/6/5/5/6/5 for Jul–Dec 2026, and
+    // this formula agrees on all six). That row isn't just waste: the grid
+    // splits the same height, so every cell loses ~17% and events that would
+    // have fit get silently rolled into 「+N件」 — the exact failure this
+    // project already has a bug-table entry for.
+    const weeks = Math.ceil((TTX.tz.daysBetween(gridFrom, to).length) / 7);
+    const gridTo = addDays(gridFrom, weeks * 7 - 1);
 
     const all = TTX.store.occurrences(gridFrom, gridTo, {
       mutedLabels: ui.mutedLabels,
@@ -755,11 +787,16 @@
     const wrap = el('div', 'month');
     const head = el('div', 'm-head');
     for (let i = 0; i < 7; i++) {
-      head.appendChild(el('div', i === 0 ? 'sun' : i === 6 ? 'sat' : '', WEEKDAY_JA[i]));
+      // The column index is not the weekday any more. Colour by the DAY —
+      // `i === 0 ? 'sun'` would paint Monday red the moment the week starts on
+      // Monday, which is the whole point of the setting.
+      const dow = (weekStartDow() + i) % 7;
+      head.appendChild(el('div', dow === 0 ? 'sun' : dow === 6 ? 'sat' : '', WEEKDAY_JA[dow]));
     }
     wrap.appendChild(head);
 
     const grid = el('div', 'm-grid');
+    grid.style.setProperty('--weeks', String(weeks));
     const today = todayKey();
     // Count events, not day-slots. groupByDay repeats a span into every day it
     // covers, so summing the cells called a 12-day holiday twelve events — the
@@ -2986,6 +3023,26 @@
     }
     themeSel.onchange = () => applyTheme(themeSel.value);
     body.appendChild(setRow('テーマ', null, themeSel));
+
+    // TimeTree Web hardcodes Monday and gives you no say — this row is the part
+    // it doesn't have. Japanese paper calendars start on Sunday, so both are
+    // right for somebody.
+    const wsSel = el('select', 'f-sel');
+    for (const [v, label] of [[1, '月曜'], [0, '日曜']]) {
+      const o = el('option', null, label);
+      o.value = String(v);
+      if (v === ui.weekStart) o.selected = true;
+      wsSel.appendChild(o);
+    }
+    wsSel.onchange = () => {
+      // select.value is a STRING and ui.weekStart is compared numerically all
+      // over the grid — this project has already lost an afternoon to exactly
+      // that mismatch (see HANDOFF: select.value / Map のキー).
+      ui.weekStart = Number(wsSel.value) === 0 ? 0 : 1;
+      savePrefs();
+      refresh('fade');
+    };
+    body.appendChild(setRow('週の始まり', '月表示と週表示の並び', wsSel));
 
     body.appendChild(setRow('空いている日を隠す', '予定のない日を詰めて表示します',
       toggleBtn(ui.hideEmpty, (v) => {

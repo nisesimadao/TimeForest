@@ -216,6 +216,50 @@ for (const [name, got, want] of timing) {
   else bad(`${name}: expected ${want}, got ${got}`);
 }
 
+// --- 5b1. the month grid is as tall as the month needs -----------------------
+//
+// A fixed 6 rows draws a spare week of next month in most months, and worse,
+// the grid divides one height between them: every cell loses ~17% and events
+// that would have fit get rolled into 「+N件」. The counts on the right are what
+// TimeTree Web actually rendered for the throwaway calendar, read off the screen
+// one month at a time — not a formula checked against itself.
+
+section('month grid height (behavioural)');
+const { tz } = globalThis.TTX;
+
+/* Same arithmetic renderMonth() uses. Kept here rather than imported because
+ * app.js is a renderer file with no module boundary — so this asserts the RULE,
+ * and scripts/verify-month.js asserts the app obeys it. */
+const weeksIn = (y, m, weekStartDow) => {
+  const first = `${y}-${String(m).padStart(2, '0')}-01`;
+  const last = tz.ymd(Date.UTC(y, m, 0), 'UTC');
+  const gridFrom = tz.addDays(first, -((tz.weekdayOf(first) - weekStartDow + 7) % 7));
+  return Math.ceil(tz.daysBetween(gridFrom, last).length / 7);
+};
+
+/* Measured off TimeTree Web (月曜始まり), 2026, one month at a time. */
+const HONKE_2026 = [[7, 5], [8, 6], [9, 5], [10, 5], [11, 6], [12, 5]];
+for (const [m, want] of HONKE_2026) {
+  const got = weeksIn(2026, m, 1);
+  if (got === want) ok(`2026年${m}月 needs ${got} weeks — matches 本家`);
+  else bad(`2026年${m}月: 本家 renders ${want} weeks, we compute ${got}`);
+}
+
+/* Sunday-start is our other option, so it has to be right too. 2026-03-01 is a
+ * Sunday: starting the week on Sunday puts the 1st alone at the top of row 1 and
+ * 31 days then need 5 rows; starting on Monday pulls it into the row above and
+ * needs 6. Same month, different answer — which is the whole reason this is
+ * computed and not a constant. */
+if (weeksIn(2026, 3, 0) === 5) ok('2026年3月 日曜始まり → 5 weeks');
+else bad(`2026年3月 日曜始まり should be 5, got ${weeksIn(2026, 3, 0)}`);
+if (weeksIn(2026, 3, 1) === 6) ok('2026年3月 月曜始まり → 6 weeks (same month, different answer)');
+else bad(`2026年3月 月曜始まり should be 6, got ${weeksIn(2026, 3, 1)}`);
+
+/* February 2027 starts on a Monday and has 28 days: exactly 4 rows. If anything
+ * ever clamps this to a minimum of 5 or 6, this is the case that catches it. */
+if (weeksIn(2027, 2, 1) === 4) ok('2027年2月 月曜始まり → 4 weeks, and nothing pads it');
+else bad(`2027年2月 月曜始まり should be 4, got ${weeksIn(2027, 2, 1)}`);
+
 // --- 5b2. the comment feed says what actually happened -----------------------
 //
 // The item codes were measured one field at a time against the real server, so

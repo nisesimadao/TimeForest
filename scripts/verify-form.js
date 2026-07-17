@@ -738,21 +738,32 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     };
   }, [M1, M2, M3]);
 
-  // 7/25 is a Saturday, so the trip is drawn twice — once per week row — not
-  // three times, and not once with a title you can't see on the second row.
+  // Columns below are for 月曜始まり — the default, and what TimeTree Web
+  // renders. July 2026's grid starts Mon 6/29, so within a week row
+  // 月=1 火=2 水=3 木=4 金=5 土=6 日=7.
+  //
+  // 7/25 is a Saturday and 7/26 a Sunday, so they land in the SAME row (cols
+  // 6-7) and only 7/27 spills to the next — the span still draws twice, but at
+  // different columns than it did when weeks began on Sunday. These numbers
+  // moved when 週の始まり became a setting; they are re-derived by hand, not
+  // relaxed until green.
   check(grid.trip.length === 2,
     `a 3-day span crossing a week edge draws 2 bars, one per week (got ${grid.trip.length})`);
-  check(grid.trip.some((b) => b.col === '7 / span 1') && grid.trip.some((b) => b.col === '1 / span 2'),
+  check(grid.trip.some((b) => b.col === '6 / span 2') && grid.trip.some((b) => b.col === '1 / span 1'),
     `and they cover the right days (${grid.trip.map((b) => b.col).join(' | ')})`);
   check(grid.chips.length === 0,
     `the span does not also appear as per-day chips (${JSON.stringify(grid.chips)})`);
-  check(grid.holiday.length === 3,
-    `a 12-day span spills across 3 week rows (got ${grid.holiday.length})`);
+  // 7/22–8/2 covers 水…日 of [7/20-26] and the whole of [7/27-8/2]: two rows.
+  // (Sunday-start split the same span across three.)
+  check(grid.holiday.length === 2,
+    `a 12-day span spills across 2 week rows (got ${grid.holiday.length})`);
   check(grid.holiday.some((b) => b.col === '1 / span 7'),
     'and fills a whole week row where it covers one');
-  // 出張 (23-24) and 帰省 (25) don't overlap, so they belong on the same lane.
-  check(grid.trip2[0]?.lane === grid.trip.find((b) => b.col === '7 / span 1')?.lane,
-    `non-overlapping spans share a lane (出張 lane ${grid.trip2[0]?.lane})`);
+  // 出張 (23-24, cols 4-5) and 帰省 (25-26, cols 6-7) don't overlap, so they
+  // belong on the same lane.
+  check(grid.trip2[0]?.lane === grid.trip.find((b) => b.col === '6 / span 2')?.lane,
+    `non-overlapping spans share a lane (出張 lane ${grid.trip2[0]?.lane}, `
+    + `帰省 lane ${grid.trip.find((b) => b.col === '6 / span 2')?.lane})`);
   check(grid.holiday[0]?.lane !== grid.trip2[0]?.lane,
     'overlapping spans get their own lanes');
   // The footer used to sum the cells, so a 12-day span counted as 12 events.
