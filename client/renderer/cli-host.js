@@ -105,6 +105,39 @@
     lat: o.lat ?? null, lon: o.lon ?? null,
   });
 
+  /**
+   * Reminders, in the minutes TimeTree stores — which depend on the event.
+   *
+   * 「1日前」 is 1440 for a timed event and **900** for an all-day one: an
+   * all-day starts at local midnight but is stored at UTC midnight, so its
+   * ladder is offset nine hours (HANDOFF §3, measured both ways against
+   * TimeTree itself). Send 1440 for an all-day event and the reminder lands at
+   * the wrong hour, silently.
+   *
+   * And there is no rung for 「30分前」 on the all-day ladder at all — the
+   * form's own picker offers days only. Refuse rather than round to something.
+   */
+  function alertsFor(list, allDay) {
+    return list.map((a) => {
+      if (a.days !== undefined) return allDay ? TTX.api.alldayAlert(a.days) : a.days * 1440;
+      if (allDay && a.mins > 0) {
+        throw new Error('終日の予定の通知は「当日」か「N日前」だけです（分・時間は指定できません）');
+      }
+      return a.mins;
+    }).sort((x, y) => x - y);
+  }
+
+  /**
+   * The reminders on an event, in TimeTree's own words.
+   *
+   * Words, not the stored minutes, because reading `900` needs the all-day
+   * ladder to make sense of and that ladder lives here. A copy of it in cli.js
+   * would be the same drift this file has already been burned by — and for a
+   * model, 「1日前」 is an answer where `900` is a puzzle.
+   */
+  const words = (raw) => (raw.alerts || []).slice().sort((a, b) => a - b)
+    .map((m) => TTX.api.alertLabel(m, !!raw.all_day));
+
   /** Put the end `ms` after the start, back in wall-clock fields. */
   function endAfter(f, ms) {
     const t = TTX.tz.toEpoch(f.startKey, f.startTime, f.allDay, TZ) + ms;
@@ -196,7 +229,7 @@
 
     show({ uuid } = {}) {
       const { cal, raw } = locate(ready(), uuid);
-      return { calendar: cal.name, event: raw };
+      return { calendar: cal.name, event: raw, reminders: words(raw) };
     },
 
     async comments({ uuid } = {}) {
@@ -231,13 +264,14 @@
      * and wrong here: a shared calendar notifies its members, so guessing tells
      * the wrong family about your dentist.
      */
-    async add({ title, startKey, startTime, endKey, endTime, mins, cal, location, note } = {}) {
+    async add({ title, startKey, startTime, endKey, endTime, mins, cal, location, note, alerts } = {}) {
       const state = ready();
       const name = String(title || '').trim();
       if (!name) throw new Error('タイトルを指定してください');
       if (!startKey) throw new Error('いつの予定か指定してください');
 
       const cals = pick(state, cal);
+      if (!cals.length) throw new Error('書き込めるカレンダーがありません');
       if (cals.length > 1) {
         throw new Error(`どのカレンダーに作るか指定してください（--cal）: ${cals.map((c) => c.name).join('、')}`);
       }
@@ -266,11 +300,12 @@
       const saved = await TTX.api.createEvent(target.id, {
         title: name, allDay, startAt, endAt, tz: TZ, labelId: 1,
         location: text(location), note: text(note),
+        alerts: alertsFor(alerts || [], allDay),
       });
       if (!saved?.uuid) throw new Error('サーバーが予定を返しませんでした');
       TTX.store.applyEvent(target.id, saved);
       TTX.cli._render?.();
-      return { calendar: target.name, event: saved };
+      return { calendar: target.name, event: saved, reminders: words(saved) };
     },
 
     /**
@@ -281,7 +316,7 @@
      * Moving the start keeps the length, which is what 「ずらして」 means and
      * what dragging does everywhere else.
      */
-    async edit({ uuid, title, at, to, mins, location, note } = {}) {
+    async edit({ uuid, title, at, to, mins, location, note, alerts } = {}) {
       const state = ready();
       const { cal, raw } = locate(state, uuid);
       if (series(raw)) {
@@ -320,12 +355,25 @@
         throw new Error('終わりが始まりより前です');
       }
 
+      // Reminders last, because which ladder they ride is decided by everything
+      // above: `--at "7/21 10:00"` on an all-day event has just made it timed.
+      if (alerts !== undefined) {
+        f.alerts = alertsFor(alerts, f.allDay);
+      } else if (f.allDay !== !!raw.all_day) {
+        // The person didn't mention reminders, but we just moved the goalposts
+        // out from under the ones they had. The exact minute is unrecoverable
+        // either way; 「だいたい1日前」 survives, and dropping them silently
+        // does not. Same call the form's all-day toggle makes.
+        f.alerts = TTX.cli._remapAlerts ? TTX.cli._remapAlerts(f.alerts, f.allDay) : f.alerts;
+      }
+
       const patch = TTX.cli._patch(raw, f);     // the form's own diff — PUT is a merge
       if (!Object.keys(patch).length) throw new Error('変更はありません');
       const saved = await TTX.api.updateEvent(cal.id, raw.uuid, patch);
-      TTX.store.applyEvent(cal.id, saved?.uuid ? saved : { ...raw, ...patch });
+      const now = saved?.uuid ? saved : { ...raw, ...patch };
+      TTX.store.applyEvent(cal.id, now);
       TTX.cli._render?.();
-      return { calendar: cal.name, changed: Object.keys(patch), event: saved?.uuid ? saved : { ...raw, ...patch } };
+      return { calendar: cal.name, changed: Object.keys(patch), event: now, reminders: words(now) };
     },
 
     async rm({ uuid, all } = {}) {

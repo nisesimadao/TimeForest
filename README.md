@@ -91,7 +91,7 @@ tf ls 7/21 --json
 tf find 歯医者               # 日付を知らないとき
 tf show 7110a578            # ls が出す先頭8文字でいい
 tf say 7110a578 "14時でいい？"
-tf add 歯医者 --at "7/21 10:00" --for 1h --where 駅前歯科
+tf add 歯医者 --at "7/21 10:00" --for 1h --where 駅前歯科 --alert 30m
 tf add 旅行 --at 8/1 --to 8/3   # 時刻を書かなければ終日
 tf edit 7110a578 --at "7/21 10:30"   # ずらす。長さはそのまま
 tf rm 7110a578
@@ -134,7 +134,7 @@ claude mcp add timeforest -- node E:/coding/TimeTree/client/mcp.js
 | `get_event` | 1件の中身（時刻・場所・メモ・繰り返し・通知・参加者） |
 | `get_comments` | やり取りと「誰が何を変えたか」 |
 | `add_comment` | コメントする |
-| `create_event` | 予定を作る。`start` は `"来週火曜 15:00"` のような書き方が通る。**時刻を書かなければ終日** |
+| `create_event` | 予定を作る。`start` は `"来週火曜 15:00"` のような書き方が通る。**時刻を書かなければ終日**。`reminders: ["30m","1d"]` |
 | `update_event` | 直す。書かなかったものは変わらない。ずらすと長さは付いてくる |
 | `delete_event` | 消す。繰り返しは `all` を明示しない限り断る |
 | `list_calendars` / `list_accounts` / `switch_account` | |

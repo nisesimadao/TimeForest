@@ -324,6 +324,56 @@ const killApp = () => {
       'and the sidebar is back the way we found it');
   }
 
+  // --- 6c-0. reminders, and the ladder nobody complains about ---------------
+  //
+  // 「歯医者入れといて、30分前に通知して」. The numbers matter more than they
+  // look: an all-day event starts at local midnight but is STORED at UTC
+  // midnight, so 1日前 is 900, not 1440 (HANDOFF §3, measured against TimeTree
+  // both ways). Send 1440 for an all-day event and the reminder lands nine
+  // hours out — the API takes it, the app shows it, and nothing says a word.
+  sec('通知 — and the all-day ladder');
+  {
+    const timed = JSON.parse(tf('add', 'CLI検証-通知', '--at', '7/28 10:00', '--alert', '30m,1d', '--json').out);
+    check(JSON.stringify(timed.event.alerts) === '[30,1440]',
+      `a timed event takes plain minutes (${JSON.stringify(timed.event.alerts)})`);
+    check(timed.reminders?.join('、') === '30分前、1日前',
+      `and it says them back in TimeTree's own words (${timed.reminders?.join('、')})`);
+
+    // The whole point of this section.
+    const allDay = JSON.parse(tf('add', 'CLI検証-終日通知', '--at', '7/29', '--alert', '1d', '--json').out);
+    check(JSON.stringify(allDay.event.alerts) === '[900]',
+      `1日前 on an ALL-DAY event is 900, not 1440 (${JSON.stringify(allDay.event.alerts)})`);
+    check(allDay.reminders?.join('') === '1日前',
+      `and it still reads as 1日前 (${allDay.reminders?.join('')})`);
+
+    // There is no 30-minute rung on that ladder — the form's own picker offers
+    // days only. Rounding to the nearest one would be inventing a setting.
+    const nope = tf('add', 'CLI検証-だめ', '--at', '7/30', '--alert', '30m');
+    check(nope.code === 1 && /終日/.test(nope.err),
+      `an all-day event refuses 30分前 rather than rounding (${(nope.err || '').trim()})`);
+    check(!JSON.parse(tf('ls', '7/30', '--json').out).events.some((e) => e.title === 'CLI検証-だめ'),
+      'and nothing was written');
+
+    // Change the kind of event and the reminder's stored number stops meaning
+    // what was asked for. Carry the intent, don't strand it on the old ladder.
+    const id = allDay.event.uuid.slice(0, 8);
+    const moved = JSON.parse(tf('edit', id, '--at', '7/29 14:00', '--json').out);
+    check(JSON.stringify(moved.event.alerts) === '[1440]',
+      `making an all-day event timed re-rungs its reminder, 900 → 1440 (${JSON.stringify(moved.event.alerts)})`);
+    check(moved.reminders?.join('') === '1日前',
+      'so 「1日前」 still means 1日前, without anyone mentioning reminders');
+
+    const cleared = JSON.parse(tf('edit', id, '--alert', 'none', '--json').out);
+    check(JSON.stringify(cleared.event.alerts) === '[]',
+      `--alert none removes them (${JSON.stringify(cleared.event.alerts)})`);
+
+    check(/通知/.test(tf('show', timed.event.uuid.slice(0, 8)).out),
+      'show prints the reminders — one you cannot see is one you have to open the window to trust');
+
+    tf('rm', id);
+    tf('rm', timed.event.uuid.slice(0, 8));
+  }
+
   // --- 6c-i. the ways a shell hands you something you didn't mean -----------
   //
   // Both of these got past the section above, and both write silently.

@@ -125,6 +125,9 @@ const DATE_WORDS = 'today, tomorrow, yesterday, week, nextweek, lastweek, month,
 const WHEN_WORDS = '"2026-07-21 10:00", "7/21 10:00", "明日 9時", "today 8:05", "+7d 14:00" — '
   + 'or a bare day ("7/21", "tomorrow") for an all-day event. A time with no day is '
   + 'refused rather than guessed at.';
+const ALERT_WORDS = 'Each is "30m", "1h", "1d", "2d" or "0" (at the start). An ALL-DAY event '
+  + 'only takes whole days ("0" = on the day, "1d" = the day before at 09:00); minutes and '
+  + 'hours are refused there rather than rounded, because TimeTree has no such setting for one.';
 
 const TOOLS = [
   {
@@ -234,6 +237,11 @@ const TOOLS = [
         calendar: { type: 'string', description: 'Which calendar, by name. Required when the account has more than one — it will not guess.' },
         location: { type: 'string', description: 'Where' },
         note: { type: 'string', description: 'Free text on the event' },
+        reminders: {
+          type: 'array', items: { type: 'string' },
+          description: `When to be reminded, e.g. ["30m","1d"]. ${ALERT_WORDS} `
+            + 'Omit for none — TimeTree does not add one for you.',
+        },
       },
       required: ['title', 'start'],
     },
@@ -244,7 +252,7 @@ const TOOLS = [
       return talk('add', {
         title: a.title, cal: a.calendar, mins: minsOf(a.duration),
         startKey: at.key, startTime: at.time, endKey: to?.key, endTime: to?.time,
-        location: a.location, note: a.note,
+        location: a.location, note: a.note, alerts: alertsOf(a.reminders),
       });
     },
   },
@@ -266,6 +274,11 @@ const TOOLS = [
         duration: { type: 'string', description: 'New length: 1h, 90m, 1:30' },
         location: { type: 'string' },
         note: { type: 'string' },
+        reminders: {
+          type: 'array', items: { type: 'string' },
+          description: `Replaces the reminders. ${ALERT_WORDS} Empty array removes them all. `
+            + 'Omit to leave them alone.',
+        },
       },
       required: ['uuid'],
     },
@@ -274,7 +287,7 @@ const TOOLS = [
       uuid: a.uuid, title: a.title, location: a.location, note: a.note,
       at: a.start ? whenOf(a.start, 'start') : null,
       to: a.end ? whenOf(a.end, 'end') : null,
-      mins: minsOf(a.duration),
+      mins: minsOf(a.duration), alerts: alertsOf(a.reminders),
     }),
   },
   {
@@ -349,6 +362,19 @@ const minsOf = (raw) => {
   const m = dates.mins(raw);
   if (m == null) throw new Error(`duration を長さとして読めません: ${raw}\n使えるのは: 1h, 90m, 1:30, 1.5h`);
   return m;
+};
+
+/** undefined leaves reminders alone; `[]` clears them. Whole days stay days —
+ *  the renderer decides whether 1日前 is 1440 or 900, because only it knows
+ *  whether the event is all-day. */
+const alertsOf = (list) => {
+  if (list === undefined || list === null) return undefined;
+  if (!Array.isArray(list)) throw new Error(`reminders は配列で指定してください: ${JSON.stringify(list)}`);
+  return list.map((w) => {
+    const a = dates.alert(w);
+    if (!a) throw new Error(`reminders を読めません: ${w}\n使えるのは: ${ALERT_WORDS}`);
+    return a;
+  });
 };
 
 // --- json-rpc over stdio ----------------------------------------------------

@@ -220,17 +220,41 @@ const DATE_HELP = `  日付: today 明日 yesterday week nextweek month nextmont
         7/21  2026-07-21  +7d  -3d`;
 const WHEN_HELP = `  いつ: "7/21 10:00"  "明日 9時"  +7d  ← 時刻を書かなければ終日`;
 const LONG_HELP = '  長さ: 1h  90m  1:30  1.5h  2時間  45';
+const ALERT_HELP = '  通知: 30m  1h  1d  開始時  none  （複数なら 30m,1d）\n'
+  + '        終日の予定は 当日 / N日前 だけ（分・時間の段が無い）';
+
+/**
+ * `--alert 30m,1d` → the neutral form dates.alert() produces. `none` is how you
+ * say "no reminders" — an empty string would be indistinguishable from the flag
+ * being absent, and absent has to mean "leave them alone".
+ */
+function alertList(raw) {
+  const w = String(raw).trim();
+  if (!w || w === 'none' || w === 'なし') return [];
+  return w.split(',').map((s) => {
+    const a = dates.alert(s);
+    if (!a) die(`--alert が読めません: ${s}\n${ALERT_HELP}`);
+    return a;
+  });
+}
 
 /** What we just wrote, read back from what the server returned — not from what
  *  we sent. The server decides; if it moved something, that is what you need to
  *  see, and a terminal gives you no other clue. */
-function printSaved(calendar, e, what) {
+function printSaved(calendar, e, what, reminders) {
   console.log(`${bold(e.title || '(無題)')} を${what}`);
   console.log(`  カレンダー  ${calendar}`);
   console.log(`  日時        ${e.all_day
     ? `${jp(new Date(e.start_at).toISOString().slice(0, 10))} 〜 ${jp(new Date(e.end_at).toISOString().slice(0, 10))} (終日)`
     : `${stamp(e.start_at)} 〜 ${stamp(e.end_at)}`}`);
   if (e.location) console.log(`  場所        ${e.location}`);
+  // Say the reminders back. One you set and cannot see is one you have to open
+  // the window to trust, which is the thing you came here to avoid.
+  //
+  // `reminders` are words, not minutes: the all-day ladder (900 = 1日前) is the
+  // renderer's knowledge, and a second copy of it here is exactly the drift
+  // this file has been burned by twice already.
+  if (reminders?.length) console.log(`  通知        ${reminders.join('、')}`);
   console.log(`  ${dim(e.uuid)}`);
 }
 
@@ -242,8 +266,8 @@ const HELP = `TimeForest — TimeTree を端末から
   tf comments <uuid> [--json]
   tf say <uuid> "コメント"
 
-  tf add <タイトル> --at <いつ> [--to …|--for 1h] [--where …] [--note …] [--cal 名前]
-  tf edit <uuid> [--at …] [--to …|--for …] [--title …] [--where …] [--note …]
+  tf add <タイトル> --at <いつ> [--to …|--for 1h] [--where …] [--note …] [--alert 30m] [--cal 名前]
+  tf edit <uuid> [--at …] [--to …|--for …] [--title …] [--where …] [--note …] [--alert …]
   tf rm <uuid> [--all]
 
   tf calendars
@@ -253,8 +277,9 @@ const HELP = `TimeForest — TimeTree を端末から
 ${DATE_HELP}
 ${WHEN_HELP}
 ${LONG_HELP}
+${ALERT_HELP}
 
-  tf add 歯医者 --at "7/21 10:00" --for 1h --where 駅前歯科
+  tf add 歯医者 --at "7/21 10:00" --for 1h --where 駅前歯科 --alert 30m
   tf add 旅行 --at 8/1 --to 8/3
   tf edit 7110a578 --at "7/21 10:30"     ずらす。長さはそのまま
 
@@ -367,6 +392,7 @@ ${DATE_HELP}`);
         if (e.location) console.log(`  場所        ${e.location}`);
         if (e.note) console.log(`  メモ        ${e.note.replace(/\n/g, '\n              ')}`);
         if (e.recurrences?.length) console.log(`  繰り返し    ${e.recurrences.join(' / ')}`);
+        if (r.reminders?.length) console.log(`  通知        ${r.reminders.join('、')}`);
         break;
       }
 
@@ -420,9 +446,10 @@ ${WHEN_HELP}`);
           startKey: at.key, startTime: at.time,
           endKey: to?.key, endTime: to?.time,
           location: val(f, 'where'), note: val(f, 'note'),
+          alerts: f.alert === undefined ? undefined : alertList(val(f, 'alert')),
         });
         if (f.json) return json(r);
-        printSaved(r.calendar, r.event, '作成しました');
+        printSaved(r.calendar, r.event, '作成しました', r.reminders);
         break;
       }
 
@@ -430,12 +457,14 @@ ${WHEN_HELP}`);
         const uuid = args._[1];
         const f = args.flags;
         noStrayTime(args._.slice(2));
-        if (!uuid || !['title', 'at', 'to', 'for', 'where', 'note'].some((k) => f[k] !== undefined)) {
-          return die(`使い方: tf edit <uuid> [--at …] [--for …] [--title …] [--where …] [--note …]
+        if (!uuid || !['title', 'at', 'to', 'for', 'where', 'note', 'alert'].some((k) => f[k] !== undefined)) {
+          return die(`使い方: tf edit <uuid> [--at …] [--for …] [--title …] [--where …] [--note …] [--alert …]
 
   tf edit 7110a578 --at "7/21 10:30"     # ずらす。長さはそのまま
   tf edit 7110a578 --for 90m
-${WHEN_HELP}`);
+  tf edit 7110a578 --alert 30m,1d        # 付け替える（消すなら --alert none）
+${WHEN_HELP}
+${ALERT_HELP}`);
         }
         const at = f.at ? dates.when(val(f, 'at')) : null;
         if (f.at && !at) return die(`--at が読めません: ${f.at}\n${WHEN_HELP}`);
@@ -452,9 +481,10 @@ ${WHEN_HELP}`);
           title: f.title === undefined ? undefined : val(f, 'title'),
           location: f.where === undefined ? undefined : val(f, 'where'),
           note: f.note === undefined ? undefined : val(f, 'note'),
+          alerts: f.alert === undefined ? undefined : alertList(val(f, 'alert')),
         });
         if (f.json) return json(r);
-        printSaved(r.calendar, r.event, `直しました  ${dim(r.changed.join(', '))}`);
+        printSaved(r.calendar, r.event, `直しました  ${dim(r.changed.join(", "))}`, r.reminders);
         break;
       }
 

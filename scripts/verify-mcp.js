@@ -240,6 +240,33 @@ const callTool = async (c, name, args) => {
         .data?.events?.some((e) => e.uuid === row.uuid), 'and it is really gone when you look again');
     }
     if (adRow) await callTool(c, 'delete_event', { uuid: adRow.uuid.slice(0, 8) });
+
+    // 「30分前に通知して」. The all-day ladder is the part a model cannot be
+    // expected to know and cannot check: 1日前 is 900 there, not 1440, and
+    // sending the wrong one puts the reminder nine hours out in silence.
+    const rem = await callTool(c, 'create_event', {
+      title: 'MCP検証-通知', start: '7/26 9:00', reminders: ['30m', '1d'],
+    });
+    check(!rem.isError && rem.data?.reminders?.join('、') === '30分前、1日前',
+      `reminders come back in words, not minutes (${rem.data?.reminders?.join('、')})`);
+
+    const allDayRem = await callTool(c, 'create_event', {
+      title: 'MCP検証-終日通知', start: '7/27', reminders: ['1d'],
+    });
+    check(!allDayRem.isError && allDayRem.data?.event?.alerts?.[0] === 900,
+      `and an all-day 1d rides its own ladder — 900, not 1440 (${JSON.stringify(allDayRem.data?.event?.alerts)})`);
+
+    const badRem = await callTool(c, 'create_event', {
+      title: 'MCP検証-だめ通知', start: '7/27', reminders: ['30m'],
+    });
+    check(badRem.isError && /終日/.test(badRem.text || ''),
+      'an all-day event refuses 30分前 as isError, so the model can pick a real one');
+
+    for (const t of ['MCP検証-通知', 'MCP検証-終日通知']) {
+      const e = (await callTool(c, 'list_events', { from: '7/26', to: '7/27' }))
+        .data?.events?.find((x) => x.title === t);
+      if (e) await callTool(c, 'delete_event', { uuid: e.uuid.slice(0, 8) });
+    }
   }
 
   // --- 5c. one id, five rows ------------------------------------------------

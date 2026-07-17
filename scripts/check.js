@@ -296,6 +296,29 @@ for (const [input, want] of minsCases) {
   else bad(`mins(${JSON.stringify(input)}): expected ${want}, got ${got}`);
 }
 
+/* Reminders. Whole days stay days: 「1日前」 is 1440 minutes for a timed event
+ * and 900 for an all-day one, and this function has no way to know which. */
+const alertCases = [
+  ['30m', { mins: 30 }],
+  ['30分前', { mins: 30 }],
+  ['1h', { mins: 60 }],
+  ['1時間前', { mins: 60 }],
+  ['15', { mins: 15 }],
+  ['0', { mins: 0 }],
+  ['開始時', { mins: 0 }],
+  ['当日', { mins: 0 }],
+  ['1d', { days: 1 }],
+  ['2日前', { days: 2 }],
+  ['7日', { days: 7 }],
+  ['あとで', null],
+  ['', null],
+];
+for (const [input, want] of alertCases) {
+  const got = dates.alert(input);
+  if (JSON.stringify(got) === JSON.stringify(want)) ok(`alert(${JSON.stringify(input)}) = ${JSON.stringify(got)}`);
+  else bad(`alert(${JSON.stringify(input)}): expected ${JSON.stringify(want)}, got ${JSON.stringify(got)}`);
+}
+
 /* The JST rule, which is the whole reason this doesn't just use `new Date()`.
  * 2026-07-17 15:30Z is already the 18th in Tokyo. A machine in UTC would say
  * the 17th, and `tf ls today` would quietly list the wrong day. */

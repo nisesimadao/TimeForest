@@ -2009,6 +2009,10 @@
   // without telling anybody.
   TTX.cli._fields = fieldsFromRaw;
   TTX.cli._patch = diffPatch;
+  // `tf edit --at "7/21 10:00"` on an all-day event makes it timed, and its
+  // reminders were sitting on the all-day ladder. Same problem the form's
+  // all-day toggle has, so: same answer.
+  TTX.cli._remapAlerts = remapAlerts;
 
   /**
    * PUT is a merge, not a replace — send only what changed. A full-object PUT

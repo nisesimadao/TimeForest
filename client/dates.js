@@ -122,4 +122,25 @@ function mins(word) {
   return null;
 }
 
-module.exports = { today, addDays, weekStart, monthEnd, day, range, when, mins };
+/**
+ * A reminder, the way a person says one: `30m` `1h` `1d` `2日前` `0` `開始時`.
+ *
+ * Whole days come back as `{days}`, not minutes, because how long 「1日前」 is
+ * depends on the event. A timed one counts 1440 minutes back; an all-day one
+ * rides a different ladder entirely — it starts at local midnight but is stored
+ * at UTC midnight, so 1日前 is 900, not 1440 (HANDOFF §3, measured against
+ * TimeTree itself). The caller knows which kind of event it has. This doesn't,
+ * and guessing would put the reminder nine hours out with nothing to show for it.
+ * @returns {{mins:number}|{days:number}|null}
+ */
+function alert(word) {
+  const w = String(word ?? '').trim().toLowerCase().replace(/前$/, '');
+  if (!w) return null;
+  if (w === '0' || w === 'start' || w === '開始時' || w === '当日') return { mins: 0 };
+  const d = w.match(/^(\d+)\s*(?:d|日)$/);
+  if (d) return { days: Number(d[1]) };
+  const m = mins(w);
+  return m == null ? null : { mins: m };
+}
+
+module.exports = { today, addDays, weekStart, monthEnd, day, range, when, mins, alert };
