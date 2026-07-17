@@ -79,8 +79,31 @@
    */
   const series = (raw) => (raw.recurrences || []).length > 0;
 
-  /** Whatever came over the wire, as the string the API expects. */
-  const text = (v) => (v === undefined || v === null || typeof v === 'boolean' ? '' : String(v));
+  /**
+   * A text field off the wire.
+   *
+   * Absent means empty. Anything that isn't a string is a caller's bug — the
+   * CLI's parser turns a value-less `--where` into `true` — and there is no
+   * safe guess: String(true) put the location `t` on a real event, and
+   * coercing to '' would delete the location instead. Say no.
+   */
+  const text = (v) => {
+    if (v === undefined || v === null) return '';
+    if (typeof v !== 'string') throw new Error(`文字列で指定してください: ${JSON.stringify(v)}`);
+    return v;
+  };
+
+  /** One occurrence, the way every listing here hands it back. */
+  const shape = (o) => ({
+    uuid: o.uuid, title: o.title,
+    startKey: o.startKey, endKey: o.endKey,
+    startTime: o.startTime, endTime: o.endTime,
+    allDay: o.allDay, multiDay: o.multiDay, holiday: !!o.holiday,
+    start: o.start, end: o.end,
+    location: o.location || '', note: o.note || '',
+    calendar: o.calendarName || '', author: o.authorName || '',
+    lat: o.lat ?? null, lon: o.lon ?? null,
+  });
 
   /** Put the end `ms` after the start, back in wall-clock fields. */
   function endAfter(f, ms) {
@@ -142,20 +165,28 @@
       const holidays = await TTX.store.holidaysFor(a, b).catch(() => []);
       const occs = TTX.store.occurrences(a, b, { holidays, only: ids });
 
-      return {
-        from: a,
-        to: b,
-        events: occs.map((o) => ({
-          uuid: o.uuid, title: o.title,
-          startKey: o.startKey, endKey: o.endKey,
-          startTime: o.startTime, endTime: o.endTime,
-          allDay: o.allDay, multiDay: o.multiDay, holiday: !!o.holiday,
-          start: o.start, end: o.end,
-          location: o.location || '', note: o.note || '',
-          calendar: o.calendarName || '', author: o.authorName || '',
-          lat: o.lat ?? null, lon: o.lon ?? null,
-        })),
-      };
+      return { from: a, to: b, events: occs.map(shape) };
+    },
+
+    /**
+     * Find an event when you don't know the date — 「先月の歯医者いつだっけ」.
+     * Without this the only way to answer that is to guess ranges and sweep,
+     * which an assistant will happily do and quietly get wrong at the edges.
+     *
+     * The answer carries the window it searched. A search that finds nothing is
+     * evidence of absence only if you know where it looked, and this one has a
+     * horizon (a year back, two forward — the recurrence expansion has to stop
+     * somewhere). Handing back "no results" alone invites 「そんな予定は無い」
+     * about an event that is simply outside it.
+     */
+    find({ query, limit } = {}) {
+      const state = ready();
+      const q = text(query).trim();
+      if (!q) throw new Error('探す語を指定してください');
+      const ids = new Set(state.calendars.map((c) => c.id));   // same rule as ls
+      const n = Math.min(Math.max(Number(limit) || 20, 1), 100);
+      const r = TTX.store.searchAll(q, n, { only: ids });
+      return { query: q, from: r.from, to: r.to, events: r.events.map(shape) };
     },
 
     show({ uuid } = {}) {

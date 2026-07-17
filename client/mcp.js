@@ -149,6 +149,25 @@ const TOOLS = [
     },
   },
   {
+    name: 'search_events',
+    title: '予定を探す',
+    description: 'Find events by words in the title, place, note or calendar name, when '
+      + 'you do NOT know the date — 「先月の歯医者いつだっけ」. Prefer this over sweeping '
+      + 'list_events across guessed ranges. Closest to today first. The reply says which '
+      + 'window it searched (a year back, two forward): outside that it finds nothing, so '
+      + 'do not report "no such event" without saying where you looked.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Words to look for. All of them must appear.' },
+        limit: { type: 'number', description: 'How many at most (default 20)' },
+      },
+      required: ['query'],
+    },
+    annotations: { readOnlyHint: true },
+    run: (a) => talk('find', { query: a.query, limit: a.limit }),
+  },
+  {
     name: 'get_event',
     title: '予定の詳細',
     description: 'Everything stored on one event: times, location, note, recurrence, '

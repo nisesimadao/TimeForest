@@ -84,6 +84,7 @@ OpenStreetMap のタイル利用ポリシーが要求する User-Agent を名乗
 npm run tf -- ls today
 npm run tf -- ls week --cal 家族
 npm run tf -- ls 7/21 --json
+npm run tf -- find 歯医者               # 日付を知らないとき
 npm run tf -- show 7110a578            # ls が出す先頭8文字でいい
 npm run tf -- say 7110a578 "14時でいい？"
 npm run tf -- add 歯医者 --at "7/21 10:00" --for 1h --where 駅前歯科
@@ -125,6 +126,7 @@ claude mcp add timeforest -- node E:/coding/TimeTree/client/mcp.js
 | tool | |
 | --- | --- |
 | `list_events` | 期間で予定を読む。日付は `today` `week` `7/21` |
+| `search_events` | 日付を知らずに探す（「先月の歯医者いつだっけ」）。**探した範囲も返す** |
 | `get_event` | 1件の中身（時刻・場所・メモ・繰り返し・通知・参加者） |
 | `get_comments` | やり取りと「誰が何を変えたか」 |
 | `add_comment` | コメントする |

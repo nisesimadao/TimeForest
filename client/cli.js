@@ -171,6 +171,9 @@ const jp = (key) => {
   const d = new Date(`${key}T00:00:00Z`);
   return `${+key.slice(5, 7)}/${+key.slice(8)}(${WEEK[d.getUTCDay()]})`;
 };
+/** With the year, for `find` — whose results span years, so 6/12 alone is a
+ *  date you have to go and look up. `ls` leaves it off: you named the range. */
+const jpY = (key) => `${key.slice(0, 4)}/${jp(key)}`;
 const stamp = (ms) => new Date(ms).toLocaleString('ja-JP', { timeZone: TZ });
 
 function printLs(data) {
@@ -233,6 +236,7 @@ function printSaved(calendar, e, what) {
 const HELP = `TimeForest — TimeTree を端末から
 
   tf ls [today|week|month|7/21] [--from …] [--to …] [--cal 名前] [--json]
+  tf find <語> [--limit 20] [--json]
   tf show <uuid> [--json]
   tf comments <uuid> [--json]
   tf say <uuid> "コメント"
@@ -327,6 +331,27 @@ ${DATE_HELP}`);
 ${DATE_HELP}`);
         const r = await talk(sock, 'ls', { from, to, cal: val(args.flags, 'cal') });
         if (args.flags.json) json(r); else printLs(r);
+        break;
+      }
+
+      case 'find': {
+        const q = args._.slice(1).join(' ').trim();
+        if (!q) return die('使い方: tf find <語>\n\n  tf find 歯医者\n  tf find 駅前 --limit 5');
+        const r = await talk(sock, 'find', { query: q, limit: val(args.flags, 'limit') });
+        if (args.flags.json) return json(r);
+        if (!r.events.length) {
+          // Say where we looked. "Not found" is only an answer if you know the
+          // question that was asked, and this one has a horizon.
+          return console.log(dim(`「${r.query}」は ${r.from} 〜 ${r.to} に見つかりません`));
+        }
+        for (const e of r.events) {
+          const when = e.allDay ? '終日   ' : `${e.startTime}–${e.endTime}`;
+          const bits = [e.title];
+          if (e.location) bits.push(dim(e.location));
+          bits.push(dim('[' + e.calendar + ']'), dim(e.uuid.slice(0, 8)));
+          console.log(`${bold(jpY(e.startKey))}  ${dim(when)}  ${bits.join('  ')}`);
+        }
+        console.log(dim(`\n${r.events.length}件  ${r.from} 〜 ${r.to} を探しました`));
         break;
       }
 

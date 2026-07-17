@@ -7,7 +7,8 @@
  */
 (() => {
   const TTX = (globalThis.TTX = globalThis.TTX || {});
-  const { DAY, parseYmd } = TTX.tz;
+  const { DAY, parseYmd, ymd } = TTX.tz;
+  const TZ = 'Asia/Tokyo';
 
   const store = {
     calendars: [],
@@ -184,23 +185,37 @@
     return all;
   }
 
-  /** Full-history search, unbounded by the current view. */
-  function searchAll(query, limit = 60) {
-    if (!query || !query.trim()) return [];
+  /**
+   * Search, unbounded by the current view but not by time: expanding every
+   * recurrence forever is not free, so it looks a year back and two forward.
+   *
+   * `opts.only` picks the calendars, the same as occurrences() — the window
+   * searches what it is showing, the CLI searches what you have.
+   *
+   * @returns {{events:Array, from:string, to:string}} — the window too, because
+   *   "nothing found" only means something if you know where it looked.
+   */
+  function searchAll(query, limit = 60, opts = {}) {
     const now = Date.now();
     const from = now - 365 * DAY;
     const to = now + 730 * DAY;
+    const span = { from: ymd(from, TZ), to: ymd(to, TZ) };
+    if (!query || !query.trim()) return { events: [], ...span };
+    const use = opts.only || store.enabled;
     let all = [];
     for (const cal of store.calendars) {
-      if (!store.enabled.has(cal.id)) continue;
+      if (!use.has(cal.id)) continue;
       const raw = store.events.get(cal.id);
       if (!raw) continue;
       all = all.concat(TTX.model.occurrences(raw, from, to, cal, { membersById: store.members.get(cal.id) }));
     }
-    return all
-      .filter((o) => TTX.model.matchesQuery(o, query))
-      .sort((a, b) => Math.abs(a.start - now) - Math.abs(b.start - now))
-      .slice(0, limit);
+    return {
+      events: all
+        .filter((o) => TTX.model.matchesQuery(o, query))
+        .sort((a, b) => Math.abs(a.start - now) - Math.abs(b.start - now))
+        .slice(0, limit),
+      ...span,
+    };
   }
 
   const totalEvents = () => store.calendars

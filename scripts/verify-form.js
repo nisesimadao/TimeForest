@@ -639,11 +639,17 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await page.fill('.mp-bar .f-text', '東京駅');
   await page.waitForSelector('.mp-r', { timeout: 10000 });
   await page.click('.mp-r');
-  await sleep(1500);
-  const drawn = await page.evaluate(() => {
+  // Wait for the tiles, don't guess how long the network takes. On a timeout,
+  // report what actually arrived — "0 of 12 loaded" is a bug report, "timed
+  // out" is a shrug.
+  const tiles = () => {
     const t = [...document.querySelectorAll('.mp-t')];
     return { total: t.length, loaded: t.filter((i) => i.src.startsWith('data:')).length };
-  });
+  };
+  const drawn = await page.waitForFunction(() => {
+    const t = [...document.querySelectorAll('.mp-t')];
+    return t.length > 0 && t.every((i) => i.src.startsWith('data:'));
+  }, { timeout: 15000 }).then(() => page.evaluate(tiles)).catch(() => page.evaluate(tiles));
   check(drawn.total > 0 && drawn.loaded === drawn.total,
     `the map actually drew (${drawn.loaded}/${drawn.total} tiles, all as data: URIs)`);
   check(await page.evaluate(() =>
@@ -990,8 +996,15 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   check(!!before && t0 > 300, `an anchor is on screen, with room to scroll up (scrollTop ${t0})`);
   if (before && t0 > 300) {
     const up = 300;
+    const rows0 = await page.evaluate(() => document.querySelectorAll('.agenda [data-key]').length);
     await page.evaluate((d) => { const w = document.querySelector('.agenda'); w.scrollTop -= d; }, up);
-    await sleep(900);
+    // Wait for the growth, don't guess at it. This is worse than a flake if you
+    // get it wrong: if nothing grew yet, nothing was inserted above the row, so
+    // the row CANNOT have moved and the check below passes for free. A fixed
+    // sleep never tells you which of the two you just proved.
+    const grew = await page.waitForFunction(
+      (n) => document.querySelectorAll('.agenda [data-key]').length !== n,
+      rows0, { timeout: 5000 }).then(() => true).catch(() => false);
     const after = await page.evaluate((key) => {
       const w = document.querySelector('.agenda');
       const hits = w.querySelectorAll(`[data-key="${key}"]`);
@@ -999,9 +1012,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
         first: w.querySelector('.ag-month')?.textContent };
     }, before.key);
     check(after.hits === 1, `the anchor is unambiguous (${after.hits} match for ${before.key})`);
-    // Whether or not this particular scroll triggered a growth, the row must
-    // have moved by exactly what we scrolled. That is the claim: the list does
-    // not move under you.
+    check(grew, `the scroll really grew the list — otherwise the next check is free (${rows0} rows → more)`);
+    // The row must have moved by exactly what we scrolled, no more: months were
+    // inserted above it and it still did not slide. That is the whole claim —
+    // the list does not move under you.
     check(after.y !== null && Math.abs(after.y - (before.y + up)) <= 4,
       `the row you were reading stays put (${before.y} → ${after.y}, expected ${before.y + up} `
       + `after scrolling ${up}px up; months ${before.first} → ${after.first})`);
@@ -1118,9 +1132,14 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     TTX.store.applyEvent(cal, e);
     return e.uuid;
   });
+  check(!!grabbed, 'the event was really created (not just assumed)');
   await page.click('.pill:text-is("今日")');
-  await sleep(900);
-  const hasEv = await page.evaluate(() => !!document.querySelector('.week .w-ev'));
+  // waitFor, not sleep. refresh() does `await ensureHolidays()` — a NETWORK
+  // call — before it paints, so a fixed wait is a race with the internet, and
+  // this one lost: 146/0 in the morning, 148/1 in the afternoon, same code.
+  // HANDOFF §7 says exactly this and I wrote the sleep anyway.
+  const hasEv = await page.waitForSelector('.week .w-ev', { timeout: 8000 })
+    .then(() => true).catch(() => false);
   check(hasEv, 'an event is on screen in the week grid to drag from');
   if (hasEv) {
     const d2 = await title();
@@ -1134,6 +1153,56 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     await TTX.api.deleteEvent(cal, u);
     TTX.store.markDeleted(cal, u);
   }, grabbed);
+
+  // Ctrl+K search had nothing guarding it at all, which is how a change to
+  // store.searchAll's shape could empty it without a single test going red:
+  // `for (const o of notAnArray)` throws, but `for (const o of {}.events)`
+  // would just... not loop.
+  sec('パレット — Ctrl+K で予定を探せる');
+  {
+    const title = 'FORM検証-パレット';
+    const found = await page.evaluate(async (t) => {
+      const cal = [...TTX.store.state.enabled][0];
+      const at = Date.UTC(2026, 6, 24, 1, 0);
+      const e = await TTX.api.createEvent(cal, {
+        title: t, allDay: false, startAt: at, endAt: at + 3600000,
+        tz: 'Asia/Tokyo', labelId: 1, location: 'パレット検証室',
+      });
+      TTX.store.applyEvent(cal, e);
+      return e.uuid;
+    }, title);
+
+    await page.keyboard.press('Control+KeyK');
+    await page.waitForSelector('.palette', { timeout: 5000 });
+    // Not check(true): an assertion that cannot fail is a green tick about
+    // nothing. Ask for the thing you actually need — a focused box to type in.
+    check(await page.evaluate(() => document.activeElement === document.querySelector('.palette input')),
+      'Ctrl+K opens it with the cursor already in the box');
+
+    await page.keyboard.type(title);
+    await page.waitForTimeout(400);
+    check(await page.evaluate((t) => document.querySelector('.p-list')?.textContent.includes(t), title),
+      'and typing a title finds the event');
+    // The place, not just the title — matchesQuery reads both, and a search that
+    // silently narrowed to titles would look like it worked.
+    await page.fill('.palette input', 'パレット検証室');
+    await page.waitForTimeout(400);
+    check(await page.evaluate((t) => document.querySelector('.p-list')?.textContent.includes(t), title),
+      'and so does typing the place');
+
+    await page.fill('.palette input', 'FORM検証-そんなものはない');
+    await page.waitForTimeout(400);
+    check(await page.evaluate(() => !!document.querySelector('.p-empty')),
+      'and a miss says 該当なし rather than showing everything');
+
+    await page.keyboard.press('Escape');
+    await page.waitForSelector('.palette', { state: 'detached', timeout: 5000 });
+    await page.evaluate(async (u) => {
+      const cal = [...TTX.store.state.enabled][0];
+      await TTX.api.deleteEvent(cal, u);
+      TTX.store.markDeleted(cal, u);
+    }, found);
+  }
 
   sec('settings');
   await page.keyboard.press(',');

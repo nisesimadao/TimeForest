@@ -252,6 +252,30 @@ const killApp = () => {
     if (spanBack) tf('rm', spanBack.uuid.slice(0, 8));
   }
 
+  // --- 6b-i. finding something when you don't know the date -----------------
+  //
+  // 「先月の歯医者いつだっけ」. Without this the only way to answer is to guess
+  // ranges and sweep, which an assistant will do and get quietly wrong at the
+  // edges.
+  sec('find');
+  {
+    tf('add', 'CLI検証-歯医者', '--at', '6/12 10:00', '--where', '駅前歯科');
+    const hit = JSON.parse(tf('find', '歯医者', '--json').out);
+    check(hit.events?.some((e) => e.title === 'CLI検証-歯医者'),
+      `find works without being told a date (${hit.events?.length} hits)`);
+    check(JSON.parse(tf('find', '駅前', '--json').out).events?.length > 0,
+      'and it looks at the place, not just the title');
+
+    // "Not found" is only an answer if you know where it looked, and this one
+    // has a horizon: a year back, two forward. Handing back an empty list alone
+    // invites 「そんな予定は無い」 about an event that is merely outside it.
+    const miss = JSON.parse(tf('find', 'CLI検証-そんなものはない', '--json').out);
+    check(miss.events?.length === 0 && !!miss.from && !!miss.to,
+      `and a miss says which window it searched (${miss.from}〜${miss.to})`);
+    const said = tf('find', 'CLI検証-そんなものはない').out;
+    check(new RegExp(miss.from).test(said), `which the terminal prints too (${said.trim()})`);
+  }
+
   // --- 6b-ii. a hidden calendar is hidden from the WINDOW, not from you -----
   //
   // occurrences() expands the enabled calendars, because that is what the view

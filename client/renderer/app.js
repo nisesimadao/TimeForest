@@ -3338,7 +3338,10 @@
     }
 
     if (q.trim()) {
-      for (const o of TTX.store.searchAll(q, 40)) {
+      // The palette searches what the window is showing, so no `only` — an
+      // unticked calendar stays out of the view you are looking at. `tf find`
+      // passes one, because a terminal has no sidebar to read.
+      for (const o of TTX.store.searchAll(q, 40).events) {
         out.push({
           sec: '予定',
           rail: railColor(o),
