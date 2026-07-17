@@ -201,11 +201,15 @@
    */
   const AGENDA_WINDOW = 6;
   /**
-   * And a hard stop per side anyway. The runway is a pixel budget, and a
-   * calendar with nothing in it answers "how many months to fill two screens?"
-   * with a number in the hundreds.
+   * A ceiling on how many months may be RENDERED at once. Not a limit on how
+   * far you can travel — the window slides, so there is no wall.
+   *
+   * The pixel budget above can't bound this on its own: a nearly empty calendar
+   * answers "how many months fill six screens?" with about ninety, and past
+   * AGENDA_DAY_CAP daysBetween quietly stops returning days, so the far end
+   * renders as nothing at all.
    */
-  const AGENDA_MAX_SPAN = 24;
+  const AGENDA_MAX_MONTHS = 49;
   /**
    * And how far a SINGLE growth may jump. Density decides how many months the
    * runway needs, and an empty stretch answers "dozens" — which lands deeper in
@@ -217,7 +221,7 @@
   /* daysBetween caps at 400 by default. The agenda can ask for far more than
    * that now, and going over doesn't error — it just stops handing back days,
    * so the last months render as nothing at all. Ask for what the cap allows. */
-  const AGENDA_DAY_CAP = (AGENDA_MAX_SPAN * 2 + 1) * 31 + 31;
+  const AGENDA_DAY_CAP = AGENDA_MAX_MONTHS * 31 + 31;
   const resetSpan = () => { ui.spanBack = 0; ui.spanFwd = 2; ui.seenMonth = ''; };
 
   function range() {
@@ -3547,16 +3551,27 @@
     const perMonth = Math.max(1, before / months);
     const add = Math.min(Math.max(1, Math.ceil(need / perMonth)), AGENDA_MAX_STEP);
 
-    // How many months the window should hold, in the only unit that matters:
-    // enough to fill AGENDA_WINDOW screens. The MAX_SPAN clamp is for a nearly
-    // empty calendar, where that answer runs into the hundreds.
-    const want = Math.max(3, Math.min(AGENDA_MAX_SPAN,
-      Math.ceil(wrap.clientHeight * AGENDA_WINDOW / perMonth)));
-    // Give the same back at the far end. spanBack going NEGATIVE is the point:
-    // it means the window has travelled past the month the cursor sits in,
-    // which is what lets you keep scrolling forward without the list — and the
-    // scrollbar — growing forever.
-    const cut = Math.max(0, months + add - want);
+    // Give the same back at the far end — but ONLY when we're over the pixel
+    // budget, and measured in pixels. spanBack going NEGATIVE is the point: the
+    // window travels past the month the cursor sits in, which is what lets you
+    // keep going without the list — and the scrollbar — growing forever.
+    //
+    // Deciding this in MONTHS is what stranded it. perMonth is measured on the
+    // window you're leaving, so sliding out of a busy year into an empty one
+    // keeps answering "a month is 400px" while the new ones are 40px. It then
+    // trimmed away everything it had just added, the list never grew tall
+    // enough to scroll, and with no scroll there was no way to ask for more:
+    // stuck, intermittently, wherever the calendar ran out.
+    const budget = wrap.clientHeight * AGENDA_WINDOW;
+    const projected = before + add * perMonth;
+    const cut = Math.max(0, Math.min(
+      projected > budget ? Math.floor((projected - budget) / perMonth) : 0,
+      months - 1,
+    ));
+
+    // At the month ceiling the far end has to give way, or the window can never
+    // move again in EITHER direction — which is its own kind of stuck.
+    const trade = Math.max(cut, Math.max(0, months + add - AGENDA_MAX_MONTHS));
 
     // Hold a DAY, not a month header: headers are sticky and measure as ~0.
     // Both ends are about to move, so scrollHeight arithmetic can't say where
@@ -3577,10 +3592,13 @@
       break;
     }
 
+    const was = { back: ui.spanBack, fwd: ui.spanFwd };
+    const couldScroll = before > wrap.clientHeight + 2;
+
     ui.growing = true;
     try {
-      if (dir < 0) { ui.spanBack += add; ui.spanFwd -= cut; }
-      else { ui.spanFwd += add; ui.spanBack -= cut; }
+      if (dir < 0) { ui.spanBack += add; ui.spanFwd -= trade; }
+      else { ui.spanFwd += add; ui.spanBack -= trade; }
 
       // Cached by year, so this is free within a year and one fetch across a
       // boundary. Painting first would flash a month with no holidays in it.
@@ -3592,6 +3610,25 @@
       paint();
       const after = $('.agenda');
       if (!after) return;
+
+      // Whether that trade was worth making can only be known afterwards, so
+      // check afterwards. Empty days collapse to a single 「予定なし」 line, so
+      // a year with nothing in it is ~60px: swapping dense months at the near
+      // end for empty ones at the far end can leave the list SHORTER than the
+      // window — and with no scroll there is no way to ask for anything back.
+      // Measured, before this: 3678 → 803px over six growths, ending on one
+      // month, unscrollable, permanently.
+      //
+      // Being stuck is worse than not moving. Put it back.
+      if (couldScroll && after.scrollHeight <= after.clientHeight + 2) {
+        ui.spanBack = was.back;
+        ui.spanFwd = was.fwd;
+        paint();
+        const undone = $('.agenda');
+        if (undone) { undone.scrollTop = at; ui.lastTop = at; }
+        return;
+      }
+
       const back = anchor && after.querySelector(`[data-key="${anchor}"]`);
       if (back) {
         // Put that day back exactly `into` px above the top edge, wherever it

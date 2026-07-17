@@ -231,13 +231,12 @@ require(path.join(ROOT, 'src/lib/tz.js'));
  * the app goes back to dropping months without a word — so read it from the
  * source rather than restating the number here. */
 const appSrc = fs.readFileSync(path.join(ROOT, 'client/renderer/app.js'), 'utf8');
-const maxSpan = +(appSrc.match(/AGENDA_MAX_SPAN\s*=\s*(\d+)/) || [])[1];
-const maxMonths = maxSpan * 2 + 1;
-const capExpr = appSrc.match(/AGENDA_DAY_CAP\s*=\s*\(AGENDA_MAX_SPAN\s*\*\s*2\s*\+\s*1\)\s*\*\s*(\d+)\s*\+\s*(\d+)/);
+const maxMonths = +(appSrc.match(/AGENDA_MAX_MONTHS\s*=\s*(\d+)/) || [])[1];
+const capExpr = appSrc.match(/AGENDA_DAY_CAP\s*=\s*AGENDA_MAX_MONTHS\s*\*\s*(\d+)\s*\+\s*(\d+)/);
 const dayCap = capExpr ? maxMonths * +capExpr[1] + +capExpr[2] : NaN;
 
-if (maxSpan > 0) ok(`AGENDA_MAX_SPAN is ${maxSpan} months each way — ${maxMonths} at most`);
-else bad('could not read AGENDA_MAX_SPAN out of app.js');
+if (maxMonths > 0) ok(`AGENDA_MAX_MONTHS is ${maxMonths} — the most that may be rendered at once`);
+else bad('could not read AGENDA_MAX_MONTHS out of app.js');
 if (Number.isFinite(dayCap)) ok(`AGENDA_DAY_CAP reads as ${dayCap}`);
 else bad('could not read AGENDA_DAY_CAP out of app.js — has the expression changed shape?');
 
