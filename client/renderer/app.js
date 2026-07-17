@@ -159,6 +159,18 @@
    * to that.
    */
   const weekStartDow = () => (TTX.store.state.setting?.start_weekday === 0 ? 0 : 1);
+
+  /**
+   * A time, for a person to read. TimeTree's own setting again
+   * (`user_setting.military_time`), and its 12-hour form is the Japanese one:
+   * 午前 0:30 at midnight, 午後 0:00 at noon. See tz.clock().
+   *
+   * ⚠️ Reading only. The 24-hour string is the VALUE — `<input type="time">`
+   * takes it, `toEpoch()` parses it, and the week grid does arithmetic on its
+   * first two characters. Feed one of these into any of those and you have not
+   * mislabelled a time, you have moved it.
+   */
+  const clock = (t) => TTX.tz.clock(t, TTX.store.state.setting?.military_time !== false);
   const weekStart = (key) => addDays(key, -((weekdayOf(key) - weekStartDow() + 7) % 7));
 
   /**
@@ -848,7 +860,7 @@
     const dot = el('div', 'dot');
     dot.style.background = railColor(o);
     row.appendChild(dot);
-    row.appendChild(el('div', 't', o.holiday ? (o.workday ? '暦' : '祝') : o.allDay ? '終日' : o.startTime));
+    row.appendChild(el('div', 't', o.holiday ? (o.workday ? '暦' : '祝') : o.allDay ? '終日' : clock(o.startTime)));
 
     const ti = el('div', 'ti');
     ti.appendChild(document.createTextNode(o.title));
@@ -1006,7 +1018,7 @@
           const dot = el('span', 'm-dot');
           dot.style.background = c;
           chip.appendChild(dot);
-          chip.appendChild(el('span', 'm-t', o.startTime));
+          chip.appendChild(el('span', 'm-t', clock(o.startTime)));
         }
         chip.appendChild(el('span', 'm-ti', o.title));
         chip.title = o.title;
@@ -1127,8 +1139,8 @@
         box.style.left = `calc(${(o._col / o._cols) * 100}% + 1px)`;
         box.style.width = `calc(${(1 / o._cols) * 100}% - 3px)`;
         fill(box, o);
-        box.append(el('div', 'w-ev-t', o.startTime), el('div', 'w-ev-n', o.title));
-        box.title = `${o.startTime}〜${o.endTime} ${o.title}`;
+        box.append(el('div', 'w-ev-t', clock(o.startTime)), el('div', 'w-ev-n', o.title));
+        box.title = `${clock(o.startTime)}〜${clock(o.endTime)} ${o.title}`;
         box.onclick = (e) => { e.stopPropagation(); openDetail(o, box); };
         col.appendChild(box);
       }
@@ -1284,11 +1296,11 @@
     } else if (o.multiDay) {
       when = o.allDay
         ? `${jp(o.startKey)} 〜 ${jp(o.endKey)} ・ 終日 (${o.days.length}日間)`
-        : `${jp(o.startKey)} ${o.startTime} 〜 ${jp(o.endKey)} ${o.endTime}`;
+        : `${jp(o.startKey)} ${clock(o.startTime)} 〜 ${jp(o.endKey)} ${clock(o.endTime)}`;
     } else {
       when = o.allDay
         ? `${jp(o.startKey)} ・ 終日`
-        : `${jp(o.startKey)} ${o.startTime} 〜 ${o.endTime}`;
+        : `${jp(o.startKey)} ${clock(o.startTime)} 〜 ${clock(o.endTime)}`;
     }
     // Icon AND value, no key column. "🕐 日時 7月21日 10:30" says "日時" twice:
     // once in the glyph and once in the word, to an audience that can read the
@@ -2868,7 +2880,7 @@
       if (ui.fired.has(key)) continue;
       ui.fired.set(key, at);
       dirty = true;
-      const when = o.allDay ? '終日' : `${o.startTime}〜${o.endTime}`;
+      const when = o.allDay ? '終日' : `${clock(o.startTime)}〜${clock(o.endTime)}`;
       const body = [TTX.api.alertLabel(m, o.allDay), when, o.location]
         .filter(Boolean).join(' · ');
       await window.host.notify.show({ title: o.title, body, key: o.startKey })
@@ -3248,6 +3260,31 @@
     };
     body.appendChild(setRow('週の始まり', 'TimeTree の設定。スマホにも反映されます', wsSel));
 
+    // Also TimeTree's (`military_time`). Its 12-hour form is 午後 0:30 at half
+    // past noon, not 午後 12:30 — see tz.clock(). This window was 24h-only, so
+    // it read differently from the phone every hour of the day.
+    const mtSw = el('button', 'sw' + (TTX.store.state.setting?.military_time !== false ? ' on' : ''));
+    mtSw.setAttribute('role', 'switch');
+    mtSw.setAttribute('aria-checked', String(TTX.store.state.setting?.military_time !== false));
+    mtSw.onclick = async () => {
+      const want = !(TTX.store.state.setting?.military_time !== false);
+      const was = TTX.store.state.setting;
+      mtSw.disabled = true;
+      try {
+        TTX.store.state.setting = await TTX.api.putSetting({ military_time: want });
+        mtSw.classList.toggle('on', want);
+        mtSw.setAttribute('aria-checked', String(want));
+        refresh('fade');
+        toast(want ? '24時間表示にしました' : '12時間表示にしました');
+      } catch (e) {
+        TTX.store.state.setting = was;
+        toast('表記を変更できませんでした: ' + e.message);
+      } finally {
+        mtSw.disabled = false;
+      }
+    };
+    body.appendChild(setRow('24時間表示', 'TimeTree の設定。オフだと 午後 2:30 のように出ます', mtSw));
+
     body.appendChild(setRow('空いている日を隠す', '予定のない日を詰めて表示します',
       toggleBtn(ui.hideEmpty, (v) => {
         ui.hideEmpty = v;
@@ -3382,7 +3419,7 @@
           sec: '予定',
           rail: railColor(o),
           main: o.title,
-          when: `${o.startKey.replace(/-/g, '/')} ${o.allDay ? '終日' : o.startTime}`,
+          when: `${o.startKey.replace(/-/g, '/')} ${o.allDay ? '終日' : clock(o.startTime)}`,
           sub: o.location || '',
           run: () => jumpTo(o.startKey, 'agenda'),
         });

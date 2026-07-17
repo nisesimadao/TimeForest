@@ -213,6 +213,35 @@ for (const [name, got, want] of cases) {
   else bad(`${name}: expected ${want}, got ${got}`);
 }
 
+section('12時間表記 (behavioural)');
+require(path.join(ROOT, 'src/lib/tz.js'));
+
+/* Every one of these came off TimeTree's OWN web app, with the account's
+ * user_setting.military_time set to false. It is NOT the English convention:
+ * the hour runs 0–11 inside each half (h11), so midnight is 午前 0:30 rather
+ * than 午前 12:30 and noon is 午後 0:00 rather than 午後 12:00. Both English
+ * answers look completely reasonable, which is the whole problem. */
+const clockCases = [
+  ['00:30', '午前 0:30'],
+  ['09:05', '午前 9:05'],
+  ['11:59', '午前 11:59'],
+  ['12:00', '午後 0:00'],
+  ['12:30', '午後 0:30'],
+  ['14:30', '午後 2:30'],
+  ['23:59', '午後 11:59'],
+];
+for (const [input, want] of clockCases) {
+  const got = globalThis.TTX.tz.clock(input, false);
+  if (got === want) ok(`clock(${input}) = ${got}`);
+  else bad(`clock(${input}): expected ${want}, got ${got} — measured against TimeTree's own web app`);
+}
+if (globalThis.TTX.tz.clock('14:30', true) === '14:30') ok('and military time is left exactly as it is');
+else bad('clock(hm, true) must not touch the string — it is also the form input value');
+/* The 24-hour string is the VALUE: `<input type="time">` and toEpoch() both
+ * take it. A 12-hour string reaching either is a wrong time, not a wrong label. */
+if (globalThis.TTX.tz.clock('終日', false) === '終日') ok('and something that is not a time passes through');
+else bad('clock() mangled a non-time');
+
 section('reminder timing (behavioural)');
 require(path.join(ROOT, 'src/lib/model.js'));
 const { model } = globalThis.TTX;

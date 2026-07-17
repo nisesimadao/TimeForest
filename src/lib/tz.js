@@ -49,10 +49,36 @@
     );
   }
 
-  /** Wall-clock HH:MM of `ms` in `tz`. */
+  /**
+   * Wall-clock HH:MM of `ms` in `tz`.
+   *
+   * This is the VALUE, always 24-hour: it feeds `<input type="time">`,
+   * `toEpoch()` and every comparison. What a person reads is `clock()`.
+   */
   function hm(ms, tz) {
     const d = new Date(toLocal(ms, tz));
     return String(d.getUTCHours()).padStart(2, '0') + ':' + String(d.getUTCMinutes()).padStart(2, '0');
+  }
+
+  /**
+   * An HH:MM as TimeTree writes it for a reader. `military` false gives its
+   * 12-hour form — which is NOT the English one. Measured against TimeTree's
+   * own web app, with user_setting.military_time = false:
+   *
+   *     00:30 → 午前 0:30      (English would say 12:30 AM)
+   *     09:05 → 午前 9:05
+   *     12:00 → 午後 0:00      (English would say 12:00 PM)
+   *     12:30 → 午後 0:30
+   *     14:30 → 午後 2:30
+   *
+   * The hour runs 0–11 inside each half — hourCycle h11, the Japanese
+   * convention, not h12. Deriving this from the English one puts midnight and
+   * noon both wrong, and both wrong answers look perfectly reasonable.
+   */
+  function clock(t, military = true) {
+    if (military || !/^\d{1,2}:\d{2}$/.test(String(t))) return t;
+    const [h, m] = String(t).split(':').map(Number);
+    return `${h < 12 ? '午前' : '午後'} ${h % 12}:${String(m).padStart(2, '0')}`;
   }
 
   /** Parse "YYYY-MM-DD" as UTC midnight. */
@@ -108,7 +134,7 @@
   const weekdayOf = (key) => new Date(parseYmd(key)).getUTCDay();
 
   TTX.tz = {
-    DAY, tzOffset, toLocal, ymd, hm, parseYmd, toEpoch, shiftWall,
+    DAY, tzOffset, toLocal, ymd, hm, clock, parseYmd, toEpoch, shiftWall,
     addDays, daysBetween, WEEKDAY_JA, weekdayOf,
   };
 })();

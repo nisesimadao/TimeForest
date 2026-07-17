@@ -1252,6 +1252,74 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     check(await server() === 1, `and it is back on 月曜 for the rest of the run (was ${was})`);
   }
 
+  // military_time is TimeTree's setting too, and its 12-hour form is the
+  // Japanese one — 午後 0:30 at half past noon, not 午後 12:30. Both of these
+  // came off TimeTree's own web app. This window was 24h-only, so it read
+  // differently from the phone every hour of the day.
+  sec('12時間表記 — アカウントの設定');
+  {
+    const T = 'FORM検証-正午半';
+    const uuid = await page.evaluate(async (t) => {
+      const cal = [...TTX.store.state.enabled][0];
+      const at = Date.UTC(2026, 6, 31, 3, 30);   // 12:30 JST — the one English gets wrong
+      const e = await TTX.api.createEvent(cal, {
+        title: t, allDay: false, startAt: at, endAt: at + 1800000, tz: 'Asia/Tokyo', labelId: 1,
+      });
+      TTX.store.applyEvent(cal, e);
+      return e.uuid;
+    }, T);
+
+    await page.click('.seg button:text-is("月")');
+    await page.waitForSelector('.month', { timeout: 5000 });
+
+    const chip = () => page.evaluate((t) => {
+      const n = [...document.querySelectorAll('.m-ev')].find((x) => x.textContent.includes(t));
+      return n?.querySelector('.m-t')?.textContent;
+    }, T);
+    // waitFor the paint — putSetting resolves before refresh() has repainted,
+    // and waiting on the store instead reads the previous label.
+    const show = async (mt) => {
+      await page.evaluate(async (v) => {
+        TTX.store.state.setting = await TTX.api.putSetting({ military_time: v });
+      }, mt);
+      await page.evaluate(() => document.querySelector('.pill')?.click());
+      await page.waitForFunction((want) => {
+        const n = [...document.querySelectorAll('.m-ev')].find((x) => x.textContent.includes('FORM検証-正午半'));
+        const s = n?.querySelector('.m-t')?.textContent || '';
+        return want ? /^\d/.test(s) : /午/.test(s);
+      }, mt, { timeout: 10000 });
+      return chip();
+    };
+
+    check((await show(true)) === '12:30', `24時間表示 reads 12:30 (${await chip()})`);
+    check((await show(false)) === '午後 0:30',
+      `12時間表示 reads 午後 0:30 — TimeTree's wording, not 午後 12:30 (${await chip()})`);
+
+    // The 24-hour string is the VALUE. `<input type="time">` only takes that
+    // shape, and toEpoch() parses it — a label reaching either does not
+    // mislabel the event, it moves it.
+    await page.evaluate((t) => {
+      const n = [...document.querySelectorAll('.m-ev')].find((x) => x.textContent.includes(t));
+      n.click();
+    }, T);
+    await page.waitForSelector('.d-card', { timeout: 5000 });
+    check(/午後 0:30/.test(await page.evaluate(() => document.querySelector('.d-card')?.textContent || '')),
+      'the detail card follows the setting too');
+    await page.click('.d-card .d-acts .btn:text-is("編集")');
+    await page.waitForSelector('.form', { timeout: 5000 });
+    check(await page.inputValue('.f-row:has(> .f-k:text-is("開始")) .f-time') === '12:30',
+      'but the form input is still 24-hour — it is a value, not a label');
+    await page.keyboard.press('Escape');
+    await page.waitForSelector('.form', { state: 'detached', timeout: 5000 });
+
+    await show(true);   // back to 24h for the rest of the run
+    await page.evaluate(async (u) => {
+      const cal = [...TTX.store.state.enabled][0];
+      await TTX.api.deleteEvent(cal, u);
+      TTX.store.markDeleted(cal, u);
+    }, uuid);
+  }
+
   sec('パレット — Ctrl+K で予定を探せる');
   {
     const title = 'FORM検証-パレット';
