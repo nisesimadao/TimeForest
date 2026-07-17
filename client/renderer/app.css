@@ -733,6 +733,10 @@ button { background: none; border: 0; cursor: default; text-align: left; }
   grid-template-columns: var(--gut) repeat(7, 1fr);
   flex: none;
   border-bottom: var(--hair) solid var(--sep);
+  /* The body below loses this much to its scrollbar; give it up here too or the
+     seven columns drift apart on the way to 日曜. Measured per platform in
+     app.js — 0 where scrollbars are an overlay. */
+  padding-right: var(--sbw, 0px);
 }
 .w-hd {
   display: flex;
@@ -772,6 +776,9 @@ button { background: none; border: 0; cursor: default; text-align: left; }
   flex: none;
   max-height: 84px;
   overflow-y: auto;
+  /* Reserve the gutter whether or not it is scrolling, so this row does not
+     jump a column sideways the moment a fourth all-day event shows up. */
+  scrollbar-gutter: stable;
   border-bottom: var(--hair) solid var(--sep-strong);
   background: var(--bg-side);
 }

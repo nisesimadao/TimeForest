@@ -1120,7 +1120,8 @@
     const gut = el('div', 'w-gut-col');
     for (let h = 0; h < 24; h++) {
       const l = el('div', 'w-hour');
-      if (h) l.textContent = String(h).padStart(2, '0') + ':00';
+      // The rail followed nothing — it wrote 24-hour whatever the account said.
+      if (h) l.textContent = TTX.tz.hourLabel(h, TTX.store.state.setting?.military_time !== false);
       gut.appendChild(l);
     }
     grid.appendChild(gut);
@@ -1161,8 +1162,21 @@
     wrap.appendChild(scroll);
 
     ui.status = `${list.length}件の予定`;
-    // Open on the working day rather than at midnight.
-    requestAnimationFrame(() => { scroll.scrollTop = 7 * HOUR_H; });
+    requestAnimationFrame(() => {
+      // Open on the working day rather than at midnight.
+      scroll.scrollTop = 7 * HOUR_H;
+
+      /* The header does not scroll and the body does, so the body loses the
+       * scrollbar's width and their seven columns stop lining up: measured, 1px
+       * out at 月曜 and 10px by 日曜 — enough that the day you are reading is
+       * over the wrong column of the grid.
+       *
+       * Measured, not assumed: it is 11px here and 0 wherever the platform
+       * draws scrollbars as an overlay, so hardcoding either number is wrong
+       * somewhere. .w-allday reserves the same width via scrollbar-gutter, so
+       * all three grids agree whether or not it has anything in it. */
+      wrap.style.setProperty('--sbw', (scroll.offsetWidth - scroll.clientWidth) + 'px');
+    });
     return swipeNav(wrap);
   }
 
@@ -3816,18 +3830,27 @@
     let quiet = null;
 
     wrap.addEventListener('wheel', (e) => {
+      /* A trackpad sends deltaX. A MOUSE HAS NO SECOND AXIS — it can only send
+       * deltaY, so Shift+wheel is how it asks for sideways, on Windows and
+       * everywhere else. Reading deltaX alone meant that on a mouse this
+       * gesture could not be performed at all: no amount of scrolling, in any
+       * direction, with or without Shift, would move the week. Dragging still
+       * worked, but nothing tells you that, so it reads as 「横スクロール
+       * できなくね」 — which is exactly how it was reported. */
+      const across = e.shiftKey && !e.deltaX ? e.deltaY : e.deltaX;
+      const along = e.shiftKey && !e.deltaX ? 0 : e.deltaY;
       // Diagonal or vertical: not ours. Leave it alone entirely — the week grid
       // is scrolling on it.
-      if (Math.abs(e.deltaX) <= Math.abs(e.deltaY)) return;
+      if (Math.abs(across) <= Math.abs(along)) return;
       e.preventDefault();
       clearTimeout(quiet);
       quiet = setTimeout(() => { latched = false; acc = 0; }, SWIPE_QUIET);
       if (latched) return;
-      acc += e.deltaX;
+      acc += across;
       if (Math.abs(acc) < SWIPE_WHEEL) return;
       latched = true;
       acc = 0;
-      go(e.deltaX > 0 ? 1 : -1);   // push content left = go forward
+      go(across > 0 ? 1 : -1);   // push content left = go forward
     }, { passive: false });
 
     let from = null;

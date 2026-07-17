@@ -242,6 +242,19 @@ else bad('clock(hm, true) must not touch the string — it is also the form inpu
 if (globalThis.TTX.tz.clock('終日', false) === '終日') ok('and something that is not a time passes through');
 else bad('clock() mangled a non-time');
 
+/* The week view's hour rail builds its own strings, so it sailed straight past
+ * the sweep that put clock() on everything reading o.startTime — it wrote
+ * 24-hour whatever the account said. TimeTree's own weekly view, read off it
+ * both ways: 1..23 with military time, 午前1/午後0/午後10 without. */
+const railCases = [[0, '00:00', '午前0'], [1, '01:00', '午前1'], [11, '11:00', '午前11'],
+  [12, '12:00', '午後0'], [14, '14:00', '午後2'], [23, '23:00', '午後11']];
+for (const [h, m24, m12] of railCases) {
+  const a = globalThis.TTX.tz.hourLabel(h, true);
+  const b = globalThis.TTX.tz.hourLabel(h, false);
+  if (a === m24 && b === m12) ok(`hourLabel(${h}) = ${a} / ${b}`);
+  else bad(`hourLabel(${h}): expected ${m24} / ${m12}, got ${a} / ${b}`);
+}
+
 section('reminder timing (behavioural)');
 require(path.join(ROOT, 'src/lib/model.js'));
 const { model } = globalThis.TTX;

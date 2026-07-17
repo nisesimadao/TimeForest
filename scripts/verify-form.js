@@ -1063,6 +1063,14 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       w.dispatchEvent(new WheelEvent('wheel', { deltaX: d / n, deltaY: 0, bubbles: true, cancelable: true }));
     }
   }, { sel, dx, steps });
+
+  /** The same gesture from a MOUSE, which has no second axis: Shift + deltaY. */
+  const shiftFlick = (sel, dy, steps = 12) => page.evaluate(({ sel: s2, dy: d, steps: n }) => {
+    const w = document.querySelector(s2);
+    for (let i = 0; i < n; i++) {
+      w.dispatchEvent(new WheelEvent('wheel', { deltaX: 0, deltaY: d / n, shiftKey: true, bubbles: true, cancelable: true }));
+    }
+  }, { sel, dy, steps });
   const title = () => page.evaluate(() => document.querySelector('.tb-title')?.textContent);
 
   /* Wait for the title to move, don't sleep at it. go() runs a View Transition,
@@ -1135,6 +1143,48 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const d1 = await title();
   check(d1 !== d0, `dragging the grid sideways moves it too (${d0} → ${d1})`);
   await sleep(700);
+
+  /* And from a MOUSE. This is the half that was missing: a trackpad has a second
+   * axis and a mouse does not, so Shift+wheel is the only sideways a mouse can
+   * send. Reading deltaX alone meant no amount of scrolling, in any direction,
+   * moved the week — dragging still worked, but nothing says so, and it was
+   * reported as 「横スクロールできなくね」. Every test here flicked deltaX,
+   * which no mouse on earth produces. */
+  const mouse0 = await title();
+  await shiftFlick('.week', 240);
+  await page.waitForFunction((p2) => document.querySelector('.tb-title')?.textContent !== p2,
+    mouse0, { timeout: 6000 }).catch(() => {});
+  const mouse1 = await title();
+  check(mouse1 !== mouse0, `Shift+ホイール moves it — the only sideways a mouse has (${mouse0} → ${mouse1})`);
+
+  /* ...but a plain wheel must still scroll the day, not jump the week. The
+   * whole reason deltaX was the only thing read. */
+  await page.evaluate(() => {
+    const w = document.querySelector('.week');
+    for (let i = 0; i < 12; i++) {
+      w.dispatchEvent(new WheelEvent('wheel', { deltaX: 0, deltaY: 40, bubbles: true, cancelable: true }));
+    }
+  });
+  await sleep(700);
+  check((await title()) === mouse1, 'and a plain wheel still does not — it belongs to the time grid');
+
+  /* A trackpad sends deltaX, so it never takes the Shift branch — the mouse
+   * path only opens when there is no deltaX at all. Assert that rather than
+   * assume it: this is one `?:` away from making a trackpad flick with Shift
+   * held read its deltaY instead, and nothing else here would notice. */
+  const pad0 = await title();
+  const pad1 = await page.evaluate((prev) => {
+    const w = document.querySelector('.week');
+    for (let i = 0; i < 12; i++) {
+      // Shift down AND deltaX present: what a trackpad does if a hand rests on Shift.
+      w.dispatchEvent(new WheelEvent('wheel', { deltaX: 20, deltaY: 3, shiftKey: true, bubbles: true, cancelable: true }));
+    }
+    return prev;
+  }, pad0);
+  await page.waitForFunction((p2) => document.querySelector('.tb-title')?.textContent !== p2,
+    pad1, { timeout: 6000 }).catch(() => {});
+  check((await title()) !== pad0,
+    `a trackpad's deltaX still wins over Shift — it is untouched (${pad0} → ${await title()})`);
 
   // Put an event in the week that will be ON SCREEN. Skipping this because the
   // throwaway happens to be empty is how it stays untested forever — and it is
@@ -1256,6 +1306,39 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   // Japanese one — 午後 0:30 at half past noon, not 午後 12:30. Both of these
   // came off TimeTree's own web app. This window was 24h-only, so it read
   // differently from the phone every hour of the day.
+  // 「週表示の奴なんかずれてる」. It was: the header does not scroll and the body
+  // does, so the body lost 11px to its scrollbar and the two grids laid their
+  // seven columns out over different widths. 1px adrift at 月曜, 10px by 日曜 —
+  // invisible at the left edge, and by the right the day you are reading sits
+  // over the wrong column. Nothing but a measurement finds this.
+  sec('週表示 — ヘッダーと列が揃っている');
+  {
+    await page.click('.seg button:text-is("週")');
+    await page.waitForSelector('.week', { timeout: 5000 });
+    await page.waitForFunction(() =>
+      getComputedStyle(document.querySelector('.week')).getPropertyValue('--sbw') !== '',
+    null, { timeout: 5000 });
+
+    const drift = await page.evaluate(() => {
+      const hd = [...document.querySelectorAll('.w-hd')].map((n) => n.getBoundingClientRect());
+      const col = [...document.querySelectorAll('.w-col')].map((n) => n.getBoundingClientRect());
+      if (hd.length !== 7 || col.length !== 7) return null;
+      return hd.map((h, i) => Math.round((h.left + h.width / 2) - (col[i].left + col[i].width / 2)));
+    });
+    check(!!drift && drift.every((d) => Math.abs(d) <= 1),
+      `every day header sits over its own column (${JSON.stringify(drift)})`);
+
+    // Whatever the platform charges for a scrollbar — 11px here, 0 where they
+    // are drawn as an overlay. Hardcoding either is wrong on the other.
+    const sbw = await page.evaluate(() => {
+      const s = document.querySelector('.w-scroll');
+      return { measured: getComputedStyle(document.querySelector('.week')).getPropertyValue('--sbw'),
+        real: s.offsetWidth - s.clientWidth };
+    });
+    check(sbw.measured === sbw.real + 'px',
+      `and the gutter reserved is the one the platform actually took (${sbw.measured})`);
+  }
+
   sec('12時間表記 — アカウントの設定');
   {
     const T = 'FORM検証-正午半';
@@ -1312,7 +1395,35 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     await page.keyboard.press('Escape');
     await page.waitForSelector('.form', { state: 'detached', timeout: 5000 });
 
-    await show(true);   // back to 24h for the rest of the run
+    // The week view's hour rail builds its own strings, so it sailed past the
+    // sweep that put clock() on everything reading o.startTime — it wrote
+    // 24-hour whatever the account said. TimeTree's own weekly view writes
+    // 午前1 / 午後0 there, with no :00 at all.
+    const rail = () => page.evaluate(() =>
+      [...document.querySelectorAll('.w-hour')].map((n) => n.textContent).filter(Boolean).slice(0, 3));
+    await page.click('.seg button:text-is("週")');
+    await page.waitForSelector('.week', { timeout: 5000 });
+    await page.evaluate(async () => {
+      TTX.store.state.setting = await TTX.api.putSetting({ military_time: false });
+    });
+    await page.evaluate(() => document.querySelector('.pill')?.click());
+    // [1], not querySelector: the FIRST .w-hour is midnight and `if (h)` leaves
+    // it blank, so the one cell this would look at is the one that never speaks.
+    // That is what hung this check for ten seconds and killed the run.
+    await page.waitForFunction(() => /午/.test(document.querySelectorAll('.w-hour')[1]?.textContent || ''),
+      null, { timeout: 10000 });
+    check(JSON.stringify(await rail()) === JSON.stringify(['午前1', '午前2', '午前3']),
+      `the hour rail follows it too — TimeTree writes 午前1, not 午前 1:00 (${JSON.stringify(await rail())})`);
+
+    await page.evaluate(async () => {
+      TTX.store.state.setting = await TTX.api.putSetting({ military_time: true });
+    });
+    await page.evaluate(() => document.querySelector('.pill')?.click());
+    await page.waitForFunction(() => /^\d/.test(document.querySelectorAll('.w-hour')[1]?.textContent || ''),
+      null, { timeout: 10000 });
+    check(JSON.stringify(await rail()) === JSON.stringify(['01:00', '02:00', '03:00']),
+      `and goes back (${JSON.stringify(await rail())})`);
+
     await page.evaluate(async (u) => {
       const cal = [...TTX.store.state.enabled][0];
       await TTX.api.deleteEvent(cal, u);

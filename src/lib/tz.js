@@ -60,26 +60,45 @@
     return String(d.getUTCHours()).padStart(2, '0') + ':' + String(d.getUTCMinutes()).padStart(2, '0');
   }
 
+  /* TimeTree's 12-hour clock is the JAPANESE one, not the English one: the hour
+   * runs 0–11 inside each half (hourCycle h11), so midnight is 午前 0:30 and
+   * noon is 午後 0:00 — where English would say 12:30 AM and 12:00 PM. Both
+   * English answers look perfectly reasonable, which is why this rule is
+   * written down here once, measured off TimeTree's own web app, and guarded by
+   * scripts/check.js with the exact table it was read from. */
+  const ampm = (h) => (h < 12 ? '午前' : '午後');
+
   /**
-   * An HH:MM as TimeTree writes it for a reader. `military` false gives its
-   * 12-hour form — which is NOT the English one. Measured against TimeTree's
-   * own web app, with user_setting.military_time = false:
+   * An HH:MM as TimeTree writes it for a reader. `military` false gives the
+   * 12-hour form above:
    *
-   *     00:30 → 午前 0:30      (English would say 12:30 AM)
-   *     09:05 → 午前 9:05
-   *     12:00 → 午後 0:00      (English would say 12:00 PM)
-   *     12:30 → 午後 0:30
-   *     14:30 → 午後 2:30
+   *     00:30 → 午前 0:30      09:05 → 午前 9:05      12:00 → 午後 0:00
+   *     12:30 → 午後 0:30      14:30 → 午後 2:30
    *
-   * The hour runs 0–11 inside each half — hourCycle h11, the Japanese
-   * convention, not h12. Deriving this from the English one puts midnight and
-   * noon both wrong, and both wrong answers look perfectly reasonable.
+   * Anything that isn't an HH:MM passes through untouched, so callers can hand
+   * it 「終日」 without checking first.
    */
   function clock(t, military = true) {
     if (military || !/^\d{1,2}:\d{2}$/.test(String(t))) return t;
     const [h, m] = String(t).split(':').map(Number);
-    return `${h < 12 ? '午前' : '午後'} ${h % 12}:${String(m).padStart(2, '0')}`;
+    return `${ampm(h)} ${h % 12}:${String(m).padStart(2, '0')}`;
   }
+
+  /**
+   * One label for the week view's hour rail. TimeTree's own weekly view, read
+   * off it both ways:
+   *
+   *     military_time: true   → 1  2  …  23        (no :00 at all)
+   *     military_time: false  → 午前1  午後0  午後10
+   *
+   * Ours has always written 01:00 and nobody has asked for otherwise, so the
+   * 24-hour side keeps it — the part that was wrong is that it wrote that
+   * whatever the account said. The 12-hour side takes TimeTree's shape: the
+   * minutes down a rail are always zero, and 「午前 1:00」 spends four
+   * characters saying so.
+   */
+  const hourLabel = (h, military = true) =>
+    (military ? String(h).padStart(2, '0') + ':00' : `${ampm(h)}${h % 12}`);
 
   /** Parse "YYYY-MM-DD" as UTC midnight. */
   const parseYmd = (s) => {
@@ -134,7 +153,7 @@
   const weekdayOf = (key) => new Date(parseYmd(key)).getUTCDay();
 
   TTX.tz = {
-    DAY, tzOffset, toLocal, ymd, hm, clock, parseYmd, toEpoch, shiftWall,
+    DAY, tzOffset, toLocal, ymd, hm, clock, hourLabel, parseYmd, toEpoch, shiftWall,
     addDays, daysBetween, WEEKDAY_JA, weekdayOf,
   };
 })();
