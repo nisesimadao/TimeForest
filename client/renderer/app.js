@@ -84,10 +84,9 @@
     cursor: '',            // any date inside the focused month
     query: '',
     mutedLabels: new Set(),
-    // 0 = 日曜始まり, 1 = 月曜始まり. Defaults to 月曜 because that is what
-    // TimeTree Web renders (measured), so the grid a family already knows keeps
-    // the same shape here. See weekStart() for why this is a setting at all.
-    weekStart: 1,
+    // NOTE no weekStart here. It lives on the account, in TimeTree's own
+    // `start_weekday` — see weekStartDow(). Keeping a local copy is what made
+    // this window draw a Monday grid for someone whose TimeTree said Sunday.
     // Months either side of the cursor's month that the agenda has grown to
     // cover. See range(). Not persisted — a fresh window starts at three
     // months, the same as it always did.
@@ -139,11 +138,18 @@
   /**
    * Which day a week begins on, 0 = 日曜 / 1 = 月曜.
    *
-   * TimeTree Web renders 月火水木金土日 — Monday — and offers no way to change
-   * it (measured: nothing in /api/v1/user/setting, the calendar object, or
-   * localStorage; it is simply hardcoded there). Japanese paper calendars, and
-   * Google Calendar in ja, start on Sunday. Both answers are right for somebody,
-   * so this is a setting — which is the part 本家 doesn't have.
+   * **This is TimeTree's setting, not ours.** `/api/v1/user/setting` carries
+   * `start_weekday`, the phone app writes it, and it follows the account to
+   * every device. Null means the account never set one, and TimeTree's own
+   * default applies — 月曜 (measured: its web app renders 月火水木金土日 for
+   * an account with no setting, and 日月火水木金土 for one with
+   * start_weekday: 0).
+   *
+   * It was believed for a long time that TimeTree had no such setting and the
+   * web app was simply hardcoded to Monday. That reading came from the
+   * THROWAWAY account, whose setting is null. The real account had had
+   * `start_weekday: 0` all along — so this app was the only screen in the
+   * family showing a Monday grid.
    *
    * NOTE this is only about how the GRID is laid out. `weekdayOf()` answers
    * "what day is this", which is a fact and never moves: the 土/日 colours, the
@@ -152,7 +158,7 @@
    * arithmetic — RFC 5545's WKST, a different thing entirely. Don't wire this
    * to that.
    */
-  const weekStartDow = () => (ui.weekStart === 0 ? 0 : 1);
+  const weekStartDow = () => (TTX.store.state.setting?.start_weekday === 0 ? 0 : 1);
   const weekStart = (key) => addDays(key, -((weekdayOf(key) - weekStartDow() + 7) % 7));
 
   /**
@@ -247,7 +253,6 @@
         notify: ui.notify,
         hideEmpty: ui.hideEmpty,
         maps: ui.maps,
-        weekStart: ui.weekStart,
         muted: [...ui.mutedLabels],
         disabled: TTX.store.state.calendars
           .filter((c) => !TTX.store.state.enabled.has(c.id)).map((c) => c.id),
@@ -262,7 +267,10 @@
       if (p.notify != null) ui.notify = !!p.notify;
       if (p.hideEmpty != null) ui.hideEmpty = !!p.hideEmpty;
       if (p.maps != null) ui.maps = !!p.maps;
-      if (p.weekStart != null) ui.weekStart = p.weekStart === 0 ? 0 : 1;
+      // p.weekStart is deliberately ignored, and no longer written. It was our
+      // own default (月曜) that savePrefs baked in the first time anyone touched
+      // any setting — so it was never a choice, and it silently outvoted the
+      // account's real start_weekday. TimeTree's answer is the only one now.
       if (p.muted) ui.mutedLabels = new Set(p.muted);
       return p;
     } catch {
@@ -3205,25 +3213,40 @@
     themeSel.onchange = () => applyTheme(themeSel.value);
     body.appendChild(setRow('テーマ', null, themeSel));
 
-    // TimeTree Web hardcodes Monday and gives you no say — this row is the part
-    // it doesn't have. Japanese paper calendars start on Sunday, so both are
-    // right for somebody.
+    // This row edits TimeTree's OWN setting (`start_weekday`), so changing it
+    // here changes it on the phone too. That is the point: it used to be a
+    // local preference, which meant this window could — and did — draw a
+    // Monday grid for someone whose TimeTree said Sunday.
     const wsSel = el('select', 'f-sel');
     for (const [v, label] of [[1, '月曜'], [0, '日曜']]) {
       const o = el('option', null, label);
       o.value = String(v);
-      if (v === ui.weekStart) o.selected = true;
+      if (v === weekStartDow()) o.selected = true;
       wsSel.appendChild(o);
     }
-    wsSel.onchange = () => {
-      // select.value is a STRING and ui.weekStart is compared numerically all
+    wsSel.onchange = async () => {
+      // select.value is a STRING and start_weekday is compared numerically all
       // over the grid — this project has already lost an afternoon to exactly
       // that mismatch (see HANDOFF: select.value / Map のキー).
-      ui.weekStart = Number(wsSel.value) === 0 ? 0 : 1;
-      savePrefs();
-      refresh('fade');
+      const want = Number(wsSel.value) === 0 ? 0 : 1;
+      const was = TTX.store.state.setting;
+      wsSel.disabled = true;
+      try {
+        // A merge, so this touches nothing else on their account (measured).
+        // Draw from the server's answer, not from what we sent: if it did
+        // something other than what we asked, that is what everyone else sees.
+        TTX.store.state.setting = await TTX.api.putSetting({ start_weekday: want });
+        refresh('fade');
+        toast(`週の始まりを${want === 0 ? '日曜' : '月曜'}にしました`);
+      } catch (e) {
+        TTX.store.state.setting = was;
+        wsSel.value = String(weekStartDow());
+        toast('週の始まりを変更できませんでした: ' + e.message);
+      } finally {
+        wsSel.disabled = false;
+      }
     };
-    body.appendChild(setRow('週の始まり', '月表示と週表示の並び', wsSel));
+    body.appendChild(setRow('週の始まり', 'TimeTree の設定。スマホにも反映されます', wsSel));
 
     body.appendChild(setRow('空いている日を隠す', '予定のない日を詰めて表示します',
       toggleBtn(ui.hideEmpty, (v) => {

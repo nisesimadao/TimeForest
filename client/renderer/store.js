@@ -18,6 +18,11 @@
     members: new Map(),   // calendarId -> Map(user_id -> member)
     holidays: new Map(),  // 'YYYY' -> memorialdays
     me: null,             // the signed-in user; `attendees` holds their id
+    // The account's own TimeTree preferences, as TimeTree stores them:
+    // { start_weekday, military_time, holiday, saturday_blue_color, lang, … }.
+    // Null for an account that has never set any — TimeTree's own defaults
+    // then apply (measured: 週は月曜始まり).
+    setting: null,
     ready: false,
     syncedAt: 0,
   };
@@ -48,12 +53,14 @@
     // Who we are is needed before the first write, not before the first paint,
     // so it rides along here rather than costing a round trip later. A failure
     // must not block the calendars — it only softens a form default.
-    const [cals, who] = await Promise.all([
+    const [cals, who, setting] = await Promise.all([
       TTX.api.calendars(),
       TTX.api.me().catch(() => null),
+      TTX.api.setting().catch(() => null),
     ]);
     store.calendars = cals;
     store.me = who;
+    store.setting = setting;
     if (!store.enabled.size) {
       for (const c of store.calendars) store.enabled.add(c.id);
     }

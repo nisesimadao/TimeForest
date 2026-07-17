@@ -139,6 +139,31 @@
   }
 
   /**
+   * The account's own TimeTree preferences — the ones its phone app writes.
+   *
+   *   { start_weekday: 0|1, military_time, holiday, holiday_countries,
+   *     saturday_blue_color, lunar, rokuyo, lang, color, … }
+   *
+   * `null` for an account that has never set any; TimeTree's own defaults then
+   * apply (measured: 月曜始まり). This was long believed not to exist, because
+   * it was only ever read on the throwaway — where it IS null. HANDOFF §3.
+   */
+  async function setting() {
+    const j = await get('/api/v1/user/setting').catch(() => ({}));
+    return j.user_setting || null;
+  }
+
+  /**
+   * Change some of them. **A merge, not a replace** (measured: PUT
+   * {military_time:true} alone left start_weekday, holiday, lang and
+   * saturday_blue_color exactly as they were) — so send only what changed, the
+   * same rule as events. A replace here would silently reset a person's
+   * holidays and language.
+   */
+  const putSetting = (patch) => request('PUT', '/api/v1/user/setting', patch)
+    .then((j) => j?.user_setting || null);
+
+  /**
    * Public holidays / observances. These are not part of the events feed —
    * 七夕 and 海の日 show up on the grid but come from here. `workday:true`
    * means "observance, still a working day" (七夕); false is a real day off.
@@ -535,6 +560,7 @@
 
   TTX.api = {
     calendars, currentCalendar, allEvents, labels, members, memorialdays, me,
+    setting, putSetting,
     createEvent, updateEvent, deleteEvent, buildEvent, buildAttachment,
     activities, postComment, editComment, deleteComment,
     activityText, newActivityId, ACTIVITY, ACTIVITY_FIELDS,

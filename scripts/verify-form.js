@@ -120,6 +120,19 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   }, calId);
   ok(`swept ${swept.length} leftover test event(s)` + (swept.length ? ': ' + swept.join(', ') : ''));
 
+  // Pin the week start. It is TimeTree's setting now (user_setting.start_weekday),
+  // so it is whatever this account was last left on — and half the assertions
+  // below count columns and lanes, which move when the grid does. A test that
+  // depends on the layout has to own the layout. 月曜 is what they were written
+  // against; the 週の始まり section flips it deliberately and puts it back.
+  await page.evaluate(async () => {
+    if (TTX.store.state.setting?.start_weekday !== 1) {
+      TTX.store.state.setting = await TTX.api.putSetting({ start_weekday: 1 });
+    }
+  });
+  check(await page.evaluate(() => TTX.store.state.setting?.start_weekday) === 1,
+    'week start pinned to 月曜 for the assertions that count columns');
+
   await page.click('.seg button:text-is("アジェンダ")');
   await page.waitForSelector('.agenda', { timeout: 5000 });
   await page.click('.pill:text-is("今日")');
@@ -1169,6 +1182,76 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   // store.searchAll's shape could empty it without a single test going red:
   // `for (const o of notAnArray)` throws, but `for (const o of {}.events)`
   // would just... not loop.
+  // The week start is TimeTree's setting (`start_weekday`), not ours. It was
+  // read as "TimeTree has no such setting, its web app is just hardcoded to
+  // Monday" — but that was measured on the throwaway, whose user_setting is
+  // null. The real account had had start_weekday: 0 all along, so this window
+  // was the only screen in the family drawing a Monday grid.
+  //
+  // Measured on TimeTree's own web app, same throwaway session:
+  //   setting null           → 月火水木金土日
+  //   start_weekday: 0       → 日月火水木金土
+  sec('週の始まり — アカウントの設定で、この窓のものではない');
+  {
+    const header = () => page.evaluate(() => (document.querySelector('.month')?.textContent || '').slice(0, 7));
+    const server = () => page.evaluate(() => TTX.api.setting().then((s) => s?.start_weekday));
+    const was = await server();
+
+    await page.click('.seg button:text-is("月")');
+    await page.waitForSelector('.month', { timeout: 5000 });
+
+    // Wait for the GRID, not the store. The store updates as soon as the PUT
+    // comes back, and refresh() paints after that — so waiting on the store
+    // reads the previous layout and every check comes out exactly inverted,
+    // which reads like the setting is backwards rather than like a race.
+    const pick = async (v) => {
+      await page.evaluate((val) => {
+        for (const s of document.querySelectorAll('.settings select')) {
+          if ([...s.options].map((o) => o.textContent).join() === '月曜,日曜') {
+            s.value = val; s.dispatchEvent(new Event('change')); return;
+          }
+        }
+        throw new Error('週の始まり の select が見つからない');
+      }, v);
+      await page.waitForFunction((want) =>
+        (document.querySelector('.month')?.textContent || '').slice(0, 1) === want,
+      v === '0' ? '日' : '月', { timeout: 15000 });
+    };
+
+    await page.keyboard.press('Comma');
+    await page.waitForSelector('.settings', { timeout: 5000 });
+    check(await page.evaluate(() => {
+      for (const s of document.querySelectorAll('.settings select')) {
+        if ([...s.options].map((o) => o.textContent).join() === '月曜,日曜') {
+          return Number(s.value) === (TTX.store.state.setting?.start_weekday === 0 ? 0 : 1);
+        }
+      }
+      return false;
+    }), 'the row shows what the account says, not a local copy of it');
+
+    await pick('1');
+    check((await header()) === '月火水木金土日', `月曜 lays the grid out from Monday (${await header()})`);
+    check((await server()) === 1, 'and it reached the server — the phone sees the same week');
+
+    await pick('0');
+    check((await header()) === '日月火水木金土', `日曜 lays it out from Sunday (${await header()})`);
+    check((await server()) === 0, 'and that reached the server too');
+
+    // PUT is a merge (measured). A replace here would quietly reset a person's
+    // holidays and language while they thought they were moving Monday.
+    const rest = await page.evaluate(() => TTX.api.setting());
+    check(rest?.holiday === true && rest?.lang === 'ja' && rest?.saturday_blue_color === true,
+      `and touched nothing else on the account (holiday=${rest?.holiday} lang=${rest?.lang})`);
+
+    check(!/weekStart/.test(await page.evaluate(() => localStorage.getItem('ttc.prefs') || '')),
+      'and no local copy is kept — one answer, or the two disagree and the window loses');
+
+    await pick('1');   // back to what setup pinned, for anything after this
+    await page.keyboard.press('Escape');
+    await page.waitForSelector('.settings', { state: 'detached', timeout: 5000 });
+    check(await server() === 1, `and it is back on 月曜 for the rest of the run (was ${was})`);
+  }
+
   sec('パレット — Ctrl+K で予定を探せる');
   {
     const title = 'FORM検証-パレット';
