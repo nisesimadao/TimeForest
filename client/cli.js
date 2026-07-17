@@ -221,6 +221,7 @@ const DATE_HELP = `  日付: today 明日 yesterday week nextweek month nextmont
 const WHEN_HELP = `  いつ: "7/21 10:00"  "明日 9時"  +7d  ← 時刻を書かなければ終日`;
 const LONG_HELP = '  長さ: 1h  90m  1:30  1.5h  2時間  45';
 const ALERT_HELP = '  通知: 30m  1h  1d  開始時  none  （複数なら 30m,1d）\n'
+  + '        既定は本家と同じ「1日前」。要らないなら --alert none\n'
   + '        終日の予定は 当日 / N日前 だけ（分・時間の段が無い）';
 
 /**

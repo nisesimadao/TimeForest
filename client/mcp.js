@@ -240,7 +240,8 @@ const TOOLS = [
         reminders: {
           type: 'array', items: { type: 'string' },
           description: `When to be reminded, e.g. ["30m","1d"]. ${ALERT_WORDS} `
-            + 'Omit for none — TimeTree does not add one for you.',
+            + 'Omit and you get TimeTree\'s own default, a reminder the day before. '
+            + 'Pass [] for no reminder at all.',
         },
       },
       required: ['title', 'start'],

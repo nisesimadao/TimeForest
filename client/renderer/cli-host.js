@@ -300,7 +300,17 @@
       const saved = await TTX.api.createEvent(target.id, {
         title: name, allDay, startAt, endAt, tz: TZ, labelId: 1,
         location: text(location), note: text(note),
-        alerts: alertsFor(alerts || [], allDay),
+        // The creator is an attendee, because that is what TimeTree's form does
+        // and what the window's form does — measured, both. Leaving it off
+        // makes an event that renders without your avatar on everyone's phone,
+        // which is not "made from the terminal", it just looks like a mistake.
+        attendees: state.me?.id ? [state.me.id] : [],
+        // No reminder asked for means TimeTree's default, not silence: its own
+        // form puts a day-ahead reminder on everything (measured — [1440]
+        // timed, [900] all-day), and 「歯医者入れといて」 does not mean "and
+        // don't tell me about it". `--alert none` / `reminders: []` is how you
+        // say none. alertsFor picks the right rung.
+        alerts: alertsFor(alerts === undefined ? [{ days: 1 }] : alerts, allDay),
       });
       if (!saved?.uuid) throw new Error('サーバーが予定を返しませんでした');
       TTX.store.applyEvent(target.id, saved);

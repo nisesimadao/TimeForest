@@ -8,7 +8,13 @@
  * Usage:
  *   node tools/notify.js "タイトル" "本文"
  *   node tools/notify.js --push                      # summarise the last commit
- *   node tools/notify.js --json '{"title":..,"fields":[..]}'
+ *   node tools/notify.js --json '{"title":..,"description":..,"fields":[..]}'
+ *
+ * ⚠ --json IS the Discord embed, not a wrapper around one. So the keys are
+ *   Discord's: `description`, not `body`; `color` an integer, not "e8a33d".
+ *   Discord ignores keys it doesn't know and still answers 204, so a `body`
+ *   posts fine and simply never appears — which is how every intro paragraph
+ *   sent from here went missing without a single error.
  *   echo '{"title":..}' | node tools/notify.js --json -
  *
  * Options:

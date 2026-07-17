@@ -333,6 +333,27 @@ const killApp = () => {
   // hours out — the API takes it, the app shows it, and nothing says a word.
   sec('通知 — and the all-day ladder');
   {
+    // What TimeTree's OWN web app POSTs for a new event, captured by opening it
+    // in a BrowserWindow on the throwaway account and reading the request:
+    //
+    //   timed:   {"all_day":false, …, "attendees":[<me>], "alerts":[1440]}
+    //   all-day: {"all_day":true,  …, "attendees":[<me>], "alerts":[900]}
+    //
+    // We used to send [] for both. An event made here reminded nobody, and the
+    // person who made it had no way to know until they missed it. This went
+    // unnoticed because our default was only ever compared against our default.
+    const def = JSON.parse(tf('add', 'CLI検証-既定', '--at', '7/26 10:00', '--json').out);
+    check(JSON.stringify(def.event.alerts) === '[1440]',
+      `no --alert means TimeTree's own default, a day ahead (${JSON.stringify(def.event.alerts)})`);
+    check(def.event.attendees?.length === 1,
+      `and you are on it, the way TimeTree's form does it (${JSON.stringify(def.event.attendees)})`);
+    const defAll = JSON.parse(tf('add', 'CLI検証-既定終日', '--at', '7/27', '--json').out);
+    check(JSON.stringify(defAll.event.alerts) === '[900]',
+      `and an all-day one gets 900, its rung of the same 「1日前」 (${JSON.stringify(defAll.event.alerts)})`);
+    const quiet = JSON.parse(tf('add', 'CLI検証-無音', '--at', '7/28 9:00', '--alert', 'none', '--json').out);
+    check(JSON.stringify(quiet.event.alerts) === '[]', '--alert none is how you ask for silence');
+    for (const e of [def, defAll, quiet]) tf('rm', e.event.uuid.slice(0, 8));
+
     const timed = JSON.parse(tf('add', 'CLI検証-通知', '--at', '7/28 10:00', '--alert', '30m,1d', '--json').out);
     check(JSON.stringify(timed.event.alerts) === '[30,1440]',
       `a timed event takes plain minutes (${JSON.stringify(timed.event.alerts)})`);

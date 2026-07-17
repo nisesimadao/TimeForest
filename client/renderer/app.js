@@ -1951,9 +1951,18 @@
       repeat: { freq: '', byday: [], until: '', rest: {} },
       url: '',
       checklist: [],
-      alerts: [],
-      // TimeTree's own form assigns the event to you by default, and the
-      // user's phone renders that avatar. Match it rather than quietly
+      // TimeTree's own form puts a reminder a day ahead on EVERY new event —
+      // measured by watching what its web app actually POSTs: [1440] for a
+      // timed one and [900] for an all-day one (its own ladder, HANDOFF §3).
+      // We sent [], so an event made here never reminded anybody, and the
+      // person who made it had no way to find that out until they missed it.
+      //
+      // Worth saying how this got missed for so long: our form's default was
+      // compared against our form. Only opening TimeTree's own web app and
+      // reading the request settled it.
+      alerts: [allDay ? TTX.api.alldayAlert(1) : 1440],
+      // Same reasoning — TimeTree's form assigns the event to you by default,
+      // and the user's phone renders that avatar. Match it rather than quietly
       // producing events that look different from the ones they make there.
       attendees: st.me?.id ? [st.me.id] : [],
     };

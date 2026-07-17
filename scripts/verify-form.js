@@ -378,9 +378,16 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   check(await page.evaluate(() => document.querySelectorAll('.f-mem.on').length) === 1,
     'you are assigned by default, matching what TimeTree\'s own form does');
 
+  // TimeTree's own form puts a day-ahead reminder on every new event — measured
+  // by reading what its web app POSTs ([1440] timed, [900] all-day). We sent []
+  // for a long time, so an event made here reminded nobody and the person who
+  // made it only found out by missing it.
+  check((await chipText()) === '1日前',
+    `a new event already has TimeTree's own default reminder (${await chipText()})`);
+
   await page.selectOption(alertRow, '30');
   await page.selectOption(alertRow, '60');
-  check((await chipText()) === '30分前, 1時間前',
+  check((await chipText()) === '30分前, 1時間前, 1日前',
     `reminders read the way TimeTree words them (${await chipText()})`);
 
   // Flipping all-day changes what "before" is measured from.
@@ -408,7 +415,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await page.fill('.f-title', T5);
   await page.click('.sw');
   await page.fill('.f-row:has(> .f-k:text-is("開始")) .f-date', DATE);
-  await page.selectOption(alertRow, '900');
+  // Toggling to all-day carries the default onto the other ladder: [1440]
+  // becomes [900], which is the same 「1日前」. So 900 is already on, and the
+  // picker stops offering it — it only lists what you have not picked yet.
+  check((await chipText()) === '1日前',
+    `an all-day event starts on 900 — TimeTree's own default, its rung (${await chipText()})`);
   await page.selectOption(alertRow, '2340');
   check((await chipText()) === '1日前, 2日前', `all-day ladder is worded in days (${await chipText()})`);
   await page.click('.btn.primary');
