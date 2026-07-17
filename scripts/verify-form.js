@@ -876,27 +876,53 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   };
   await roll('bottom', 14);
   const a1 = await agenda();
-  check(asDate(a1.first) > asDate(a0.first),
-    `scrolling to the bottom travels forward (${a0.first} → ${a1.first})`);
+  // By `last`, not `first`: on a quiet calendar the window GROWS before it
+  // starts sliding, so the front stays put while the far end runs ahead.
+  // Measuring the front reports "went nowhere" for a window that moved a year.
+  check(asDate(a1.last) > asDate(a0.last),
+    `scrolling to the bottom travels forward (…${a0.last} → …${a1.last})`);
   check(a1.title !== a0.title, `the title follows what you're looking at (${a0.title} → ${a1.title})`);
 
   // What the WINDOW must not do is grow. It used to only ever get longer, and
   // the scrollbar paid for it: measured, the thumb went 96px → 24px just by
   // scrolling to the end. A scrollbar that shrinks every time you use it has
   // stopped doing the one thing it is for.
-  check(Math.abs(a1.thumb - a0.thumb) <= a0.thumb,
-    `the scrollbar thumb does not shrink away (${a0.thumb}px → ${a1.thumb}px)`);
-  check(a1.rows < a0.rows * 3,
-    `and the DOM stays bounded (${a0.rows} → ${a1.rows} rows after 14 screens of travel)`);
+  // The claim is CONVERGENCE, not a size. Comparing against the first reading
+  // is wrong twice over: the list starts near one screen tall, so the thumb
+  // starts near full and settling to the window's size looks like a collapse;
+  // and two earlier attempts at that shape both passed while the bug was
+  // present (`Math.abs(a1.thumb - a0.thumb) <= a0.thumb` is satisfied by the
+  // thumb reaching ONE PIXEL — it passes hardest exactly when it's worst).
+  //
+  // What the fix actually buys: keep going and it STOPS shrinking. Measured,
+  // 30 rolls travelling 11 months read 95 → 94 → 94 → 96px. Unbounded, it just
+  // keeps going down.
+  await roll('bottom', 14);
+  const a1b = await agenda();
+  check(a1b.thumb >= a1.thumb * 0.8,
+    `the scrollbar stops shrinking — 14 more screens of travel leaves it alone `
+    + `(${a0.thumb}px → ${a1.thumb}px → ${a1b.thumb}px)`);
+  check(a1b.rows <= a1.rows * 1.5,
+    `and the DOM has stopped growing too (${a0.rows} → ${a1.rows} → ${a1b.rows} rows)`);
+  check(asDate(a1b.first) > asDate(a1.first),
+    `while still travelling (${a1.first} → ${a1b.first}) — otherwise it stopped, `
+    + 'which would make the two checks above meaningless');
 
   // Travelling back must actually get back. With the window sliding, "grow the
   // near side, trim the far one" has to work in both directions — measured
   // once at 15 months forward but only 2 back, because at scrollTop 0 nothing
   // pushed the content down and the next scroll had nowhere to go.
-  await roll('top', 16);
+  // The claim is that you CAN come back — the bug this replaced left the window
+  // stranded in an empty stretch of 2030 with nothing on screen and no way out
+  // in either direction. Not that N rolls back undo N rolls out: they don't,
+  // and asserting that only measures how many times this loop happened to run.
+  await roll('top', 34);
   const a2 = await agenda();
-  check(asDate(a2.first) <= asDate(a0.first),
-    `and scrolling back the same way returns (${a1.first} → ${a2.first}, started ${a0.first})`);
+  check(asDate(a2.first) < asDate(a1b.first),
+    `and scrolling back travels back (${a1b.first} → ${a2.first}, started ${a0.first})`);
+  check(a2.rows > 0 && a2.scrollable,
+    `with something on screen and somewhere left to go (${a2.rows} rows) — the old `
+    + 'version could slide into an empty year and become unscrollable, permanently');
 
   // The thing that quietly ruins it: months appear ABOVE you, and the browser
   // keeps scrollTop where it was, so the page lurches by exactly the height
