@@ -677,6 +677,82 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await page.evaluate((was) => window.host.map.setEnabled(was), mapsWas);
   ok('map test event cleaned up, maps switch restored');
 
+  // --- 7c. multi-day spans in the month grid --------------------------------
+  // A three-day trip used to draw as three chips, each with the full title, so
+  // it read as three events. "The display disagrees with the facts" is the one
+  // thing a calendar must never do, and it's invisible in the data — only the
+  // rendered grid can catch it.
+  sec('month grid — a span is one bar, not one chip per day');
+  const M1 = `TF検証-帰省-${stamp}`;
+  const M2 = `TF検証-夏休み-${stamp}`;
+  const M3 = `TF検証-出張-${stamp}`;
+  const seeded = await page.evaluate(async ([t1, t2, t3]) => {
+    const cal = [...TTX.store.state.enabled][0];
+    const ids = [];
+    const mk = async (title, s, e, label) => {
+      const ev = await TTX.api.createEvent(cal, {
+        title, allDay: true, startAt: s, endAt: e, tz: 'Asia/Tokyo', labelId: label,
+      });
+      TTX.store.applyEvent(cal, ev);
+      ids.push(ev.uuid);
+    };
+    await mk(t1, Date.UTC(2026, 6, 25), Date.UTC(2026, 6, 27), 9);   // crosses Sat->Sun
+    await mk(t2, Date.UTC(2026, 6, 22), Date.UTC(2026, 7, 2), 3);    // three week rows
+    await mk(t3, Date.UTC(2026, 6, 23), Date.UTC(2026, 6, 24), 6);   // shares a lane
+    return ids;
+  }, [M1, M2, M3]);
+
+  await page.click('.seg button:text-is("月")');
+  await page.waitForSelector('.m-grid', { timeout: 5000 });
+  await page.click('.pill:text-is("今日")');
+  await sleep(900);
+
+  const grid = await page.evaluate(([t1, t2, t3]) => {
+    const bars = [...document.querySelectorAll('.m-bar')].map((n) => ({
+      t: n.querySelector('.m-ti').textContent,
+      col: n.style.gridColumn,
+      lane: n.style.gridRow,
+    }));
+    return {
+      trip: bars.filter((b) => b.t === t1),
+      holiday: bars.filter((b) => b.t === t2),
+      trip2: bars.filter((b) => b.t === t3),
+      // A span must not ALSO appear as a per-day chip.
+      chips: [...document.querySelectorAll('.m-ev .m-ti')].map((n) => n.textContent)
+        .filter((x) => [t1, t2, t3].includes(x)),
+      status: document.querySelector('.side-status')?.textContent,
+    };
+  }, [M1, M2, M3]);
+
+  // 7/25 is a Saturday, so the trip is drawn twice — once per week row — not
+  // three times, and not once with a title you can't see on the second row.
+  check(grid.trip.length === 2,
+    `a 3-day span crossing a week edge draws 2 bars, one per week (got ${grid.trip.length})`);
+  check(grid.trip.some((b) => b.col === '7 / span 1') && grid.trip.some((b) => b.col === '1 / span 2'),
+    `and they cover the right days (${grid.trip.map((b) => b.col).join(' | ')})`);
+  check(grid.chips.length === 0,
+    `the span does not also appear as per-day chips (${JSON.stringify(grid.chips)})`);
+  check(grid.holiday.length === 3,
+    `a 12-day span spills across 3 week rows (got ${grid.holiday.length})`);
+  check(grid.holiday.some((b) => b.col === '1 / span 7'),
+    'and fills a whole week row where it covers one');
+  // 出張 (23-24) and 帰省 (25) don't overlap, so they belong on the same lane.
+  check(grid.trip2[0]?.lane === grid.trip.find((b) => b.col === '7 / span 1')?.lane,
+    `non-overlapping spans share a lane (出張 lane ${grid.trip2[0]?.lane})`);
+  check(grid.holiday[0]?.lane !== grid.trip2[0]?.lane,
+    'overlapping spans get their own lanes');
+  // The footer used to sum the cells, so a 12-day span counted as 12 events.
+  check(!/1[5-9]件|2\d件/.test(grid.status || ''),
+    `the footer counts events, not day-slots (${grid.status})`);
+
+  await page.evaluate(async (ids) => {
+    const cal = [...TTX.store.state.enabled][0];
+    for (const u of ids) { await TTX.api.deleteEvent(cal, u); TTX.store.markDeleted(cal, u); }
+  }, seeded);
+  await page.click('.seg button:text-is("アジェンダ")');
+  await sleep(500);
+  ok('span test events cleaned up');
+
   // --- 8. settings ----------------------------------------------------------
   sec('settings');
   await page.keyboard.press(',');

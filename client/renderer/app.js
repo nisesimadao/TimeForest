@@ -677,6 +677,50 @@
 
   // --- render: month ----------------------------------------------------
 
+  /**
+   * Lay the week's spanning events into lanes.
+   *
+   * A three-day trip used to render as three separate chips, one per cell,
+   * each carrying the full title — so 八田野帰省 appeared three times and read
+   * as three events. A calendar showing something that isn't true is worse
+   * than a calendar showing less, and this is the failure people notice first.
+   *
+   * So: one bar per event per week row, the width of its actual span. Lanes
+   * stack them when they overlap. A span crossing Saturday is drawn once in
+   * each week — you can't read a label that's off the top of the row.
+   */
+  function laneWeek(days, all) {
+    const first = days[0];
+    const last = days[days.length - 1];
+    const bars = all
+      .filter((o) => o.multiDay && o.endKey >= first && o.startKey <= last)
+      // Longest first, then earliest: the eye follows a long bar across, and
+      // starting with the long ones keeps them on the top lanes.
+      .sort((a, b) => (b.days.length - a.days.length) || (a.startKey < b.startKey ? -1 : 1));
+
+    const lanes = [];
+    const out = [];
+    for (const o of bars) {
+      const col = Math.max(0, days.indexOf(o.startKey < first ? first : o.startKey));
+      const endCol = Math.min(6, days.indexOf(o.endKey > last ? last : o.endKey));
+      const span = endCol - col + 1;
+      let lane = lanes.findIndex((cells) => !cells.some((c) => c >= col && c <= endCol));
+      if (lane < 0) { lane = lanes.length; lanes.push([]); }
+      for (let c = col; c <= endCol; c++) lanes[lane].push(c);
+      out.push({
+        o,
+        lane,
+        col,
+        span,
+        // A bar that continues past this row's edge shouldn't grow a rounded
+        // cap there — the cap is what says "this is where it ends".
+        openStart: o.startKey < first,
+        openEnd: o.endKey > last,
+      });
+    }
+    return { bars: out, lanes: lanes.length };
+  }
+
   function renderMonth() {
     const from = monthStart(ui.cursor);
     const to = monthEnd(ui.cursor);
@@ -699,9 +743,23 @@
 
     const grid = el('div', 'm-grid');
     const today = todayKey();
-    let count = 0;
+    // Count events, not day-slots. groupByDay repeats a span into every day it
+    // covers, so summing the cells called a 12-day holiday twelve events — the
+    // same double-counting the bars exist to stop, in the footer.
+    const seen = new Set();
+    for (const key of TTX.tz.daysBetween(from, to)) {
+      for (const o of byDay[key] || []) seen.add(o.uuid + '@' + o.start);
+    }
+    const count = seen.size;
 
-    for (const key of TTX.tz.daysBetween(gridFrom, gridTo)) {
+    const allDays = TTX.tz.daysBetween(gridFrom, gridTo);
+    for (let w = 0; w < allDays.length / 7; w++) {
+      const days = allDays.slice(w * 7, w * 7 + 7);
+      const { bars, lanes } = laneWeek(days, all);
+      const week = el('div', 'm-week');
+      week.style.setProperty('--lanes', lanes);
+
+      for (const key of days) {
       const dow = weekdayOf(key);
       const inMonth = monthOf(key) === monthOf(ui.cursor);
       const cell = el('div', 'm-cell'
@@ -710,8 +768,8 @@
         + (dow === 0 ? ' sun' : dow === 6 ? ' sat' : ''));
       cell.appendChild(el('div', 'm-num', String(+key.slice(8))));
 
-      const list = byDay[key] || [];
-      if (inMonth) count += list.length;
+      // Spanning events are drawn once, by the week, not once per day.
+      const list = (byDay[key] || []).filter((o) => !o.multiDay);
 
       const evs = el('div', 'm-evs');
       // If it doesn't all fit, give up one slot so the "+N" line has a home.
@@ -742,7 +800,28 @@
       // Anywhere the chips aren't is free space on that day — clicking it means
       // "put something here".
       cell.onclick = () => openForm({ dateKey: key });
-      grid.appendChild(cell);
+      week.appendChild(cell);
+      }
+
+      // The bars go over the cells, so a span reads as one object rather than
+      // as a chip that happens to be repeated seven times.
+      if (bars.length) {
+        const layer = el('div', 'm-bars');
+        for (const { o, lane, col, span, openStart, openEnd } of bars) {
+          const b = el('button', 'm-bar'
+            + (openStart ? ' open-s' : '') + (openEnd ? ' open-e' : ''));
+          b.style.gridColumn = `${col + 1} / span ${span}`;
+          b.style.gridRow = String(lane + 1);
+          fill(b, o);
+          const t = el('span', 'm-ti', o.title);
+          b.appendChild(t);
+          b.title = o.days.length > 1 ? `${o.title}（${o.days.length}日間）` : o.title;
+          b.onclick = (e) => { e.stopPropagation(); openDetail(o, b); };
+          layer.appendChild(b);
+        }
+        week.appendChild(layer);
+      }
+      grid.appendChild(week);
     }
     wrap.appendChild(grid);
     ui.status = `${count}件の予定`;

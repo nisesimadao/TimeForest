@@ -595,7 +595,55 @@ button { background: none; border: 0; cursor: default; text-align: left; }
 .m-head div.sat { color: var(--blue); }
 .m-head div.sun { color: var(--red); }
 
-.m-grid { flex: 1; display: grid; grid-template-columns: repeat(7, 1fr); min-height: 0; }
+/* Six week rows, not 42 loose cells: a span has to be able to reach across
+   days, and it can only do that if the week is the thing it lives in. */
+.m-grid { flex: 1; display: grid; grid-template-rows: repeat(6, 1fr); min-height: 0; }
+
+.m-week {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  min-height: 0;
+  --lanes: 0;
+  --lane-h: 16px;
+}
+
+/* The bar layer sits over the cells, below the date numbers. Same 7 columns,
+   so a bar's grid-column IS its span in days. */
+.m-bars {
+  position: absolute;
+  top: 22px;
+  left: 0;
+  right: 0;
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  grid-auto-rows: var(--lane-h);
+  gap: 1px 0;
+  pointer-events: none;
+  z-index: 1;
+}
+.m-bar {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  height: 15px;
+  margin: 0 2px;
+  padding: 0 5px;
+  border-radius: var(--r-sm);
+  font-size: var(--t-xs);
+  line-height: 15px;
+  overflow: hidden;
+  white-space: nowrap;
+  transition: filter 0.12s;
+}
+.m-bar:hover { filter: brightness(1.08); }
+/* A bar that runs off the edge of the week keeps going — the rounded cap is
+   what says "it ends here", so don't draw one where it doesn't. */
+.m-bar.open-s { margin-left: 0; border-top-left-radius: 0; border-bottom-left-radius: 0; }
+.m-bar.open-e { margin-right: 0; border-top-right-radius: 0; border-bottom-right-radius: 0; }
+
+/* Single-day chips start below whatever lanes this week needs. */
+.m-week .m-evs { margin-top: calc(var(--lanes) * (var(--lane-h) + 1px)); }
 
 .m-cell {
   border-right: var(--hair) solid var(--sep);
@@ -607,7 +655,7 @@ button { background: none; border: 0; cursor: default; text-align: left; }
   flex-direction: column;
   gap: 1px;
 }
-.m-cell:nth-child(7n) { border-right: 0; }
+.m-week .m-cell:last-child { border-right: 0; }
 .m-cell.outside { background: var(--bg-side); }
 .m-cell.outside .m-num { opacity: 0.4; }
 .m-cell.today { background: var(--accent-wash); }
