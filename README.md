@@ -270,6 +270,37 @@ node build-userscript.js     # → dist/timeforest.user.js
 javascript:document.documentElement.setAttribute('data-theme','dark')
 ```
 
+### フル版 — デスクトップ UI ごとスマホへ
+
+上のユーザースクリプトが本家のモバイル Web に**項目を足す**のに対し、こちらは
+本家のカレンダー画面（`/calendars`）の上に**デスクトップ版の UI をまるごと
+載せる**（週の時間グリッド・月グリッド・書き込み・コメントまで、スマホで）。
+
+同一オリジンで動くので、本家に普段どおりログインしていれば——メールでも
+Google でも Apple でも——**そのセッションに相乗りするだけ**で、`_session_id` の
+貼り付けもログインの受け渡しも要らない。これがホスト版（PC で devtools から
+トークンを貼る）に対する、スマホの答え。狭い画面ではサイドバーが ☰ の
+ドロワーになり、ツールバーは畳まれる。
+
+ホスト版をデプロイしていれば、同じ場所から入る（ユーザースクリプト
+マネージャの自動更新も同じ URL を見る）:
+
+```
+https://<あなたのデプロイ>/timeforest-app.user.js
+```
+
+ローカルでビルドするなら:
+
+```
+node build-app-userscript.js     # → dist/timeforest-app.user.js
+```
+
+`/signin` などログイン前のページには触れない（本家のログインをそのまま使う）。
+地図だけは本家ページの CSP に阻まれるので、この版では出ない。
+
+- **iOS Safari** — [Userscripts](https://apps.apple.com/app/userscripts/id1463298887)（無料）
+- **Android** — Firefox + Tampermonkey、または Kiwi Browser
+
 ## ダークモードについて
 
 **TimeTree は完成したダークテーマを既に出荷している。** `theme-*.css` の中に
@@ -396,7 +427,8 @@ rrule.js は入れず、`src/lib/recur.js` に小さな展開器を自前で持�
 
 ```
 manifest.json
-build-userscript.js  拡張 → 1ファイルのユーザースクリプト（スマホ用）
+build-userscript.js  拡張 → 1ファイルのユーザースクリプト（スマホ用・本家に項目を足す）
+build-app-userscript.js  デスクトップ UI → スマホ用ユーザースクリプト（本家 /calendars に丸ごとマウント）
 src/
   bg.js            ツールバー / ショートカット、OSM タイル、API を worker で中継
   content.js       起動と SPA 遷移への追従、本家 UI への注入をまとめる
@@ -417,10 +449,12 @@ src/
   ui/notifytoggle.js リマインド通知の切替を本家ツールバーに足す（拡張のみ／bg.js が発火）
 client/            Electron デスクトップクライアント（src/lib をそのまま読む）
 web/               ブラウザ版（ホスト型）。デスクトップの renderer をそのまま配信
-  build.js         自己完結の web/dist を組む（src/lib と client/renderer のコピー）
+  build.js         自己完結の web/dist を組む（src/lib と client/renderer のコピー、スマホ用ユーザースクリプトも同梱）
   proxy-core.js    /api/tt/* を timetreeapp.com/api/* にサーバー側で中継（CORS 回避）
   map-core.js      OSM タイル / Nominatim をサーバー側で取得（UA 付き）
   host-web.js      window.host のブラウザ実装（renderer を無改変で動かす）
+  host-userscript.js  同じ window.host のユーザースクリプト版（同一オリジンの直 fetch）
+  app-userscript-boot.js  本家 /calendars を乗っ取りデスクトップ UI を載せる
   dev-server.js    ローカル用（Vercel と同じ経路を依存ゼロで）
 api/               Vercel サーバーレス関数（tt プロキシ・connect・map。web/* を共有）
 ```
