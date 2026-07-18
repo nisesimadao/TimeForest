@@ -36,7 +36,7 @@ const header = `// ==UserScript==
 // @namespace    https://github.com/nisesimadao/TimeForest
 // @version      ${version}
 // @description  timetreeapp.com 上でデスクトップ版 TimeForest の UI を動かす（同オリジンなのでログイン受け渡し不要・スマホ可）
-// @match        https://timetreeapp.com/*
+// @match        https://timetreeapp.com/calendars*
 // @run-at       document-idle
 // @grant        none
 // @downloadURL  ${SELF_URL}
@@ -53,7 +53,12 @@ function build() {
     '(function () {',
     "'use strict';",
     '\n/* ===== web/host-userscript.js ===== */\n' + read('web/host-userscript.js'),
-    "\n// Not signed in (no csrf meta) -> leave TimeTree's own page (incl. its login) alone.",
+    "\n// Only take over the calendar app itself. /signin, /signup and the marketing",
+    "// pages ALSO ship a csrf meta, so a csrf check alone would strip TimeTree's own",
+    "// login and lock the user out (measured). @match already scopes us to",
+    "// /calendars*, but self-guard too, in case a manager is set to a broader match.",
+    "if (!/^\\/calendars(\\/|$)/.test(location.pathname)) return;",
+    "// And bail if there's no csrf token — we couldn't call the API to sync anyway.",
     "if (!document.querySelector('meta[name=\"csrf-token\"]')) return;",
     '\nvar __TTX_APP_CSS__ = ' + JSON.stringify(appCss) + ';',
     '\n/* ===== web/app-userscript-boot.js ===== */\n' + read('web/app-userscript-boot.js'),
