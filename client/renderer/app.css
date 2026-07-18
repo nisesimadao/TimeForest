@@ -1189,6 +1189,12 @@ button { background: none; border: 0; cursor: default; text-align: left; }
   animation: sheet 0.2s var(--ease);
 }
 @keyframes sheet { from { transform: translateY(-8px) scale(0.985); opacity: 0; } }
+/* Leaving mirrors arriving — closeForm() adds `.out`, the sheet slides back up
+   as the dim lifts, and the node is removed when the sheet's animation ends. */
+.scrim.out { animation: fade-out 0.16s ease forwards; }
+.scrim.out .form { animation: sheet-out 0.16s var(--ease) forwards; }
+@keyframes fade-out { to { opacity: 0; } }
+@keyframes sheet-out { to { transform: translateY(-6px) scale(0.985); opacity: 0; } }
 
 .f-head { padding: 13px 16px 0; }
 .f-h-t { font-size: var(--t-md); font-weight: 700; letter-spacing: -0.01em; }

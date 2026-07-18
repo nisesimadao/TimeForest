@@ -2163,11 +2163,33 @@
   }
 
   function closeForm() {
+    const scrim = ui.form;
     ui.formRelease?.();
     ui.formRelease = null;
-    ui.form?.remove();
     ui.form = null;
     ui.formClose = null;
+    if (!scrim) return;
+    // The sheet slid in (@keyframes sheet); leaving plays the mirror instead of
+    // blinking out — the dim lifts as the sheet slides back up. Every close
+    // funnels here (save, delete, cancel, discard, Escape), and none of them is
+    // tearing down an anchor underneath the modal the way the detail card's
+    // internal closes are, so there's no instant-path exception to carve out.
+    const card = scrim.querySelector('.form');
+    if (!card || reducedMotion()) { scrim.remove(); return; }
+    scrim.classList.add('out');
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      card.removeEventListener('animationend', onEnd);
+      scrim.remove();
+    };
+    // Wait on the sheet's own exit (filtered by name so a child's animationend
+    // can't end it early); the timeout is the backstop for an animationend that
+    // never fires (a hidden tab cancels the animation silently).
+    const onEnd = (e) => { if (e.animationName === 'sheet-out') finish(); };
+    card.addEventListener('animationend', onEnd);
+    setTimeout(finish, 220);
   }
 
   /**
