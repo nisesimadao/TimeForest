@@ -60,9 +60,204 @@
     row.parentElement.insertBefore(btn, row.nextSibling);
   }
 
-  // Placeholder — the picker itself lands in the next step.
-  function openPicker(loc) {
-    console.debug('[TTX] map picker for', loc?.value);
+  const elem = (tag, cls, text) => {
+    const n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text != null) n.textContent = text;
+    return n;
+  };
+
+  /* Our own styles, injected once. We're a guest in TimeTree's page, so
+   * everything is scoped under .ttx-mf and uses fixed positioning above their
+   * z-index. Kept deliberately plain — this is a utility panel, not a place to
+   * reinvent their design. */
+  const CSS = `
+.ttx-mapform-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  margin: 6px 0 2px; padding: 7px 12px;
+  font: inherit; font-size: 13px; cursor: pointer;
+  background: #f2f2f7; color: #1c1c1e;
+  border: 1px solid rgba(60,60,67,0.29); border-radius: 8px;
+}
+.ttx-mapform-btn:hover { background: #e7e7ec; }
+@media (prefers-color-scheme: dark) {
+  .ttx-mapform-btn { background: #2c2c2e; color: #f2f2f7; border-color: rgba(84,84,88,0.6); }
+  .ttx-mapform-btn:hover { background: #3a3a3c; }
+}
+.ttx-mf-scrim {
+  position: fixed; inset: 0; z-index: 2147483000;
+  background: rgba(0,0,0,0.4); display: grid; place-items: center;
+  font-family: -apple-system, "Hiragino Sans", "Noto Sans JP", "Segoe UI", sans-serif;
+}
+.ttx-mf-card {
+  width: min(560px, 94vw); max-height: 90vh; display: flex; flex-direction: column;
+  background: #fff; color: #1c1c1e; border-radius: 14px; overflow: hidden;
+  box-shadow: 0 12px 48px rgba(0,0,0,0.35);
+}
+.ttx-mf-head { padding: 13px 16px; font-size: 15px; font-weight: 600; border-bottom: 0.5px solid rgba(60,60,67,0.29); }
+.ttx-mf-bar { padding: 10px 16px 8px; }
+.ttx-mf-q {
+  width: 100%; box-sizing: border-box; padding: 8px 11px; font: inherit; font-size: 14px;
+  border: 1px solid rgba(60,60,67,0.29); border-radius: 9px; background: #f2f2f7; color: inherit;
+}
+.ttx-mf-results { max-height: 176px; overflow-y: auto; }
+.ttx-mf-r {
+  display: flex; flex-direction: column; gap: 1px; width: 100%; text-align: left;
+  padding: 8px 16px; background: none; border: none; border-top: 0.5px solid rgba(60,60,67,0.16);
+  cursor: pointer; font: inherit; color: inherit;
+}
+.ttx-mf-r:hover { background: #f2f2f7; }
+.ttx-mf-r-n { font-size: 14px; }
+.ttx-mf-r-a { font-size: 12px; color: rgba(60,60,67,0.6); }
+.ttx-mf-box {
+  position: relative; height: 300px; margin: 4px 16px; border-radius: 10px; overflow: hidden;
+  background: #e8e8ec; cursor: grab; touch-action: none;
+}
+.ttx-mf-box.grabbing { cursor: grabbing; }
+/* These two class names come from the shared src/lib/map.js, not from us — it
+ * builds the tile grid as .mp-tiles with .mp-t images. Style them here so the
+ * shared code needs no styling of its own. */
+.mp-tiles { position: absolute; top: 0; left: 0; display: grid; }
+.mp-t { display: block; width: 256px; height: 256px; }
+.ttx-mf-pin {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -100%);
+  pointer-events: none; font-size: 30px; line-height: 1; z-index: 2;
+  filter: drop-shadow(0 1px 2px rgba(0,0,0,0.4));
+}
+.ttx-mf-foot { display: flex; align-items: center; gap: 8px; padding: 11px 16px; border-top: 0.5px solid rgba(60,60,67,0.29); }
+.ttx-mf-coord { font-size: 12px; color: rgba(60,60,67,0.6); font-variant-numeric: tabular-nums; }
+.ttx-mf-sp { flex: 1; }
+.ttx-mf-btn { padding: 7px 15px; font: inherit; font-size: 14px; cursor: pointer;
+  border: 1px solid rgba(60,60,67,0.29); border-radius: 8px; background: #fff; color: inherit; }
+.ttx-mf-btn.pri { background: #12a45f; color: #fff; border-color: transparent; font-weight: 600; }
+@media (prefers-color-scheme: dark) {
+  .ttx-mf-card { background: #1c1c1e; color: #f2f2f7; }
+  .ttx-mf-q, .ttx-mf-r:hover { background: #2c2c2e; }
+  .ttx-mf-btn { background: #2c2c2e; border-color: rgba(84,84,88,0.6); }
+  .ttx-mf-btn.pri { background: #30d158; color: #06210f; }
+  .ttx-mf-r-a, .ttx-mf-coord { color: rgba(235,235,245,0.6); }
+}`;
+
+  function ensureCss() {
+    if (document.getElementById('ttx-mf-css')) return;
+    const s = elem('style');
+    s.id = 'ttx-mf-css';
+    s.textContent = CSS;
+    document.head.appendChild(s);
+  }
+
+  /**
+   * Ask before the first request, like desktop does — until the user says yes,
+   * the extension has spoken only to TimeTree, and telling OSM roughly where the
+   * family's events are is a thing to ask rather than assume.
+   */
+  async function ensureMaps() {
+    if (await mapsOn()) return true;
+    // eslint-disable-next-line no-alert
+    const yes = window.confirm(
+      '地図を使うと、表示する範囲を OpenStreetMap に問い合わせます'
+      + '（予定の内容は送りません）。有効にしますか？',
+    );
+    if (yes) await setMapsOn(true);
+    return yes;
+  }
+
+  /**
+   * Open the picker over TimeTree's own form. Reads the location the form
+   * already has; on 決定, writes the chosen text back into their <input> (so
+   * their form saves it) and remembers lat/lon for the save hook to PUT — since
+   * TimeTree's own POST never carries coordinates.
+   */
+  async function openPicker(loc) {
+    if (!(await ensureMaps())) return;
+    ensureCss();
+
+    const scrim = elem('div', 'ttx-mf-scrim');
+    const card = elem('div', 'ttx-mf-card');
+    card.appendChild(elem('div', 'ttx-mf-head', '場所を選ぶ'));
+
+    const bar = elem('div', 'ttx-mf-bar');
+    const q = elem('input', 'ttx-mf-q');
+    q.placeholder = '駅名・住所・店名で検索';
+    q.value = loc.value || '';
+    bar.appendChild(q);
+    card.appendChild(bar);
+
+    const results = elem('div', 'ttx-mf-results');
+    card.appendChild(results);
+
+    const box = elem('div', 'ttx-mf-box');
+    const pin = elem('div', 'ttx-mf-pin', '📍');   // centre-fixed; the map moves under it
+    box.appendChild(pin);
+    card.appendChild(box);
+
+    const foot = elem('div', 'ttx-mf-foot');
+    const coord = elem('div', 'ttx-mf-coord');
+    const cancel = elem('button', 'ttx-mf-btn', 'キャンセル');
+    const use = elem('button', 'ttx-mf-btn pri', 'この場所にする');
+    foot.append(coord, elem('div', 'ttx-mf-sp'), cancel, use);
+    card.appendChild(foot);
+
+    scrim.appendChild(card);
+    document.body.appendChild(scrim);
+
+    // Start on Tokyo — a world view would make the first drag meaningless.
+    // (Desktop starts on the event's own lat/lon, but TimeTree's form has none.)
+    const state = { lat: 35.681236, lon: 139.767125, z: 12 };
+    const showCoord = () => { coord.textContent = `${state.lat.toFixed(5)}, ${state.lon.toFixed(5)}`; };
+    const repaint = TTX.map.mapView(box, state, tile, showCoord);
+    showCoord();
+    requestAnimationFrame(repaint);
+
+    let timer;
+    q.oninput = () => {
+      clearTimeout(timer);
+      timer = setTimeout(async () => {
+        const term = q.value.trim();
+        if (term.length < 2) { results.textContent = ''; return; }
+        let list = [];
+        try { list = await search(term); } catch { /* offline */ }
+        results.textContent = '';
+        for (const r of list) {
+          const b = elem('button', 'ttx-mf-r');
+          b.append(elem('span', 'ttx-mf-r-n', r.name), elem('span', 'ttx-mf-r-a', r.address));
+          b.onclick = () => {
+            state.lat = r.lat; state.lon = r.lon; state.z = 17;
+            q.value = r.name; results.textContent = '';
+            showCoord(); repaint();
+          };
+          results.appendChild(b);
+        }
+      }, 350);
+    };
+    q.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); results.querySelector('.ttx-mf-r')?.click(); } };
+
+    const close = () => { clearTimeout(timer); scrim.remove(); };
+    cancel.onclick = close;
+    use.onclick = () => {
+      const text = q.value.trim();
+      // Write into TimeTree's own input the way React notices — set .value then
+      // dispatch input, or the field keeps its old value on save.
+      setNativeValue(loc, text);
+      // Remember the pin for the save hook (TimeTree's POST omits lat/lon).
+      TTX.mapform._pending = { location: text, lat: state.lat, lon: state.lon };
+      close();
+    };
+    scrim.onclick = (e) => { if (e.target === scrim) close(); };
+    document.addEventListener('keydown', function esc(e) {
+      if (e.key === 'Escape') { close(); document.removeEventListener('keydown', esc); }
+    });
+    q.focus();
+  }
+
+  /* React tracks an input's value on the element's own value setter; assigning
+   * input.value directly bypasses it and React overwrites us on its next
+   * render. Set through the prototype setter, then dispatch input — the way a
+   * user's keystroke reaches React. */
+  function setNativeValue(input, value) {
+    const proto = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value');
+    proto?.set?.call(input, value);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
   }
 
   let observer = null;

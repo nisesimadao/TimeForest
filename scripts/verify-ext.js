@@ -125,6 +125,73 @@ const check = (c, m) => (c ? ok(m) : bad(m));
       return n;
     }, src);
     check(noBtn === 0, 'and shows no button in the userscript build, where there is no worker behind it');
+
+    // The picker itself: opens, tiles paint, search populates, 決定 writes the
+    // chosen place back into TimeTree's own <input> the React way and remembers
+    // lat/lon (which TimeTree's POST omits). A 1px png stands in for a tile and
+    // sendMessage is stubbed, so no network and no login.
+    sec('the map picker opens over the form and writes back');
+    const PX = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+    const pk = await page.evaluate(async ({ mapformSrc, px }) => {
+      document.getElementById('pk')?.remove();
+      const box = document.createElement('div');
+      box.id = 'pk';
+      box.innerHTML = '<div data-test-id="event-form"><div><input name="location" value="旧"></div></div>';
+      document.body.appendChild(box);
+      const input = box.querySelector('input[name="location"]');
+
+      const savedChrome = window.chrome; const savedConfirm = window.confirm;
+      window.confirm = () => true;
+      window.chrome = {
+        storage: { local: { get: async () => ({ maps: true }), set: async () => {} } },
+        runtime: {
+          sendMessage(msg, cb) {
+            if (msg.ttx === 'tile') cb({ uri: px });
+            else if (msg.ttx === 'search') cb({ list: [{ name: '東京駅', address: '東京都千代田区', lat: 35.681, lon: 139.767 }] });
+            else cb({});
+          },
+          lastError: null, onMessage: { addListener() {} },
+        },
+      };
+
+      delete window.TTX.mapform;
+      (0, eval)(mapformSrc);            // eslint-disable-line no-eval
+      window.TTX.mapform.start();
+      box.querySelector('[data-ttx-mapform]').click();
+      await new Promise((r2) => setTimeout(r2, 400));
+
+      const scrim = document.querySelector('.ttx-mf-scrim');
+      const out = { opened: !!scrim };
+      if (scrim) {
+        const t = scrim.querySelectorAll('.mp-t');
+        out.tiles = t.length;
+        out.tilesLoaded = [...t].filter((i) => i.src.startsWith('data:')).length;
+        const q = scrim.querySelector('.ttx-mf-q');
+        q.value = '東京'; q.dispatchEvent(new Event('input'));
+        await new Promise((r2) => setTimeout(r2, 550));
+        out.hits = scrim.querySelectorAll('.ttx-mf-r').length;
+        scrim.querySelector('.ttx-mf-r')?.click();
+        await new Promise((r2) => setTimeout(r2, 60));
+        scrim.querySelector('.ttx-mf-btn.pri')?.click();
+        await new Promise((r2) => setTimeout(r2, 60));
+        out.wroteBack = input.value;
+        out.closed = !document.querySelector('.ttx-mf-scrim');
+        out.pending = window.TTX.mapform._pending;
+      }
+      window.TTX.mapform.stop?.();
+      document.querySelector('.ttx-mf-scrim')?.remove();
+      box.remove();
+      window.chrome = savedChrome; window.confirm = savedConfirm;
+      return out;
+    }, { mapformSrc: src, px: PX });
+
+    check(pk.opened, 'the picker opens');
+    check(pk.tiles > 0 && pk.tilesLoaded === pk.tiles, `tiles paint (${pk.tilesLoaded}/${pk.tiles})`);
+    check(pk.hits === 1, `search populates from the worker (${pk.hits})`);
+    check(pk.wroteBack === '東京駅', `決定 writes the place into TimeTree's own input (${pk.wroteBack})`);
+    check(!!pk.pending && Math.abs(pk.pending.lat - 35.681) < 0.01, 'and remembers lat/lon for the save hook');
+    check(pk.closed, 'and closes');
+
     await b.close();
   }
 
