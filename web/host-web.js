@@ -103,9 +103,12 @@
     accounts: {
       list: async () => listShape(await currentAccount()),
       add: async () => {
-        const token = await askToken();               // dialog already verified + set the cookie
-        const me = await currentAccount();
-        return { ...listShape(me), added: !!token && !!me };
+        const token = await askToken();               // dialog already verified the token + set the cookie
+        // The connect succeeded if we got a token back; base `added` on THAT, not
+        // on the follow-up whoami, or a transient hiccup there would bounce a
+        // genuinely-connected user back to the sign-in card.
+        const me = await currentAccount().catch(() => null);
+        return { ...listShape(me || (token ? { id: 'me', name: 'アカウント' } : null)), added: !!token };
       },
       switch: async () => listShape(await currentAccount()),   // single account for now
       remove: async () => { await jpost('/api/disconnect'); return { accounts: [], activeId: null }; },

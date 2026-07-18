@@ -9,26 +9,25 @@
   <meta http-equiv="Content-Security-Policy"
         content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self';">
   <title>TimeForest</title>
-  <link rel="stylesheet" href="/client/renderer/app.css">
+  <!-- Served from web/dist (build.js), a self-contained bundle: ./lib and
+       ./renderer are copies of src/lib and client/renderer made at build time,
+       so nothing outside this directory is ever exposed. -->
+  <link rel="stylesheet" href="./renderer/app.css">
 </head>
 <body>
   <div id="app"></div>
 
-  <!-- The browser implementation of window.host — must be in place before the
-       renderer calls it. -->
-  <script src="/web/host-web.js"></script>
+  <script src="./host-web.js"></script>
 
-  <!-- Shared libs (no copies — served straight from src/lib, same files the
-       extension and desktop load) and the desktop renderer, unchanged. -->
-  <script src="/src/lib/tz.js"></script>
-  <script src="/src/lib/recur.js"></script>
-  <script src="/src/lib/api.js"></script>
-  <script src="/src/lib/model.js"></script>
-  <script src="/src/lib/export.js"></script>
-  <script src="/src/lib/map.js"></script>
-  <script src="/client/renderer/cli-host.js"></script>
-  <script src="/client/renderer/icons.js"></script>
-  <script src="/client/renderer/store.js"></script>
-  <script src="/client/renderer/app.js"></script>
+  <script src="./lib/tz.js"></script>
+  <script src="./lib/recur.js"></script>
+  <script src="./lib/api.js"></script>
+  <script src="./lib/model.js"></script>
+  <script src="./lib/export.js"></script>
+  <script src="./lib/map.js"></script>
+  <script src="./renderer/cli-host.js"></script>
+  <script src="./renderer/icons.js"></script>
+  <script src="./renderer/store.js"></script>
+  <script src="./renderer/app.js"></script>
 </body>
 </html>

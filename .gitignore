@@ -1,7 +1,9 @@
 node_modules/
 
-# Built from src/ by build-userscript.js — no reason to track the output.
+# Built output — no reason to track. `dist/` matches both the root userscript
+# bundle (build-userscript.js) and web/dist (web/build.js, the hosted client).
 dist/
+web/dist/
 
 # Electron packaging output
 client/out/

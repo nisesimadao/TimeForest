@@ -687,6 +687,33 @@ const want = (clientPkg.devDependencies.electron || '').replace(/^[^\d]*/, '');
 if (builder.electronVersion === want) ok(`electronVersion tracks client/package.json (${want})`);
 else bad(`electronVersion is ${builder.electronVersion} but client/package.json has ${want}`);
 
+// --- 5d. the hosted web client's bundle is complete -------------------------
+//
+// web/build.js assembles web/dist from src/lib + client/renderer, and the Vercel
+// deploy serves ONLY that. A renamed lib/renderer file, or an index.html <script>
+// the build doesn't produce, white-screens the deploy with no other signal — the
+// same silent-truncation this file guards for the packaged desktop app.
+section('web client bundle');
+{
+  const buildJs = fs.readFileSync(path.join(ROOT, 'web/build.js'), 'utf8');
+  const arr = (name) => {
+    const m = buildJs.match(new RegExp(name + '\\s*=\\s*\\[([^\\]]*)\\]'));
+    return m ? [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]) : [];
+  };
+  const libs = arr('LIBS');
+  const renderer = arr('RENDERER');
+  let webBad = 0;
+  if (!libs.length || !renderer.length) { bad('web/build.js: could not read LIBS/RENDERER — guard is looking at the wrong shape'); webBad++; }
+  for (const l of libs) if (!fs.existsSync(path.join(ROOT, `src/lib/${l}.js`))) { bad(`web/build.js copies src/lib/${l}.js, which is missing`); webBad++; }
+  for (const f of renderer) if (!fs.existsSync(path.join(ROOT, `client/renderer/${f}`))) { bad(`web/build.js copies client/renderer/${f}, which is missing`); webBad++; }
+  // every ./-relative <script>/<link> in web/index.html must be produced by the build
+  const html = fs.readFileSync(path.join(ROOT, 'web/index.html'), 'utf8');
+  const refs = [...html.matchAll(/(?:src|href)="\.\/([^"]+)"/g)].map((m) => m[1]);
+  const produced = new Set(['index.html', 'host-web.js', ...libs.map((l) => `lib/${l}.js`), ...renderer.map((f) => `renderer/${f}`)]);
+  for (const r of refs) if (!produced.has(r)) { bad(`web/index.html loads ./${r}, which web/build.js does not produce`); webBad++; }
+  if (!webBad) ok(`web/index.html's ${refs.length} assets are all produced by web/build.js (${libs.length} libs + ${renderer.length} renderer)`);
+}
+
 // --- 6. userscript builds ---------------------------------------------------
 
 section('userscript build');

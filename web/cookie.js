@@ -27,4 +27,16 @@ function serializeSession(value, { secure = true } = {}) {
 
 const readSession = (req) => parse(req.headers && req.headers.cookie)[SESSION] || null;
 
-module.exports = { parse, serializeSession, readSession, SESSION };
+/* CSRF guard for the state-changing endpoints (connect / disconnect). Our own
+ * client sends them as same-origin fetch with content-type application/json; a
+ * cross-site attacker can do neither without a CORS preflight we never grant, so
+ * requiring a JSON content-type blocks the simple-form forgery, and an Origin
+ * that must match the Host closes the rest. Both must hold. */
+function isTrustedWrite(req) {
+  const h = req.headers || {};
+  if (!/application\/json/i.test(h['content-type'] || '')) return false;
+  if (h.origin) { try { if (new URL(h.origin).host !== h.host) return false; } catch { return false; } }
+  return true;
+}
+
+module.exports = { parse, serializeSession, readSession, isTrustedWrite, SESSION };

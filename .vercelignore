@@ -1,7 +1,10 @@
-# Never upload secrets or bulk — the deploy needs only web/, api/, src/lib/*
-# and client/renderer/*. Everything here is either sensitive, huge, or unused by
-# the hosted client.
+# The deploy SERVES only web/dist (built from web/build.js, see vercel.json
+# outputDirectory) — nothing else in the repo is reachable as a static file. This
+# list is upload hygiene: keep secrets and bulk out of the build environment.
+# NOTE: src/ and client/ MUST stay (build.js reads src/lib + client/renderer).
 .local/
+HANDOFF.md
+*.txt
 .git/
 node_modules/
 client/node_modules/

@@ -4,9 +4,9 @@
  * A browser page on another origin can't call timetreeapp.com — CORS blocks
  * reading the response. A server has no such limit (CORS is a browser rule), so
  * this forwards the page's /api/tt/* calls to timetreeapp.com/api/* server-side,
- * attaching the user's session. Measured (scripts/proxy-spike.js): the only
- * things TimeTree needs are the `_session_id` cookie, the csrf-token scraped from
- * its HTML shell, and the x-timetreea client tag — no other cookie, no password.
+ * attaching the user's session. Measured with a local spike: the only things
+ * TimeTree needs are the `_session_id` cookie, the csrf-token scraped from its
+ * HTML shell, and the x-timetreea client tag — no other cookie, no password.
  *
  * The session token never lives on the server: it rides in the caller's own
  * httpOnly cookie on THIS origin, is read per request, forwarded, and forgotten.
@@ -19,7 +19,7 @@ const UA = 'Mozilla/5.0 (TimeForest web client)';
 const csrfCache = new Map();
 
 async function scrapeCsrf(session) {
-  const r = await fetch(`${ORIGIN}/calendars`, { headers: { cookie: `_session_id=${session}`, 'user-agent': UA } });
+  const r = await fetch(`${ORIGIN}/calendars`, { redirect: 'manual', headers: { cookie: `_session_id=${session}`, 'user-agent': UA } });
   const html = await r.text();
   const m = html.match(/<meta[^>]+name=["']csrf-token["'][^>]+content=["']([^"']+)["']/i)
          || html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+name=["']csrf-token["']/i);
@@ -39,6 +39,7 @@ async function whoami(session) {
   const csrf = await csrfFor(session, true);
   if (!csrf) return null;
   const r = await fetch(`${ORIGIN}/api/v1/user`, {
+    redirect: 'manual',
     headers: { cookie: `_session_id=${session}`, 'x-csrf-token': csrf, 'x-timetreea': CLIENT_TAG, 'user-agent': UA },
   });
   if (!r.ok) return null;
@@ -55,9 +56,19 @@ async function whoami(session) {
  */
 async function proxy({ method = 'GET', path, search = '', body, session }) {
   if (!session) return { status: 401, contentType: 'application/json', text: JSON.stringify({ error: 'not connected' }) };
+  // Relay ONLY the JSON API, never arbitrary pages. This keeps the proxy from
+  // reflecting authenticated TimeTree HTML (its csrf-token meta) under our own
+  // origin, and bounds what a top-level GET navigation could reach.
+  if (!/^\/api\/v[0-9]+\//.test(path)) {
+    return { status: 404, contentType: 'application/json', text: JSON.stringify({ error: 'not an API path' }) };
+  }
   const url = `${ORIGIN}${path}${search}`;
   const send = async (csrf) => fetch(url, {
     method,
+    // Never follow a redirect: TimeTree API calls don't legitimately 3xx, and
+    // following one would forward our headers to (and reflect the body of) the
+    // redirect target. A 3xx is surfaced to the caller as-is instead.
+    redirect: 'manual',
     headers: {
       cookie: `_session_id=${session}`,
       'x-csrf-token': csrf || '',
