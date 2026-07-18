@@ -21,17 +21,13 @@ const path = require('node:path');
 const DOCS = path.join(__dirname, '..', 'docs');
 const CDP = process.env.TTX_CDP || 'http://127.0.0.1:9333';
 
-// Everything the README points at, with the size to render it at. Banners carry
-// their own width/height in the viewBox; badges are 20px tall by a width the
-// SVG declares.
+// The banner is the only SVG the README shows as a PNG — it's a big hand-drawn
+// image where a rasterised copy is more dependable across viewers. The badges
+// are referenced as SVG directly (they render at their true size that way), so
+// they aren't rasterised.
 const TARGETS = [
   { svg: 'banner-light.svg', w: 1160, h: 290 },
   { svg: 'banner-dark.svg', w: 1160, h: 290 },
-  { svg: 'badge-deps.svg' },
-  { svg: 'badge-build.svg' },
-  { svg: 'badge-node.svg' },
-  { svg: 'badge-electron.svg' },
-  { svg: 'badge-mv3.svg' },
 ];
 
 (async () => {

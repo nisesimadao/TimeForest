@@ -131,9 +131,9 @@ section('README badges match reality');
 
   // Every image the README points at must exist. This is the failure that was
   // actually shipped: the README referenced files that rendered as broken-image
-  // icons on GitHub. The <img>/srcset the README uses are PNGs (GitHub's camo
-  // proxy mangles README SVGs); each is rasterised from its SVG by
-  // tools/badges.js --png, so a missing or stale PNG is a broken README.
+  // icons on GitHub. Badges are SVG (relative-path images are served straight
+  // from the repo, not through camo, and render at their true size); the banner
+  // and screenshots are PNG.
   const readme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8');
   const refs = [...readme.matchAll(/(?:src|srcset)="(docs\/[^"]+)"/g), ...readme.matchAll(/\]\((docs\/[^)]+)\)/g)]
     .map((m) => m[1]);
