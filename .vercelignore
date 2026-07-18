@@ -1,0 +1,19 @@
+# Never upload secrets or bulk — the deploy needs only web/, api/, src/lib/*
+# and client/renderer/*. Everything here is either sensitive, huge, or unused by
+# the hosted client.
+.local/
+.git/
+node_modules/
+client/node_modules/
+client/dist/
+client/build/
+client/release/
+client/out/
+dist/
+out/
+release/
+docs/
+tools/
+scripts/
+*.log
+*.png

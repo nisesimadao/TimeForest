@@ -1,0 +1,30 @@
+/* Cookie parse/serialize, shared by the dev server and the Vercel functions so
+ * both handle the session cookie identically (and the dev-server E2E exercises
+ * the same code the deployment runs). Zero-dep. */
+
+/** "a=1; b=2" -> { a: '1', b: '2' } (values URL-decoded). */
+function parse(header) {
+  const out = {};
+  for (const part of String(header || '').split(';')) {
+    const i = part.indexOf('=');
+    if (i < 0) continue;
+    const k = part.slice(0, i).trim();
+    if (!k) continue;
+    try { out[k] = decodeURIComponent(part.slice(i + 1).trim()); } catch { out[k] = part.slice(i + 1).trim(); }
+  }
+  return out;
+}
+
+const SESSION = 'tt_session';
+
+/** The Set-Cookie for the session token. `secure` off for http://localhost (dev),
+ *  on for the https deployment. An empty value expires it (disconnect). */
+function serializeSession(value, { secure = true } = {}) {
+  const base = `${SESSION}=${value ? encodeURIComponent(value) : ''}; HttpOnly; SameSite=Lax; Path=/`;
+  const life = value ? `; Max-Age=${60 * 60 * 24 * 30}` : '; Max-Age=0';
+  return base + (secure ? '; Secure' : '') + life;
+}
+
+const readSession = (req) => parse(req.headers && req.headers.cookie)[SESSION] || null;
+
+module.exports = { parse, serializeSession, readSession, SESSION };
