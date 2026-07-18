@@ -1,7 +1,10 @@
 # The deploy SERVES only web/dist (built from web/build.js, see vercel.json
 # outputDirectory) — nothing else in the repo is reachable as a static file. This
 # list is upload hygiene: keep secrets and bulk out of the build environment.
-# NOTE: src/ and client/ MUST stay (build.js reads src/lib + client/renderer).
+# NOTE: web/build.js runs ON Vercel and reads src/lib, client/renderer AND
+# icons/icon-32.png (the favicon), so none of those may be excluded — do not add
+# a blanket *.png (docs/ already covers the screenshots). scripts/check.js guards
+# this: every build.js input must survive this list.
 .local/
 HANDOFF.md
 *.txt
@@ -19,4 +22,3 @@ docs/
 tools/
 scripts/
 *.log
-*.png

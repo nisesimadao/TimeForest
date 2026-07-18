@@ -34,11 +34,28 @@ node web/dev-server.js       # http://localhost:8787（web/dist だけを配信�
 （`web/proxy-core.js`・`web/cookie.js` を Vercel 関数と共有）。ループバックのみに
 bind。
 
-## Vercel にデプロイ
+## Vercel にデプロイ（GitHub 連携）
 
-```sh
-vercel deploy
-```
+このリポジトリを push した状態で、Vercel ダッシュボードの **Add New → Project** から
+この GitHub リポジトリを Import するだけ。CLI（`vercel deploy`）でも同じ。
+
+- **Root Directory**：リポジトリ直下（デフォルトのまま）。`vercel.json` / `api/` /
+  `web/` がそこにあるので、サブディレクトリの指定は不要。
+- **Framework Preset**：Other（`vercel.json` で `framework: null` 指定済み）。
+- **Build Command / Output Directory**：`vercel.json` が指定済み
+  （`node web/build.js` → `web/dist`）。触らなくてよい。
+
+リポジトリ直下には拡張・デスクトップ・スクリプトも同居しているが、**配信されるのは
+`web/dist` だけ**（`outputDirectory`）で、アップロードからは `.vercelignore` が
+`.local/`・`docs/` などを外す。`web/build.js` は Vercel 上で `src/lib`・
+`client/renderer`・`icons/` を読むので、それらは `.vercelignore` に入れない
+（`scripts/check.js` が build 入力の除外を検査するので、デプロイ時にビルドが
+「ファイルが無い」で落ちない）。
+
+デプロイ後、初回アクセスは接続画面が出る。`timetreeapp.com` の `_session_id` を
+貼れば繋がる。
+
+構成の詳細：
 
 - ビルド：`web/build.js` が `web/dist` に自己完結の配信物を組む（`index.html`・
   `host-web.js`・`lib/*`＝src/lib のコピー・`renderer/*`＝client/renderer のコピー）。

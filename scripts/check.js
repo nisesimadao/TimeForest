@@ -714,6 +714,34 @@ section('web client bundle');
   if (!webBad) ok(`web/index.html's ${refs.length} assets are all produced by web/build.js (${libs.length} libs + ${renderer.length} renderer)`);
 }
 
+// --- 5e. the Vercel build isn't sabotaged by .vercelignore ------------------
+//
+// web/build.js runs ON Vercel (buildCommand) and reads src/lib, client/renderer
+// AND the favicon under icons/. If .vercelignore excludes any of those from the
+// upload, the deploy build fails ("cannot find …") — invisible until you deploy.
+// A blanket *.png once hid icons/icon-32.png exactly this way.
+section('web deploy — .vercelignore keeps build.js inputs');
+{
+  const vi = fs.readFileSync(path.join(ROOT, '.vercelignore'), 'utf8')
+    .split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
+  const excluded = (rel) => vi.some((pat) => {
+    if (pat.endsWith('/')) return rel === pat.slice(0, -1) || rel.startsWith(pat);
+    if (pat.startsWith('*.')) return rel.endsWith(pat.slice(1));
+    return rel === pat || rel.startsWith(pat + '/');
+  });
+  const b = fs.readFileSync(path.join(ROOT, 'web/build.js'), 'utf8');
+  const readArr = (n) => { const m = b.match(new RegExp(n + '\\s*=\\s*\\[([^\\]]*)\\]')); return m ? [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]) : []; };
+  const icon = (b.match(/'icons',\s*'([^']+)'/) || [])[1] || 'icon-32.png';
+  const inputs = [
+    'web/index.html', 'web/host-web.js', `icons/${icon}`,
+    ...readArr('LIBS').map((l) => `src/lib/${l}.js`),
+    ...readArr('RENDERER').map((f) => `client/renderer/${f}`),
+  ];
+  const blocked = inputs.filter(excluded);
+  if (blocked.length) bad(`.vercelignore excludes web/build.js inputs — the Vercel build would fail: ${blocked.join(', ')}`);
+  else ok(`all ${inputs.length} web/build.js inputs survive .vercelignore (the deploy build has them)`);
+}
+
 // --- 6. userscript builds ---------------------------------------------------
 
 section('userscript build');
