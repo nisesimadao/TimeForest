@@ -444,8 +444,13 @@
     // Drawer toggle for narrow screens (the sidebar becomes an off-canvas drawer
     // there — a 208px fixed rail would crush the calendar to ~120px on a phone).
     // CSS hides this on wide screens, where the sidebar is always in view.
-    const burger = iconBtn('menu', 'カレンダー・アカウント', () => $('#app').classList.toggle('nav-open'));
+    const burger = iconBtn('menu', 'カレンダー・アカウント', () => {
+      const open = $('#app').classList.toggle('nav-open');
+      burger.setAttribute('aria-expanded', String(open));
+    });
     burger.classList.add('tb-burger');
+    burger.setAttribute('aria-controls', 'ttx-sidebar');
+    burger.setAttribute('aria-expanded', String($('#app')?.classList.contains('nav-open') || false));
     t.appendChild(burger);
 
     t.appendChild(el('div', 'tb-title', titleText()));
@@ -481,6 +486,7 @@
     t.appendChild(seg);
 
     const search = el('button', 'search-hint');
+    search.setAttribute('aria-label', '検索・移動');   // the .sh-t label is display:none on mobile
     search.append(TTX.icon('search', 13), el('span', 'sh-t', ui.query || '検索・移動'));
     search.appendChild(el('kbd', null, MOD + ' K'));
     search.onclick = () => openPalette();
@@ -670,6 +676,7 @@
 
   function renderSidebar() {
     const s = el('aside', 'sidebar');
+    s.id = 'ttx-sidebar';                       // aria-controls target for the ☰ toggle
     const st = TTX.store.state;
 
     s.appendChild(renderAccountBar());

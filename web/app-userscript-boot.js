@@ -19,9 +19,18 @@
   // clear the page to just our root
   document.body.innerHTML = '<div id="app"></div>';
 
-  // React may try to re-mount its tree; keep the body to our #app only.
+  // React may try to re-mount its tree; strip anything at body level that isn't
+  // ours. "Ours" is #app AND the renderer's own overlays — the form, settings, the
+  // detail popover, menus, confirm dialogs and toasts all append to document.body
+  // (as .scrim/.d-scrim/.toast), NOT into #app. A blanket "remove everything but
+  // #app" deleted them the instant they opened, which made create/edit/delete and
+  // every dialog silently impossible — the userscript looked read-only. Keep them.
   const keepOurs = () => {
-    for (const c of [...document.body.children]) if (c.id !== 'app') c.remove();
+    for (const c of [...document.body.children]) {
+      if (c.id === 'app') continue;
+      if (c.matches && c.matches('.scrim, .d-scrim, .toast')) continue;
+      c.remove();
+    }
   };
   new MutationObserver(keepOurs).observe(document.body, { childList: true });
 
