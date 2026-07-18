@@ -3586,6 +3586,12 @@
   }
 
   function paint() {
+    // No account yet → the sign-in card, never an empty calendar. paint() can run
+    // before boot resolves the account (applyTheme repaints on first load) and, in
+    // the browser build, host.auth.check is a network round-trip, so an early paint
+    // would otherwise flash — and stick on — an empty agenda instead of the sign-in
+    // prompt. Guarding here makes it robust to that ordering everywhere.
+    if (!ui.activeId) return signInCard();
     closeDetail(); // its anchor is about to be destroyed
     closeMenus();
     const app = $('#app');
