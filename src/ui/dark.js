@@ -35,6 +35,11 @@
     if (document.documentElement.getAttribute(ATTR) !== mode) {
       document.documentElement.setAttribute(ATTR, mode);
     }
+    // Our own injected UI (agenda / export / map) can't read data-theme through
+    // @media prefers-color-scheme — that only follows the OS, so a user who
+    // picks dark on a light machine would get a dark TimeTree but light overlays.
+    // Mirror the EFFECTIVE theme onto a class the injected CSS keys off instead.
+    document.documentElement.classList.toggle('ttx-dark', isDark());
   }
 
   function announce() {
@@ -69,7 +74,7 @@
     observer.observe(document.documentElement, { attributes: true, attributeFilter: [ATTR] });
 
     // In `system` mode the effective theme can change without us doing anything.
-    media().addEventListener('change', () => { if (mode === 'system') announce(); });
+    media().addEventListener('change', () => { if (mode === 'system') { assert(); announce(); } });
   }
 
   TTX.dark = { init, set, cycle, isDark, get mode() { return mode; }, LABEL, ICON, MODES };

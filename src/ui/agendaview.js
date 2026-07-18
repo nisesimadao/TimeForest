@@ -47,14 +47,12 @@
 .ttx-ag-time { flex: 0 0 90px; font-size: 12px; color: rgba(60,60,67,0.6); font-variant-numeric: tabular-nums; }
 .ttx-ag-bar { flex: 0 0 4px; align-self: stretch; border-radius: 2px; background: #909090; }
 .ttx-ag-title { flex: 1; font-size: 14px; color: #1c1c1e; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-@media (prefers-color-scheme: dark) {
-  .${OVL} { background: #1c1c1e; }
-  .ttx-ag-day { border-color: rgba(84,84,88,0.5); }
-  .ttx-ag-day.today { background: #2a2616; }
-  .ttx-ag-dnum { color: #f2f2f7; }
-  .ttx-ag-title { color: #f2f2f7; }
-  .ttx-ag-ev:hover { background: #2c2c2e; }
-}`;
+:root.ttx-dark .${OVL} { background: #1c1c1e; }
+:root.ttx-dark .ttx-ag-day { border-color: rgba(84,84,88,0.5); }
+:root.ttx-dark .ttx-ag-day.today { background: #2a2616; }
+:root.ttx-dark .ttx-ag-dnum { color: #f2f2f7; }
+:root.ttx-dark .ttx-ag-title { color: #f2f2f7; }
+:root.ttx-dark .ttx-ag-ev:hover { background: #2c2c2e; }`;
 
   function ensureCss() {
     if (document.getElementById('ttx-ag-css')) return;

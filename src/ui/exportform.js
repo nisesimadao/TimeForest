@@ -50,14 +50,12 @@
 .ttx-exp-item:hover { background: #f2f2f7; }
 .ttx-exp-item .k { color: rgba(60,60,67,0.5); font-size: 11px; }
 .ttx-exp-note { padding: 6px 10px 4px; font-size: 11px; color: rgba(60,60,67,0.5); }
-@media (prefers-color-scheme: dark) {
-  .ttx-exp-btn { background: #2c2c2e; color: #f2f2f7; border-color: rgba(84,84,88,0.6); }
-  .ttx-exp-btn:hover { background: #3a3a3c; }
-  .ttx-exp-menu { background: #1c1c1e; border-color: rgba(84,84,88,0.6); }
-  .ttx-exp-item { color: #f2f2f7; }
-  .ttx-exp-item:hover { background: #2c2c2e; }
-  .ttx-exp-item .k, .ttx-exp-note { color: rgba(235,235,245,0.5); }
-}`;
+:root.ttx-dark .ttx-exp-btn { background: #2c2c2e; color: #f2f2f7; border-color: rgba(84,84,88,0.6); }
+:root.ttx-dark .ttx-exp-btn:hover { background: #3a3a3c; }
+:root.ttx-dark .ttx-exp-menu { background: #1c1c1e; border-color: rgba(84,84,88,0.6); }
+:root.ttx-dark .ttx-exp-item { color: #f2f2f7; }
+:root.ttx-dark .ttx-exp-item:hover { background: #2c2c2e; }
+:root.ttx-dark .ttx-exp-item .k, :root.ttx-dark .ttx-exp-note { color: rgba(235,235,245,0.5); }`;
 
   function ensureCss() {
     if (document.getElementById('ttx-exp-css')) return;
