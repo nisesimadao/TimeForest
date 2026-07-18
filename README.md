@@ -84,6 +84,10 @@ npm run dist      # → client/dist/TimeForest-0.1.0-x64.exe（インストー�
 - **アカウント切り替え** — 本家 Web に無い（切替 UI そのものが無い）。ツールバーの
   👤 から、ログイン済みの複数アカウントをパスワード無しで切り替える。別アカウントで
   ログインすると自動で憶える（各アカウントのセッションを差し替えて全タブを読み直す）
+- **リマインド通知** — TimeTree はスマホに通知を push するが、この拡張は Chrome
+  起動中なら**PC のデスクトップ通知**でも鳴らす（ツールバーの 🔔 で切替、既定オフ）。
+  発火判定はデスクトップ版と同じロジック（`model.alertAt`）を Service Worker に載せ、
+  `chrome.alarms` で1分ごとに点検する。クリックで TimeTree に戻る
 
 デスクトップクライアントはさらに、週の時間グリッド・月グリッド・コマンドパレット
 （`Ctrl+K`）・予定の詳細ポップオーバー・方向を持ったトランジション、そして
@@ -389,6 +393,7 @@ src/
   ui/mapform.js    地図ピンを本家の予定フォームに足す
   ui/exportform.js エクスポートを本家ツールバーに足す
   ui/accounts.js   アカウント切り替えを本家ツールバーに足す（拡張のみ／bg.js が cookie を差し替え）
+  ui/notifytoggle.js リマインド通知の切替を本家ツールバーに足す（拡張のみ／bg.js が発火）
 client/            Electron デスクトップクライアント（src/lib をそのまま読む）
 ```
 
@@ -474,10 +479,6 @@ npm run dist:dir  # インストーラ無しで client/dist/win-unpacked/ に展
 
 ## これから
 
-- **拡張側の通知** — デスクトップクライアントは通知を出す（トレイ常駐 + 自動起動）。
-  拡張側はまだ。検証済み: Service Worker が単独で HTML シェルを fetch して
-  csrf-token を抜けば、**TimeTree のタブを開いていなくても** API を叩ける。
-  なので `chrome.alarms` + `chrome.notifications` で作れる
 - **画像添付** — **実装しない（できない）。TimeTree の有料機能だった。**
   本家の添付フローを捕捉すると `POST /api/v1/events/files/presigned_urls`
   `{"original_file_name":"…","media_upload":true}` を投げているが、無料
