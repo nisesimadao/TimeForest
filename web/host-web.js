@@ -126,10 +126,27 @@
     },
     autoStart: { get: async () => false, set: async () => false },   // N/A in a browser tab
     map: {
-      // maps are a later step; degrade cleanly (the renderer treats these as offline)
-      setEnabled: async () => false,
-      tile: async () => { throw new Error('maps off'); },
-      search: async () => [],
+      // Tiles/search go through the same-origin backend (api/map/*), so the page
+      // never talks to a tile CDN and the CSP stays shut. Tiles come back as
+      // bytes and become a data: URI here — exactly the shape the desktop's map
+      // lib expects (img-src 'self' data:).
+      setEnabled: async () => true,
+      tile: async (z, x, y) => {
+        const r = await fetch(`/api/map/tile?z=${z}&x=${x}&y=${y}`);
+        if (!r.ok) throw new Error('tile ' + r.status);
+        const blob = await r.blob();
+        return await new Promise((res, rej) => {
+          const fr = new FileReader();
+          fr.onload = () => res(fr.result);
+          fr.onerror = () => rej(new Error('tile decode'));
+          fr.readAsDataURL(blob);
+        });
+      },
+      search: async (q) => {
+        const r = await fetch('/api/map/search?q=' + encodeURIComponent(q)).catch(() => null);
+        if (!r || !r.ok) return [];
+        return (await r.json().catch(() => ({}))).list || [];
+      },
       open: (lat, lon) => window.open(`https://www.openstreetmap.org/?mlat=${lat}&mlon=${lon}#map=17/${lat}/${lon}`, '_blank'),
     },
     theme: {

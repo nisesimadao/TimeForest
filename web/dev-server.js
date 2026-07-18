@@ -16,6 +16,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { proxy, whoami } = require('./proxy-core');
 const { readSession, serializeSession, isTrustedWrite } = require('./cookie');
+const mapCore = require('./map-core');
 
 const DIST = path.join(__dirname, 'dist');
 const PORT = Number(process.argv[2]) || 8787;
@@ -61,6 +62,17 @@ const server = http.createServer(async (req, res) => {
       if (!session) return json(res, 401, { error: 'not connected' });
       const me = await whoami(session);
       return me ? json(res, 200, { user: { id: me.id, name: me.name } }) : json(res, 401, { error: 'session expired' }, { 'set-cookie': setSession('') });
+    }
+    if (p === '/api/map/tile') {
+      try {
+        const t = await mapCore.tile(url.searchParams.get('z'), url.searchParams.get('x'), url.searchParams.get('y'));
+        res.writeHead(200, { 'content-type': t.contentType, 'cache-control': 'public, max-age=604800' });
+        return res.end(t.body);
+      } catch (e) { return json(res, 502, { error: 'tile' }); }
+    }
+    if (p === '/api/map/search') {
+      try { return json(res, 200, { list: await mapCore.search(url.searchParams.get('q')) }); }
+      catch (e) { return json(res, 502, { error: 'search' }); }
     }
     if (p.startsWith('/api/tt/')) {
       const session = readSession(req);

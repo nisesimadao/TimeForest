@@ -25,8 +25,9 @@ fs.mkdirSync(path.join(DIST, 'renderer'), { recursive: true });
 const copy = (from, to) => fs.copyFileSync(from, path.join(DIST, to));
 copy(path.join(__dirname, 'index.html'), 'index.html');
 copy(path.join(__dirname, 'host-web.js'), 'host-web.js');
+copy(path.join(ROOT, 'icons', 'icon-32.png'), 'favicon.png');   // tab icon (reuse the app logo)
 for (const l of LIBS) copy(path.join(ROOT, 'src', 'lib', `${l}.js`), `lib/${l}.js`);
 for (const f of RENDERER) copy(path.join(ROOT, 'client', 'renderer', f), `renderer/${f}`);
 
-const n = 2 + LIBS.length + RENDERER.length;
-console.log(`built web/dist — ${n} files (index.html, host-web.js, ${LIBS.length} libs, ${RENDERER.length} renderer)`);
+const n = 3 + LIBS.length + RENDERER.length;
+console.log(`built web/dist — ${n} files (index.html, host-web.js, favicon, ${LIBS.length} libs, ${RENDERER.length} renderer)`);

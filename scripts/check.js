@@ -709,7 +709,7 @@ section('web client bundle');
   // every ./-relative <script>/<link> in web/index.html must be produced by the build
   const html = fs.readFileSync(path.join(ROOT, 'web/index.html'), 'utf8');
   const refs = [...html.matchAll(/(?:src|href)="\.\/([^"]+)"/g)].map((m) => m[1]);
-  const produced = new Set(['index.html', 'host-web.js', ...libs.map((l) => `lib/${l}.js`), ...renderer.map((f) => `renderer/${f}`)]);
+  const produced = new Set(['index.html', 'host-web.js', 'favicon.png', ...libs.map((l) => `lib/${l}.js`), ...renderer.map((f) => `renderer/${f}`)]);
   for (const r of refs) if (!produced.has(r)) { bad(`web/index.html loads ./${r}, which web/build.js does not produce`); webBad++; }
   if (!webBad) ok(`web/index.html's ${refs.length} assets are all produced by web/build.js (${libs.length} libs + ${renderer.length} renderer)`);
 }
