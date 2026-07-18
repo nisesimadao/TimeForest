@@ -19,16 +19,17 @@
      a badge cannot drift or be hand-edited without CI going red. A test-count
      badge is deliberately absent — it would lie the moment a test was added. -->
 
-TimeTree 非公式クライアント。3つの形で同じものを届ける。
+TimeTree 非公式クライアント。4つの形で同じものを届ける。
 
 | | 何 | どこで |
 | --- | --- | --- |
 | **[client/](client/)** | Electron デスクトップクライアント | Windows / macOS / Linux |
 | **本リポジトリ直下** | Chrome 拡張 (MV3) | PC のブラウザ |
 | **`dist/*.user.js`** | ユーザースクリプト | **スマホ**（iOS Safari / Firefox Android） |
+| **[web/](web/)** | ブラウザ版（ホスト型 3P クライアント） | どのブラウザでも（Vercel などにデプロイ） |
 
-ロジック（`src/lib/*`）は3つで共有していて、コピーは無い。CI がコピーの発生を
-検出して落とす。
+ロジック（`src/lib/*`）は4つで共有していて、コピーは無い。CI がコピーの発生を
+検出して落とす（ブラウザ版はデスクトップの描画コードもそのまま動かす）。
 
 ## 画面
 
@@ -66,6 +67,17 @@ TimeTree 非公式クライアント。3つの形で同じものを届ける。
 生えたところ。見分けはつかない。
 
 ![本家フォームに地図ピッカー](docs/shots/ext-picker.png)
+
+**ブラウザ版（ホスト型）** — 拡張もアプリも入れず、URL を開くだけでデスクトップと
+同じ UI から TimeTree を操作する。下は素のブラウザで動いているデスクトップ UI。
+
+![ブラウザ版](docs/shots/web-client.png)
+
+別オリジンのページは CORS で TimeTree API を読めないので、同一オリジンの薄い
+バックエンド（Vercel の関数）がサーバー側で中継する（CORS はブラウザだけの制約）。
+認証は自分の `_session_id` を貼る方式で、トークンはこのオリジンの httpOnly クッキーに
+入りサーバーには残らない。デスクトップの描画コード（`client/renderer/*`）を無改変で
+動かし、地図もサーバー経由で出す。詳細は [web/README.md](web/README.md)。
 
 ```sh
 npm run check     # 構造チェック + 挙動テスト（依存ゼロ）
@@ -389,7 +401,7 @@ src/
   bg.js            ツールバー / ショートカット、OSM タイル、API を worker で中継
   content.js       起動と SPA 遷移への追従、本家 UI への注入をまとめる
   inject-main.js   MAIN world で fetch を監視（本家フォームの予定作成を検知）
-  lib/              ← 3つのビルド全部で共有。DOM 非依存の純ロジック
+  lib/              ← 4つのビルド全部で共有。DOM 非依存の純ロジック
     tz.js          タイムゾーン（終日は UTC、時刻付きは Asia/Tokyo）
     recur.js       RRULE / EXDATE 展開器
     api.js         内部 API クライアント（setTransport で通信層を差し替え可能）
@@ -404,12 +416,19 @@ src/
   ui/accounts.js   アカウント切り替えを本家ツールバーに足す（拡張のみ／bg.js が cookie を差し替え）
   ui/notifytoggle.js リマインド通知の切替を本家ツールバーに足す（拡張のみ／bg.js が発火）
 client/            Electron デスクトップクライアント（src/lib をそのまま読む）
+web/               ブラウザ版（ホスト型）。デスクトップの renderer をそのまま配信
+  build.js         自己完結の web/dist を組む（src/lib と client/renderer のコピー）
+  proxy-core.js    /api/tt/* を timetreeapp.com/api/* にサーバー側で中継（CORS 回避）
+  map-core.js      OSM タイル / Nominatim をサーバー側で取得（UA 付き）
+  host-web.js      window.host のブラウザ実装（renderer を無改変で動かす）
+  dev-server.js    ローカル用（Vercel と同じ経路を依存ゼロで）
+api/               Vercel サーバーレス関数（tt プロキシ・connect・map。web/* を共有）
 ```
 
 `lib/*` は `globalThis` に載せてあるので、拡張・ユーザースクリプト・Service Worker・
-Electron のレンダラ、どこでも同じものが動く。環境ごとに違うのは通信手段だけなので、
-そこは `api.setTransport()` で差し替える（拡張は直 fetch、Electron は CORS を
-避けて IPC 経由）。
+Electron のレンダラ・ブラウザ版、どこでも同じものが動く。環境ごとに違うのは通信手段
+だけなので、そこは `api.setTransport()` で差し替える（拡張は直 fetch、Electron は
+CORS を避けて IPC 経由、ブラウザ版は同一オリジンのプロキシ経由）。
 
 ## 開発
 
