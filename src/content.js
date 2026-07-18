@@ -10,6 +10,18 @@
     if (booted || !onCalendarPage()) return;
     if (!document.querySelector('meta[name="csrf-token"]')) return; // signed out
     booted = true;
+    // Route every api.js call through the background worker. In this isolated
+    // world a same-origin fetch to TimeTree intermittently hangs — the identical
+    // request that answers 200 once never settles the next time, contending with
+    // the page's own Service Worker. The worker has no such contention, so it
+    // makes the request and hands back parsed JSON. Same seam the desktop client
+    // uses for its Electron transport, a different backend behind it.
+    TTX.api.setTransport((path, { method, body }) =>
+      chrome.runtime.sendMessage({ ttx: 'api', method, path, body }).then((r) => {
+        if (!r) throw new Error('background worker did not respond');
+        if (r.err) throw new Error(r.err);
+        return r.json;
+      }));
     // The toolbar/form injections must not wait on the panel's network. They
     // only watch the DOM and add a sibling; starting them first means a slow or
     // stalled panel.init() (which loads every event before it resolves) can't

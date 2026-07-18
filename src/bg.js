@@ -1,3 +1,18 @@
+/* --- TimeTree API, routed through the worker -------------------------------
+ *
+ * The content script lives in the page's ISOLATED world, where a same-origin
+ * fetch to TimeTree INTERMITTENTLY hangs — the same request that answers 200 in
+ * one run never settles in the next, presumably contending with the page's own
+ * Service Worker. The worker context has no such contention. So the content
+ * script installs a transport (TTX.api.setTransport) that forwards every api.js
+ * request() here, and THIS side performs the fetch: the user's cookies ride
+ * along via host_permissions + credentials:'include', exactly as the map fetch
+ * below does. We load the SAME api.js rather than a second copy so headers, the
+ * csrf handshake and error handling stay identical — request() with no
+ * transport of its own does the real fetch, and csrfToken() scrapes the token
+ * from the /calendars HTML (a worker has no DOM), which it already supports. */
+importScripts(chrome.runtime.getURL('src/lib/api.js'));
+
 /* Toolbar button and keyboard shortcuts -> tell the content script. */
 const send = async (msg) => {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -116,5 +131,7 @@ async function search(q) {
 chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
   if (msg?.ttx === 'tile') { tile(msg.z, msg.x, msg.y).then((uri) => reply({ uri }), (e) => reply({ err: String(e.message) })); return true; }
   if (msg?.ttx === 'search') { search(msg.q).then((list) => reply({ list }), (e) => reply({ err: String(e.message) })); return true; }
+  // The isolated world's fetch hangs here instead — see the header note.
+  if (msg?.ttx === 'api') { self.TTX.api.request(msg.method, msg.path, msg.body).then((json) => reply({ json }), (e) => reply({ err: String(e && e.message || e) })); return true; }
   return false;
 });
