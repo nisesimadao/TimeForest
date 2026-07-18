@@ -35,6 +35,7 @@
     // keep the map pin and export button from appearing.
     TTX.mapform?.start();     // map pin on TimeTree's own event form
     TTX.exportform?.start();  // export control on TimeTree's own toolbar
+    TTX.agendaview?.start();  // agenda (list) view over TimeTree's month grid
     await TTX.dark.init();
     await TTX.panel.init();
   }
