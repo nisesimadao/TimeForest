@@ -51,6 +51,6 @@
   // Toolbar button -> toggle drawer.
   chrome.runtime?.onMessage?.addListener((msg) => {
     if (msg === 'ttx:toggle' && booted) TTX.panel.toggle();
-    if (msg === 'ttx:dark' && booted) TTX.dark.toggle();
+    if (msg === 'ttx:dark' && booted) TTX.dark.cycle();
   });
 })();
