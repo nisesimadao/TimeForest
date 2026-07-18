@@ -234,6 +234,86 @@ const check = (c, m) => (c ? ok(m) : bad(m));
     }, { mapformSrc: src, px: PX });
     check(leak === 0, `no keydown listener survives close, whichever exit (${leak})`);
 
+    // The save hook. inject-main.js (main world) sees TimeTree POST the new
+    // event and forwards its uuid; this side PUTs the pinned lat/lon onto it,
+    // because TimeTree's POST carries the location text but never coordinates.
+    sec('the save hook PUTs the pin onto the new event');
+    const hook = await page.evaluate(async ({ mapformSrc }) => {
+      window.chrome = { storage: { local: { get: async () => ({ maps: true }), set: async () => {} } },
+        runtime: { sendMessage(m, cb) { cb({}); }, lastError: null, onMessage: { addListener() {} } } };
+      delete window.TTX.mapform;
+      (0, eval)(mapformSrc);            // eslint-disable-line no-eval
+      const onCreated = window.TTX.mapform._internals.onCreated;
+
+      const calls = [];
+      const realApi = window.TTX.api;
+      window.TTX.api = { updateEvent: async (cal, uuid, patch) => { calls.push({ cal, uuid, patch }); return { uuid }; } };
+      const out = {};
+
+      // pending set + a matching creation → one PUT with the coordinates, and
+      // the pending pin is consumed.
+      window.TTX.mapform._pending = { location: '東京駅', lat: 35.681, lon: 139.767 };
+      await onCreated({ source: window, data: { ttx: 'event-created', uuid: 'abc', calendarId: 999 } });
+      out.put = calls.length === 1 && calls[0].uuid === 'abc' && calls[0].cal === 999
+        && calls[0].patch.location_lat === 35.681 && calls[0].patch.location_lon === 139.767;
+      out.consumed = window.TTX.mapform._pending === null;
+
+      // No pin → no PUT (a save made without the map must not inherit one).
+      calls.length = 0;
+      await onCreated({ source: window, data: { ttx: 'event-created', uuid: 'def', calendarId: 1 } });
+      out.noPin = calls.length === 0;
+
+      // Wrong message / wrong source → ignored, pin kept.
+      calls.length = 0;
+      window.TTX.mapform._pending = { lat: 1, lon: 2 };
+      await onCreated({ source: window, data: { ttx: 'other', uuid: 'x', calendarId: 1 } });
+      await onCreated({ source: {}, data: { ttx: 'event-created', uuid: 'x', calendarId: 1 } });
+      out.ignored = calls.length === 0 && window.TTX.mapform._pending !== null;
+
+      window.TTX.api = realApi;
+      return out;
+    }, { mapformSrc: src });
+
+    check(hook.put, 'a pinned creation PUTs location_lat/lon onto the new event');
+    check(hook.consumed, 'and the pin is consumed, so the next unpinned save stays clean');
+    check(hook.noPin, 'a creation with no pin PUTs nothing');
+    check(hook.ignored, 'and a foreign message or source is ignored, pin kept');
+
+    // inject-main.js (main world): wraps the page's fetch and posts the uuid
+    // ONLY for an event creation — POST .../event — never for a read (/events)
+    // or an update (/event/<uuid>). A wrong regex here means coordinates never
+    // get attached, silently.
+    sec('the main-world fetch wrapper fires only on event creation');
+    const injSrc = fs.readFileSync(path.join(ROOT, 'src/inject-main.js'), 'utf8');
+    const inj = await page.evaluate(async ({ injMainSrc }) => {
+      const posted = [];
+      const onMsg = (e) => { if (e.data?.ttx === 'event-created') posted.push(e.data); };
+      window.addEventListener('message', onMsg);
+
+      // A fake page fetch: any /event* POST returns a created event; others 200.
+      const savedFetch = window.fetch;
+      window.__ttxFetchWrapped = false;   // allow re-wrap in this sandbox
+      window.fetch = async (url, init) => ({
+        ok: true,
+        clone() { return { json: async () => ({ event: { uuid: 'U-' + url.replace(/\W/g, '').slice(-6), calendar_id: 42 } }) }; },
+      });
+      (0, eval)(injMainSrc);             // eslint-disable-line no-eval  — wraps window.fetch
+
+      const call = (url, method) => window.fetch(url, { method });
+      await call('/api/v1/calendar/42/event', 'POST');          // create → should post
+      await call('/api/v1/calendar/42/events?since=0', 'GET');  // read → no
+      await call('/api/v1/calendar/42/event/abc123', 'PUT');    // update → no
+      await call('/api/v1/calendar/42/events', 'POST');         // plural POST → no
+      await new Promise((r2) => setTimeout(r2, 100));
+
+      window.fetch = savedFetch;
+      window.removeEventListener('message', onMsg);
+      return { count: posted.length, uuid: posted[0]?.uuid, cal: posted[0]?.calendarId };
+    }, { injMainSrc: injSrc });
+
+    check(inj.count === 1, `exactly one post, for the create only (${inj.count})`);
+    check(inj.uuid?.startsWith('U-') && inj.cal === 42, `carrying the new event's uuid and calendar (${inj.uuid}, ${inj.cal})`);
+
     await b.close();
   }
 

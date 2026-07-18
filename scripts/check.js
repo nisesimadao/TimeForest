@@ -62,8 +62,14 @@ ok(`${jsonFiles.length} json files valid`);
 
 section('extension manifest');
 const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'manifest.json'), 'utf8'));
-const cs = manifest.content_scripts[0];
-for (const p of [...cs.js, ...cs.css, manifest.background.service_worker]) {
+// Every file the manifest names, across ALL content_scripts blocks — there are
+// two now (the isolated-world bundle and the MAIN-world fetch wrapper), and a
+// typo in the second one loads nothing with no error.
+const referenced = [
+  ...manifest.content_scripts.flatMap((cs) => [...(cs.js || []), ...(cs.css || [])]),
+  manifest.background.service_worker,
+];
+for (const p of referenced) {
   if (fs.existsSync(path.join(ROOT, p))) ok(p);
   else bad(`manifest references missing file: ${p}`);
 }
@@ -140,11 +146,11 @@ section('README badges match reality');
 // --- 3. the client loads the same libs, not copies --------------------------
 
 section('shared library (no drift)');
-const SHARED = ['tz', 'recur', 'api', 'model', 'export'];
+const SHARED = ['tz', 'recur', 'api', 'model', 'export', 'map'];
 const indexHtml = fs.readFileSync(path.join(ROOT, 'client/renderer/index.html'), 'utf8');
 for (const name of SHARED) {
   const p = `src/lib/${name}.js`;
-  const inExt = cs.js.includes(p);
+  const inExt = manifest.content_scripts[0].js.includes(p);
   const inClient = indexHtml.includes(`../../${p}`);
   if (inExt && inClient) ok(`${name}: extension + client both load ${p}`);
   else bad(`${name}: ext=${inExt} client=${inClient} — a copy has crept in`);

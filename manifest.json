@@ -37,6 +37,12 @@
       ],
       "css": ["src/ui/panel.css"],
       "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://timetreeapp.com/*"],
+      "js": ["src/inject-main.js"],
+      "world": "MAIN",
+      "run_at": "document_start"
     }
   ],
   "action": {

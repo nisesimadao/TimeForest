@@ -270,6 +270,26 @@
     input.dispatchEvent(new Event('input', { bubbles: true }));
   }
 
+  /**
+   * TimeTree just created an event (inject-main.js saw the POST and sent us its
+   * uuid). If the user picked a place on the map for this save, PUT the pin's
+   * coordinates onto it — TimeTree's own POST carries the location text but never
+   * the lat/lon. Consume the pending pin so a later save without the map doesn't
+   * inherit it.
+   */
+  async function onCreated(e) {
+    if (e.source !== window || e.data?.ttx !== 'event-created') return;
+    const pending = TTX.mapform._pending;
+    TTX.mapform._pending = null;
+    if (!pending || !e.data.uuid || !e.data.calendarId) return;
+    try {
+      await TTX.api.updateEvent(e.data.calendarId, e.data.uuid, {
+        location_lat: pending.lat,
+        location_lon: pending.lon,
+      });
+    } catch { /* the event still saved with its text location; the pin is best-effort */ }
+  }
+
   let observer = null;
   function start() {
     if (observer) return;
@@ -283,13 +303,15 @@
       || typeof globalThis.chrome.runtime?.sendMessage !== 'function') return;
     observer = new MutationObserver(() => ensureButton());
     observer.observe(document.body, { childList: true, subtree: true });
+    window.addEventListener('message', onCreated);
     ensureButton();   // in case the form is already open
   }
 
   function stop() {
     observer?.disconnect();
     observer = null;
+    window.removeEventListener('message', onCreated);
   }
 
-  TTX.mapform = { start, stop, _internals: { tile, search, mapsOn, setMapsOn, locationField } };
+  TTX.mapform = { start, stop, _pending: null, _internals: { tile, search, mapsOn, setMapsOn, locationField, onCreated } };
 })();
