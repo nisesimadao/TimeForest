@@ -37,17 +37,17 @@ chrome.commands?.onCommand.addListener((cmd) => {
  *   1. Tiles come back as data: URIs, so the content script's page — whose CSP
  *      is TimeTree's, not ours — never has to be allowed to load a tile CDN.
  *   2. The extension talked to exactly one host (timetreeapp.com). Maps make it
- *      three. Keeping that in one auditable place, behind the same off-by-default
- *      switch, beats sprinkling host access through the content script.
+ *      three. Keeping that in one auditable place, behind a single switch, beats
+ *      sprinkling host access through the content script.
  *
  * One thing the desktop could do and this can't: set a User-Agent. MV3 forbids
  * it on fetch. Measured against the real services from a Chrome context: tiles
  * and Nominatim both answer 200 without one. (If OSM ever tightens that, the
  * switch is already the single place to notice.)
  *
- * The map stays OFF until the user turns it on — turning it on tells OSM roughly
- * where the family's events are, which is a thing to ask rather than assume. The
- * flag lives in chrome.storage; the content script owns the asking.
+ * The map is ON by default (requested). The flag still lives in chrome.storage,
+ * so an explicit off is possible; only then does the content script re-ask before
+ * the next OSM request (telling OSM roughly where the family's events are).
  */
 const OSM_TILES = 'https://tile.openstreetmap.org';
 const NOMINATIM = 'https://nominatim.openstreetmap.org/search';
@@ -108,7 +108,8 @@ async function installHeaderRules() {
 }
 installHeaderRules();
 
-const mapsOn = () => chrome.storage.local.get('maps').then((s) => !!s.maps);
+// On by default (requested); only an explicit false disables it.
+const mapsOn = () => chrome.storage.local.get('maps').then((s) => s.maps !== false);
 
 async function tile(z, x, y) {
   if (!(await mapsOn())) throw new Error('maps off');

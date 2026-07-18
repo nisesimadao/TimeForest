@@ -386,8 +386,10 @@ const check = (c, m) => (c ? ok(m) : bad(m));
     if (sw) {
       const r = await sw.evaluate(async () => {
         const out = {};
-        await chrome.storage.local.set({ maps: false });
-        try { await tile(13, 7280, 3225); out.off = false; } catch { out.off = true; }
+        await chrome.storage.local.remove('maps');   // no flag stored = the default
+        try { await tile(13, 7280, 3225); out.defaultOn = true; } catch { out.defaultOn = false; }
+        await chrome.storage.local.set({ maps: false });   // explicitly turned off
+        try { await tile(13, 7281, 3225); out.off = false; } catch { out.off = true; }
         await chrome.storage.local.set({ maps: true });
         // Fetch several DIFFERENT tiles and look at their sizes. A data: png is
         // not enough: OSM rejects an unidentified client (MV3 can't set a
@@ -407,7 +409,8 @@ const check = (c, m) => (c ? ok(m) : bad(m));
         try { const s = await search('東京駅'); out.search = Array.isArray(s) && s.length > 0; } catch (e) { out.search = 'ERR ' + e.message; }
         return out;
       }).catch((e) => ({ evalErr: e.message }));
-      check(r.off === true, 'tiles are refused while maps are off (the default)');
+      check(r.defaultOn === true, 'tiles work by default (maps are on by default)');
+      check(r.off === true, 'and are refused when maps are explicitly turned off');
       check(r.tilesReal === true, `and come back as REAL tiles, not OSM's block image (sizes ${JSON.stringify(r.tileSizes)})`);
       check(r.search === true, `and Nominatim search works from the worker (${r.search})`);
     }

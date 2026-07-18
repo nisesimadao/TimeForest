@@ -32,7 +32,7 @@
   const tile = (z, x, y) => bg({ ttx: 'tile', z, x, y }).then((r) => r.uri);
   const search = (q) => bg({ ttx: 'search', q }).then((r) => r.list);
 
-  const mapsOn = () => chrome.storage.local.get('maps').then((s) => !!s.maps);
+  const mapsOn = () => chrome.storage.local.get('maps').then((s) => s.maps !== false);
   const setMapsOn = (on) => chrome.storage.local.set({ maps: !!on });
 
   /** The location field of the currently open form, or null. */
@@ -143,9 +143,10 @@
   }
 
   /**
-   * Ask before the first request, like desktop does — until the user says yes,
-   * the extension has spoken only to TimeTree, and telling OSM roughly where the
-   * family's events are is a thing to ask rather than assume.
+   * Maps are on by default (requested). This stays as the gate so that if maps
+   * are ever explicitly turned off (setMapsOn(false)), the next request re-asks
+   * before talking to OSM — telling OSM roughly where the family's events are is
+   * worth a confirm when it isn't already allowed.
    */
   async function ensureMaps() {
     if (await mapsOn()) return true;
