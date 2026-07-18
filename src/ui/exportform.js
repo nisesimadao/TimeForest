@@ -10,9 +10,11 @@
  * sibling that React won't re-render away, watch for the toolbar via a
  * MutationObserver, and never inject twice.
  *
- * Unlike the map, this needs no background worker — it reads events with the
- * page's own session (TTX.api) and downloads via a Blob — so it works in the
- * userscript build too. No sendMessage guard.
+ * Unlike the map, this opens no worker channel of its own: it just calls
+ * TTX.api and downloads via a Blob. How TTX.api reaches the network is decided
+ * once in content.js — api.js's direct fetch in the userscript build (no worker
+ * there), the background worker in the extension — so this works in both and
+ * needs no sendMessage guard here.
  */
 (() => {
   const TTX = (window.TTX = window.TTX || {});

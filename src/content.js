@@ -16,12 +16,19 @@
     // the page's own Service Worker. The worker has no such contention, so it
     // makes the request and hands back parsed JSON. Same seam the desktop client
     // uses for its Electron transport, a different backend behind it.
-    TTX.api.setTransport((path, { method, body }) =>
-      chrome.runtime.sendMessage({ ttx: 'api', method, path, body }).then((r) => {
-        if (!r) throw new Error('background worker did not respond');
-        if (r.err) throw new Error(r.err);
-        return r.json;
-      }));
+    //
+    // ONLY in the extension, which has a worker. The userscript build ships this
+    // same content.js with no service worker (its chrome shim's runtime has no
+    // sendMessage), and it never had the isolated-world hang anyway — it runs in
+    // the page, where api.js's own direct fetch is fine. Same guard mapform uses.
+    if (typeof chrome !== 'undefined' && typeof chrome.runtime?.sendMessage === 'function') {
+      TTX.api.setTransport((path, { method, body }) =>
+        chrome.runtime.sendMessage({ ttx: 'api', method, path, body }).then((r) => {
+          if (!r) throw new Error('background worker did not respond');
+          if (r.err) throw new Error(r.err);
+          return r.json;
+        }));
+    }
     // The toolbar/form injections must not wait on the panel's network. They
     // only watch the DOM and add a sibling; starting them first means a slow or
     // stalled panel.init() (which loads every event before it resolves) can't
