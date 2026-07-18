@@ -53,8 +53,17 @@ TimeTree 非公式クライアント。3つの形で同じものを届ける。
 
 ![本家のトグルにアジェンダ](docs/shots/ext-agenda-dark.png)
 
-エクスポートとテーマ切替もツールバーに、地図ピンは本家の予定フォームに足す。
-下は本家自身のフォームに「地図で選ぶ」が生えたところ。見分けはつかない。
+本家のツールバーそのものにも項目を足す — ⬇ エクスポート、🌗 テーマ切替、
+👤 アカウント切り替え、🔔 リマインド通知。どれも本家のアイコンボタンから複製したので、
+右端の 設定 と見分けはつかない。
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/shots/ext-toolbar-dark.png">
+  <img alt="本家ツールバーに足したエクスポート・テーマ・アカウント・通知" src="docs/shots/ext-toolbar-light.png" width="100%">
+</picture>
+
+地図ピンは本家の予定フォームに足す。下は本家自身のフォームに「地図で選ぶ」が
+生えたところ。見分けはつかない。
 
 ![本家フォームに地図ピッカー](docs/shots/ext-picker.png)
 
