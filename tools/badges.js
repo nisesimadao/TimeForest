@@ -15,6 +15,12 @@
  * The values themselves are read from the repo, not hardcoded, so `Electron 43`
  * becomes `Electron 44` here the moment client/package.json bumps — and the
  * check.js guard then makes sure the README was regenerated to match.
+ *
+ * The README shows PNGs, not these SVGs, because GitHub's camo proxy mangles
+ * README SVGs into broken-image icons (worse on a private repo). The PNGs are
+ * rasterised from these SVGs by tools/rasterise-docs.js (a headed browser), so
+ * the SVG stays the single source of truth and the PNG is just what renders.
+ * check.js verifies every image the README points at actually exists.
  */
 const fs = require('node:fs');
 const path = require('node:path');

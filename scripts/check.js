@@ -122,6 +122,19 @@ section('README badges match reality');
   } catch (e) {
     bad(`docs/badge-*.svg drift from tools/badges.js — run \`node tools/badges.js\`\n${String(e.stderr || '').trim()}`);
   }
+
+  // Every image the README points at must exist. This is the failure that was
+  // actually shipped: the README referenced files that rendered as broken-image
+  // icons on GitHub. The <img>/srcset the README uses are PNGs (GitHub's camo
+  // proxy mangles README SVGs); each is rasterised from its SVG by
+  // tools/badges.js --png, so a missing or stale PNG is a broken README.
+  const readme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8');
+  const refs = [...readme.matchAll(/(?:src|srcset)="(docs\/[^"]+)"/g), ...readme.matchAll(/\]\((docs\/[^)]+)\)/g)]
+    .map((m) => m[1]);
+  const missing = [...new Set(refs)].filter((r) => !fs.existsSync(path.join(ROOT, r)));
+  if (!refs.length) bad('README references no docs/ images — did the banner/badges get dropped?');
+  else if (missing.length) bad(`README points at missing files: ${missing.join(', ')} — these render as broken images on GitHub`);
+  else ok(`all ${new Set(refs).size} README images exist (${[...new Set(refs)].map((r) => r.replace('docs/', '')).join(', ')})`);
 }
 
 // --- 3. the client loads the same libs, not copies --------------------------
