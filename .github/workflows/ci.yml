@@ -37,6 +37,12 @@ jobs:
           node build-userscript.js
           diff -q /tmp/first.js dist/timeforest.user.js
 
+      # Zero-dep, no browser: builds web/dist, boots the dev server, and checks it
+      # serves the bundle + API routes and blocks traversal. Guards the hosted
+      # client the way smoke-client guards the desktop.
+      - name: Smoke-test the web client backend
+        run: node scripts/smoke-web.js
+
       - name: Upload userscript
         if: matrix.node == 24
         uses: actions/upload-artifact@v5
