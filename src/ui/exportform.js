@@ -1,9 +1,9 @@
 /* Add an Export control to TimeTree's own toolbar.
  *
  * TimeTree's web app has no export at all (measured — no download/CSV/ICS
- * anywhere in its UI). The desktop client and our own panel export to
- * Markdown / CSV / JSON / ICS; this puts the same four onto 本家's toolbar, next
- * to its search and 予定作成, so it reads as a button that was always there.
+ * anywhere in its UI). The desktop client exports to Markdown / CSV / JSON /
+ * ICS; this puts the same four onto 本家's toolbar, next to its search and
+ * 予定作成, so it reads as a button that was always there.
  *
  * Same shape as the map pin (src/ui/mapform.js): hook a hand-written anchor
  * (data-test-id="search-field") rather than a build-hashed class, inject a
@@ -99,7 +99,7 @@
     const membersById = new Map((members || []).map((u) => [u.user_id ?? u.id, u]));
     // occurrences() compares against event epochs, so from/to must be instants,
     // not YYYY-MM-DD. parseYmd gives midnight; +DAY-1 makes `to` inclusive of
-    // its whole last day (the same conversion panel.js does before calling it).
+    // its whole last day.
     const fromMs = TTX.tz.parseYmd(from);
     const toMs = TTX.tz.parseYmd(to) + TTX.tz.DAY - 1;
     const occs = TTX.model.occurrences(raw, fromMs, toMs, { id: cal.id, name: cal.name, calendar_labels: labels }, { membersById });

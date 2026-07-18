@@ -55,7 +55,7 @@ if (typeof globalThis.chrome === 'undefined' || !globalThis.chrome.storage) {
 }
 `.trim();
 
-const css = cs.css.map(read).join('\n');
+const css = (cs.css || []).map(read).join('\n');
 const STYLE = `
 /* --- injected stylesheet ----------------------------------------------- */
 (() => {
@@ -105,4 +105,4 @@ const target = path.join(dir, 'timeforest.user.js');
 fs.writeFileSync(target, out);
 
 console.log('built', path.relative(ROOT, target), '—', (out.length / 1024).toFixed(1), 'KB');
-console.log('sources:', cs.js.length, 'js +', cs.css.length, 'css');
+console.log('sources:', cs.js.length, 'js +', (cs.css || []).length, 'css');

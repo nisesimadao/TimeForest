@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "TimeForest",
   "version": "0.1.0",
-  "description": "TimeTree に アジェンダ表示 / 全文検索 / エクスポート(MD・CSV・JSON・ICS) / ダークモード / 複数カレンダー横断 を追加する非公式拡張。",
+  "description": "TimeTree 自身の UI に アジェンダ表示 / エクスポート(MD・CSV・JSON・ICS) / ダークモード / 地図ピン を足す非公式拡張。",
   "permissions": ["storage", "tabs", "declarativeNetRequest"],
   "host_permissions": [
     "https://timetreeapp.com/*",
@@ -11,9 +11,9 @@
   ],
   "background": { "service_worker": "src/bg.js" },
   "commands": {
-    "toggle-panel": {
+    "toggle-agenda": {
       "suggested_key": { "default": "Alt+T" },
-      "description": "パネルを開閉"
+      "description": "アジェンダを開閉"
     },
     "toggle-dark": {
       "suggested_key": { "default": "Alt+D" },
@@ -31,14 +31,12 @@
         "src/lib/export.js",
         "src/lib/map.js",
         "src/ui/dark.js",
-        "src/ui/panel.js",
         "src/ui/mapform.js",
         "src/ui/exportform.js",
         "src/ui/agendaview.js",
         "src/ui/darktoggle.js",
         "src/content.js"
       ],
-      "css": ["src/ui/panel.css"],
       "run_at": "document_idle"
     },
     {
@@ -49,6 +47,6 @@
     }
   ],
   "action": {
-    "default_title": "TimeForest — パネルを開閉"
+    "default_title": "TimeForest — アジェンダを開閉"
   }
 }

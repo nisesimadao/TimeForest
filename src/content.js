@@ -29,16 +29,15 @@
           return r.json;
         }));
     }
-    // The toolbar/form injections must not wait on the panel's network. They
-    // only watch the DOM and add a sibling; starting them first means a slow or
-    // stalled panel.init() (which loads every event before it resolves) can't
-    // keep the map pin and export button from appearing.
+    // Everything is added INTO TimeTree's own UI — each watches the DOM and adds
+    // a sibling that survives React's re-renders. This replaced a full-screen
+    // drawer: the map pin, export, agenda and theme controls now live in
+    // TimeTree's own toolbar and view toggle instead of a panel over the top.
     TTX.mapform?.start();     // map pin on TimeTree's own event form
     TTX.exportform?.start();  // export control on TimeTree's own toolbar
-    TTX.agendaview?.start();  // agenda (list) view over TimeTree's month grid
+    TTX.agendaview?.start();  // agenda (list) view in TimeTree's マンスリー/ウィークリー toggle
     TTX.darktoggle?.start();  // theme toggle in TimeTree's toolbar (dark.js has no UI)
     await TTX.dark.init();
-    await TTX.panel.init();
   }
 
   // The app renders asynchronously; poll briefly rather than racing it.
@@ -49,9 +48,9 @@
   setTimeout(() => clearInterval(tick), 30000);
   boot();
 
-  // Toolbar button -> toggle drawer.
+  // Toolbar button / Alt+T -> open the agenda; Alt+D -> cycle the theme.
   chrome.runtime?.onMessage?.addListener((msg) => {
-    if (msg === 'ttx:toggle' && booted) TTX.panel.toggle();
+    if (msg === 'ttx:agenda' && booted) TTX.agendaview?.toggle();
     if (msg === 'ttx:dark' && booted) TTX.dark.cycle();
   });
 })();

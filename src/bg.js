@@ -21,9 +21,9 @@ const send = async (msg) => {
   }
 };
 
-chrome.action.onClicked.addListener(() => send('ttx:toggle'));
+chrome.action.onClicked.addListener(() => send('ttx:agenda'));
 chrome.commands?.onCommand.addListener((cmd) => {
-  if (cmd === 'toggle-panel') send('ttx:toggle');
+  if (cmd === 'toggle-agenda') send('ttx:agenda');
   if (cmd === 'toggle-dark') send('ttx:dark');
 });
 

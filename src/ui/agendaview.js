@@ -301,5 +301,5 @@
     document.removeEventListener('click', onNativeViewClick, true);
   }
 
-  TTX.agendaview = { start, stop, _internals: { render, currentCalendar } };
+  TTX.agendaview = { start, stop, toggle, _internals: { render, currentCalendar } };
 })();
