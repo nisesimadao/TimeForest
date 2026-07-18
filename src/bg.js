@@ -149,12 +149,125 @@ async function search(q) {
   }));
 }
 
+/* --- account switching (session-cookie swap) ------------------------------
+ *
+ * TimeTree's web app has no account switcher — one browser session, one
+ * account. The desktop client gets multiple accounts by giving each its own
+ * Electron partition (a separate cookie jar). An extension shares the browser's
+ * single cookie jar for timetreeapp.com, so it can't do that. What it CAN do is
+ * remember each account's `_session_id` and swap the live cookie: set it to the
+ * chosen account's value and reload, and the site is that account — a real login
+ * switch, not a shadow view.
+ *
+ * Only the service worker can touch cookies (chrome.cookies exists nowhere else),
+ * which is why this lives here rather than in a content-script lib. Accounts are
+ * keyed by TimeTree user id and carry the session token verbatim; that token is
+ * the login, so it never leaves storage, never rides a log line, never reaches a
+ * page. It's the same secret host_permissions already lets this extension send on
+ * every API call — held now so switching is possible, not newly exposed.
+ *
+ * Sessions rotate. Two things keep the store fresh: the content script asks for a
+ * `capture` on every boot (refreshing whoever is signed in, and auto-adding a
+ * newly-logged-in account), and a `switch` re-captures the account it's LEAVING
+ * before writing the target — so returning to it works even if its token rotated
+ * mid-session. A token that goes stale anyway just means "log into that one
+ * again", which re-captures it. */
+const SESSION_COOKIE = '_session_id';
+const TT_URL = 'https://timetreeapp.com/';
+const ACCTS_KEY = 'ttx_accounts';
+
+const readSessionCookie = () => chrome.cookies.get({ url: TT_URL, name: SESSION_COOKIE });
+
+/** Swap only the value; keep the live cookie's own domain/path/flags so the site
+ *  treats it identically to one it set itself. A hostOnly cookie must NOT carry a
+ *  domain (that would turn it into a broader domain cookie), hence the guard. */
+async function writeSessionCookie(value) {
+  const cur = await readSessionCookie();
+  const details = {
+    url: TT_URL,
+    name: SESSION_COOKIE,
+    value,
+    path: cur?.path || '/',
+    secure: cur?.secure ?? true,
+    httpOnly: cur?.httpOnly ?? true,
+    sameSite: cur?.sameSite || 'lax',
+  };
+  if (cur && !cur.hostOnly && cur.domain) details.domain = cur.domain;
+  if (cur?.expirationDate) details.expirationDate = cur.expirationDate;
+  await chrome.cookies.set(details);
+}
+
+const getAccounts = () => chrome.storage.local.get(ACCTS_KEY).then((s) => s[ACCTS_KEY] || {});
+const setAccounts = (accts) => chrome.storage.local.set({ [ACCTS_KEY]: accts });
+
+/** Record whoever is signed in right now, labelled by their TimeTree profile.
+ *  Returns null when signed out or unidentifiable — we never store a nameless
+ *  token, since a switcher row you can't recognise is worse than none. */
+// me() carries a display `name` and nothing else human — measured: no email, no
+// nickname (the throwaway has name:""). So label by name, and when it's blank
+// fall back to the id's last four digits rather than the bare id, which reads as
+// an account rather than a database key.
+const accountLabel = (me) => (me.name && me.name.trim()) || ('アカウント ' + String(me.id).slice(-4));
+
+async function captureCurrent() {
+  const c = await readSessionCookie();
+  if (!c?.value) return null;
+  const me = await self.TTX.api.me().catch(() => null);
+  if (!me?.id) return null;
+  const accts = await getAccounts();
+  accts[me.id] = { id: me.id, name: accountLabel(me), sessionId: c.value, updatedAt: Date.now() };
+  await setAccounts(accts);
+  return { id: me.id, name: accts[me.id].name };
+}
+
+/** Accounts for the menu, each flagged active if its token is the live cookie. */
+async function listAccounts() {
+  const [accts, cur] = await Promise.all([getAccounts(), readSessionCookie()]);
+  const live = cur?.value || null;
+  return Object.values(accts)
+    .map((a) => ({ id: a.id, name: a.name, active: a.sessionId === live }))
+    .sort((x, y) => (y.active ? 1 : 0) - (x.active ? 1 : 0) || String(x.name).localeCompare(String(y.name)));
+}
+
+/** Make `id` the signed-in account. Re-captures the outgoing one first, writes
+ *  the target token, warms a fresh CSRF for it, and reloads the tab that asked. */
+async function switchTo(id, tabId) {
+  const accts = await getAccounts();
+  const target = accts[id];
+  if (!target) throw new Error('unknown account');
+  await captureCurrent().catch(() => {});          // freshen the account we're leaving
+  await writeSessionCookie(target.sessionId);
+  self.TTX.api.csrfToken(true).catch(() => {});     // old token belonged to the old account
+  if (tabId != null) chrome.tabs.reload(tabId).catch(() => {});
+  return { id: target.id, name: target.name };
+}
+
+async function forgetAccount(id) {
+  const accts = await getAccounts();
+  delete accts[id];
+  await setAccounts(accts);
+  return true;
+}
+
+// Exposed on self so the mechanism can be exercised directly (service-worker
+// E2E) without driving the UI; the message handler below is the real entry.
+self.ttxSession = { readSessionCookie, writeSessionCookie, captureCurrent, listAccounts, switchTo, forgetAccount };
+
 // The content script can't fetch OSM itself (its page CSP forbids it and it has
-// no host access), so it asks here. One message channel, two verbs.
-chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
+// no host access), so it asks here. One message channel, several verbs.
+chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   if (msg?.ttx === 'tile') { tile(msg.z, msg.x, msg.y).then((uri) => reply({ uri }), (e) => reply({ err: String(e.message) })); return true; }
   if (msg?.ttx === 'search') { search(msg.q).then((list) => reply({ list }), (e) => reply({ err: String(e.message) })); return true; }
   // The isolated world's fetch hangs here instead — see the header note.
   if (msg?.ttx === 'api') { self.TTX.api.request(msg.method, msg.path, msg.body).then((json) => reply({ json }), (e) => reply({ err: String(e && e.message || e) })); return true; }
+  if (msg?.ttx === 'session') {
+    const op = msg.op;
+    const done = (p) => { p.then((r) => reply({ ok: r }), (e) => reply({ err: String(e && e.message || e) })); return true; };
+    if (op === 'list') return done(listAccounts());
+    if (op === 'capture') return done(captureCurrent());
+    if (op === 'switch') return done(switchTo(msg.id, sender?.tab?.id));
+    if (op === 'forget') return done(forgetAccount(msg.id));
+    return false;
+  }
   return false;
 });

@@ -2,8 +2,8 @@
   "manifest_version": 3,
   "name": "TimeForest",
   "version": "0.1.0",
-  "description": "TimeTree 自身の UI に アジェンダ表示 / エクスポート(MD・CSV・JSON・ICS) / ダークモード / 地図ピン を足す非公式拡張。",
-  "permissions": ["storage", "tabs", "declarativeNetRequest"],
+  "description": "TimeTree 自身の UI に アジェンダ表示 / エクスポート(MD・CSV・JSON・ICS) / ダークモード / 地図ピン / アカウント切り替え を足す非公式拡張。",
+  "permissions": ["storage", "tabs", "declarativeNetRequest", "cookies"],
   "host_permissions": [
     "https://timetreeapp.com/*",
     "https://tile.openstreetmap.org/*",
@@ -35,6 +35,7 @@
         "src/ui/exportform.js",
         "src/ui/agendaview.js",
         "src/ui/darktoggle.js",
+        "src/ui/accounts.js",
         "src/content.js"
       ],
       "run_at": "document_idle"

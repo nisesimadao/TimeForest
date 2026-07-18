@@ -28,6 +28,10 @@
           if (r.err) throw new Error(r.err);
           return r.json;
         }));
+      // Record whoever is signed in right now, so the account switcher knows this
+      // account (and picks up one you just logged into). Fire-and-forget — the
+      // menu re-reads on open, and a failure here must not hold up boot.
+      chrome.runtime.sendMessage({ ttx: 'session', op: 'capture' }).catch(() => {});
     }
     // Everything is added INTO TimeTree's own UI — each watches the DOM and adds
     // a sibling that survives React's re-renders. This replaced a full-screen
@@ -37,6 +41,7 @@
     TTX.exportform?.start();  // export control on TimeTree's own toolbar
     TTX.agendaview?.start();  // agenda (list) view in TimeTree's マンスリー/ウィークリー toggle
     TTX.darktoggle?.start();  // theme toggle in TimeTree's toolbar (dark.js has no UI)
+    TTX.accounts?.start();    // account switcher in TimeTree's toolbar (extension-only)
     await TTX.dark.init();
   }
 
