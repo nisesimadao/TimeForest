@@ -42,6 +42,13 @@ const status = (p) => fetch(`http://127.0.0.1:${PORT}${p}`).then((r) => r.status
     for (const r of refs) { if ((await status('/' + r)) !== 200) { bad(`asset ${r} does not serve`); missing++; } }
     if (!missing) ok(`all ${refs.length} bundle assets serve 200 (host-web, libs, renderer, favicon)`);
 
+    // The mobile client: the userscript is served from this same origin so a phone
+    // can install it and its manager can auto-update from the same URL.
+    const us = await fetch(`http://127.0.0.1:${PORT}/timeforest-app.user.js`).catch(() => null);
+    const usText = us && us.status === 200 ? await us.text() : '';
+    check(us && us.status === 200 && /==UserScript==/.test(usText) && /@downloadURL/.test(usText),
+      'the mobile userscript serves from the deploy (install + auto-update URL)');
+
     // API routes answer (no session -> 401), nothing escapes dist. (The /api-only
     // proxy restriction returns 404 only once past the session gate, so it needs a
     // real session — the browser E2E covers that; here every proxy path is 401.)

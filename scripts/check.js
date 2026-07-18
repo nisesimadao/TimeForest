@@ -711,7 +711,13 @@ section('web client bundle');
   const refs = [...html.matchAll(/(?:src|href)="\.\/([^"]+)"/g)].map((m) => m[1]);
   const produced = new Set(['index.html', 'host-web.js', 'favicon.png', ...libs.map((l) => `lib/${l}.js`), ...renderer.map((f) => `renderer/${f}`)]);
   for (const r of refs) if (!produced.has(r)) { bad(`web/index.html loads ./${r}, which web/build.js does not produce`); webBad++; }
-  if (!webBad) ok(`web/index.html's ${refs.length} assets are all produced by web/build.js (${libs.length} libs + ${renderer.length} renderer)`);
+  // The deploy also serves the mobile userscript (built through the shared builder,
+  // not a copy) so a phone can install AND auto-update it. If build.js stops
+  // emitting it, the install URL the modal links to 404s — silently, until mobile.
+  if (!/timeforest-app\.user\.js/.test(buildJs) || !/require\(['"]\.\.\/build-app-userscript/.test(buildJs)) {
+    bad('web/build.js no longer emits timeforest-app.user.js via build-app-userscript.js — the mobile install/update URL would 404'); webBad++;
+  }
+  if (!webBad) ok(`web/index.html's ${refs.length} assets are all produced by web/build.js (${libs.length} libs + ${renderer.length} renderer) + the mobile userscript`);
 }
 
 // --- 5e. the Vercel build isn't sabotaged by .vercelignore ------------------
@@ -734,6 +740,9 @@ section('web deploy — .vercelignore keeps build.js inputs');
   const icon = (b.match(/'icons',\s*'([^']+)'/) || [])[1] || 'icon-32.png';
   const inputs = [
     'web/index.html', 'web/host-web.js', `icons/${icon}`,
+    // web/build.js also require()s build-app-userscript.js on Vercel, which reads
+    // these — exclude any and the deploy build throws "cannot find …".
+    'build-app-userscript.js', 'web/host-userscript.js', 'web/app-userscript-boot.js', 'package.json',
     ...readArr('LIBS').map((l) => `src/lib/${l}.js`),
     ...readArr('RENDERER').map((f) => `client/renderer/${f}`),
   ];

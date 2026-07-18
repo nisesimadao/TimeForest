@@ -52,8 +52,10 @@
         <input type="password" placeholder="_session_id を貼り付け" autocomplete="off"
           style="width:100%;box-sizing:border-box;margin-top:6px;padding:9px 11px;font:inherit;font-size:13px;border:1px solid rgba(128,128,128,.4);border-radius:9px;background:transparent;color:inherit">
         <p class="ttx-err" style="margin:8px 0 0;font-size:12px;color:#e33;min-height:16px"></p>
-        <p style="margin:2px 0 0;font-size:11px;line-height:1.5;opacity:.55">
-          スマホには開発者ツールが無いため、PC で接続してください（スマホへの持ち出しは別途）。</p>
+        <p style="margin:2px 0 0;font-size:11px;line-height:1.5;opacity:.75">
+          この貼り付けは開発者ツールのある PC 向けです。スマホは
+          <a href="/timeforest-app.user.js" style="color:#2ecc87;font-weight:600;text-decoration:none">ユーザースクリプト版</a>
+          をどうぞ — 本家にログインするだけで使え、貼り付けは要りません（要ユーザースクリプトマネージャ）。</p>
         <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
           <button class="ttx-cancel" style="padding:8px 14px;font:inherit;font-size:13px;border:none;border-radius:9px;background:rgba(128,128,128,.16);color:inherit;cursor:pointer">キャンセル</button>
           <button class="ttx-ok" style="padding:8px 16px;font:inherit;font-size:13px;border:none;border-radius:9px;background:#2ecc87;color:#fff;cursor:pointer">接続</button>

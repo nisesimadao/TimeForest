@@ -29,5 +29,12 @@ copy(path.join(ROOT, 'icons', 'icon-32.png'), 'favicon.png');   // tab icon (reu
 for (const l of LIBS) copy(path.join(ROOT, 'src', 'lib', `${l}.js`), `lib/${l}.js`);
 for (const f of RENDERER) copy(path.join(ROOT, 'client', 'renderer', f), `renderer/${f}`);
 
-const n = 3 + LIBS.length + RENDERER.length;
-console.log(`built web/dist — ${n} files (index.html, host-web.js, favicon, ${LIBS.length} libs, ${RENDERER.length} renderer)`);
+// The mobile client: the desktop UI as a userscript, served from this same origin
+// so a phone's userscript manager can install AND auto-update it (its @updateURL
+// points back here). Built through build-app-userscript.js's build() — no second
+// copy of the bundling logic — so the served file can't drift from what CI checks.
+const { build: buildUserscript } = require('../build-app-userscript.js');
+fs.writeFileSync(path.join(DIST, 'timeforest-app.user.js'), buildUserscript());
+
+const n = 4 + LIBS.length + RENDERER.length;
+console.log(`built web/dist — ${n} files (index.html, host-web.js, favicon, timeforest-app.user.js, ${LIBS.length} libs, ${RENDERER.length} renderer)`);

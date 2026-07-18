@@ -23,6 +23,14 @@ const LIBS = ['tz', 'recur', 'api', 'model', 'export', 'map'].map((l) => `src/li
 const RENDERER = ['icons.js', 'store.js', 'cli-host.js', 'app.js'].map((f) => `client/renderer/${f}`);
 const appCss = read('client/renderer/app.css');
 
+// Where the built script is served from, so a userscript manager can auto-update
+// it. Defaults to the production deploy; override with TF_WEB_ORIGIN if you host
+// it elsewhere. It must be the STABLE production URL, never a per-deploy one, or
+// @updateURL would chase a URL that 404s next deploy. web/build.js copies the
+// built file to web/dist/ so this path resolves on the same origin as the app.
+const HOST = (process.env.TF_WEB_ORIGIN || 'https://time-forest-five.vercel.app').replace(/\/$/, '');
+const SELF_URL = `${HOST}/timeforest-app.user.js`;
+
 const header = `// ==UserScript==
 // @name         TimeForest（デスクトップUI）
 // @namespace    https://github.com/nisesimadao/TimeForest
@@ -31,26 +39,38 @@ const header = `// ==UserScript==
 // @match        https://timetreeapp.com/*
 // @run-at       document-idle
 // @grant        none
+// @downloadURL  ${SELF_URL}
+// @updateURL    ${SELF_URL}
 // ==/UserScript==
 `;
 
-const out = [
-  header,
-  '(function () {',
-  "'use strict';",
-  '\n/* ===== web/host-userscript.js ===== */\n' + read('web/host-userscript.js'),
-  "\n// Not signed in (no csrf meta) -> leave TimeTree's own page (incl. its login) alone.",
-  "if (!document.querySelector('meta[name=\"csrf-token\"]')) return;",
-  '\nvar __TTX_APP_CSS__ = ' + JSON.stringify(appCss) + ';',
-  '\n/* ===== web/app-userscript-boot.js ===== */\n' + read('web/app-userscript-boot.js'),
-  ...LIBS.map((p) => `\n/* ===== ${p} ===== */\n` + read(p)),
-  ...RENDERER.map((p) => `\n/* ===== ${p} ===== */\n` + read(p)),
-  '})();',
-  '',
-].join('\n');
+// Return the whole userscript as a string. Both the CLI below and web/build.js
+// call this — the bundling logic lives in exactly one place, so the file the
+// deploy serves and the file CI checks can never drift apart.
+function build() {
+  return [
+    header,
+    '(function () {',
+    "'use strict';",
+    '\n/* ===== web/host-userscript.js ===== */\n' + read('web/host-userscript.js'),
+    "\n// Not signed in (no csrf meta) -> leave TimeTree's own page (incl. its login) alone.",
+    "if (!document.querySelector('meta[name=\"csrf-token\"]')) return;",
+    '\nvar __TTX_APP_CSS__ = ' + JSON.stringify(appCss) + ';',
+    '\n/* ===== web/app-userscript-boot.js ===== */\n' + read('web/app-userscript-boot.js'),
+    ...LIBS.map((p) => `\n/* ===== ${p} ===== */\n` + read(p)),
+    ...RENDERER.map((p) => `\n/* ===== ${p} ===== */\n` + read(p)),
+    '})();',
+    '',
+  ].join('\n');
+}
 
-fs.mkdirSync(path.join(ROOT, 'dist'), { recursive: true });
-const target = path.join(ROOT, 'dist', 'timeforest-app.user.js');
-fs.writeFileSync(target, out);
-console.log('built', path.relative(ROOT, target), '—', (out.length / 1024).toFixed(1), 'KB');
-console.log('sources:', LIBS.length, 'libs +', RENDERER.length, 'renderer + host-userscript + boot + app.css');
+module.exports = { build };
+
+if (require.main === module) {
+  const out = build();
+  fs.mkdirSync(path.join(ROOT, 'dist'), { recursive: true });
+  const target = path.join(ROOT, 'dist', 'timeforest-app.user.js');
+  fs.writeFileSync(target, out);
+  console.log('built', path.relative(ROOT, target), '—', (out.length / 1024).toFixed(1), 'KB');
+  console.log('sources:', LIBS.length, 'libs +', RENDERER.length, 'renderer + host-userscript + boot + app.css');
+}
