@@ -64,7 +64,15 @@ const TILE_CACHE_MAX = 400;
  * the User-Agent on requests to OSM's two hosts. Registered once at startup;
  * cleared first so a reload doesn't stack duplicates. */
 const OSM_UA = `TimeForest/${chrome.runtime.getManifest().version} (unofficial TimeTree extension)`;
-async function installOsmUaRule() {
+
+/* Rule 1 (OSM UA): see above. Rule 2 (TimeTree Origin): when api.js runs HERE
+ * — see the API-routing note at the top — the worker's fetch carries
+ * `Origin: chrome-extension://<id>`. TimeTree's WRITE endpoints reject a foreign
+ * Origin with 422 {"code":-1} (reads don't check it, writes do — measured). fetch
+ * can't set Origin (a forbidden header), but declarativeNetRequest can, so we
+ * rewrite it to the site's own origin. On the page's own requests this is a
+ * no-op (they already carry it); on the worker's it's what makes writes work. */
+async function installHeaderRules() {
   try {
     const existing = await chrome.declarativeNetRequest.getDynamicRules();
     await chrome.declarativeNetRequest.updateDynamicRules({
@@ -80,11 +88,25 @@ async function installOsmUaRule() {
           type: 'modifyHeaders',
           requestHeaders: [{ header: 'user-agent', operation: 'set', value: OSM_UA }],
         },
+      }, {
+        id: 2,
+        priority: 1,
+        condition: {
+          requestDomains: ['timetreeapp.com'],
+          resourceTypes: ['xmlhttprequest'],
+        },
+        action: {
+          type: 'modifyHeaders',
+          requestHeaders: [
+            { header: 'origin', operation: 'set', value: 'https://timetreeapp.com' },
+            { header: 'referer', operation: 'set', value: 'https://timetreeapp.com/' },
+          ],
+        },
       }],
     });
-  } catch (e) { /* older Chrome without DNR header edit — tiles will be blocked */ }
+  } catch (e) { /* older Chrome without DNR header edit — writes/tiles may fail */ }
 }
-installOsmUaRule();
+installHeaderRules();
 
 const mapsOn = () => chrome.storage.local.get('maps').then((s) => !!s.maps);
 
