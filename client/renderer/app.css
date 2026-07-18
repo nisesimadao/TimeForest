@@ -1189,10 +1189,14 @@ button { background: none; border: 0; cursor: default; text-align: left; }
   animation: sheet 0.2s var(--ease);
 }
 @keyframes sheet { from { transform: translateY(-8px) scale(0.985); opacity: 0; } }
-/* Leaving mirrors arriving — closeForm() adds `.out`, the sheet slides back up
-   as the dim lifts, and the node is removed when the sheet's animation ends. */
+/* Leaving mirrors arriving. Every `scrim > card` modal (form, settings, map
+   picker) enters with @keyframes sheet; animateModalOut() adds `.out`, and the
+   card slides back up as the dim lifts — the node removed when the sheet's exit
+   ends. Targeting the scrim's direct child covers each modal's card without
+   naming them one by one. (The confirm dialog keeps the instant close: it
+   resolves a choice and hands straight off to the next action.) */
 .scrim.out { animation: fade-out 0.16s ease forwards; }
-.scrim.out .form { animation: sheet-out 0.16s var(--ease) forwards; }
+.scrim.out > * { animation: sheet-out 0.16s var(--ease) forwards; }
 @keyframes fade-out { to { opacity: 0; } }
 @keyframes sheet-out { to { transform: translateY(-6px) scale(0.985); opacity: 0; } }
 

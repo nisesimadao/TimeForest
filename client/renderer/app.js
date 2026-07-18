@@ -1496,6 +1496,36 @@
   }
 
   /**
+   * The exit shared by every `scrim > card` modal (the event form, settings, the
+   * map picker) — all of which ENTER with @keyframes sheet. Adding `.out` plays
+   * the mirror (sheet-out as the dim fades), and the scrim is removed when the
+   * sheet's exit ends. Separate from animateOverlayOut() on purpose: that one
+   * reverses a `.in` TRANSITION (the detail card, the dropdown), while these
+   * arrive on a one-shot keyframe, so their exit is a second keyframe rather
+   * than a reversal — different mechanism, not duplicate code. Callers null
+   * their own ui handle and release focus first; this only runs the animation.
+   */
+  function animateModalOut(scrim) {
+    if (!scrim) return;
+    const card = scrim.firstElementChild;
+    if (!card || reducedMotion()) { scrim.remove(); return; }
+    scrim.classList.add('out');
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      card.removeEventListener('animationend', onEnd);
+      scrim.remove();
+    };
+    // Filter by name so a child's animationend can't end it early; the timeout
+    // is the backstop for an animationend that never fires (a hidden tab cancels
+    // the animation silently).
+    const onEnd = (e) => { if (e.animationName === 'sheet-out') finish(); };
+    card.addEventListener('animationend', onEnd);
+    setTimeout(finish, 220);
+  }
+
+  /**
    * A user-initiated close, animated as the mirror of openDetail(): the card
    * shrinks back into the row it grew from instead of blinking out. Only the
    * closes the user actually asks for (clicking the scrim, Escape) come here;
@@ -2163,33 +2193,15 @@
   }
 
   function closeForm() {
+    // Every close funnels here (save, delete, cancel, discard, Escape), and none
+    // tears down an anchor beneath the modal the way the detail card's internal
+    // closes do — so the animated exit is unconditional, no instant-path carve-out.
     const scrim = ui.form;
     ui.formRelease?.();
     ui.formRelease = null;
     ui.form = null;
     ui.formClose = null;
-    if (!scrim) return;
-    // The sheet slid in (@keyframes sheet); leaving plays the mirror instead of
-    // blinking out — the dim lifts as the sheet slides back up. Every close
-    // funnels here (save, delete, cancel, discard, Escape), and none of them is
-    // tearing down an anchor underneath the modal the way the detail card's
-    // internal closes are, so there's no instant-path exception to carve out.
-    const card = scrim.querySelector('.form');
-    if (!card || reducedMotion()) { scrim.remove(); return; }
-    scrim.classList.add('out');
-    let done = false;
-    const finish = () => {
-      if (done) return;
-      done = true;
-      card.removeEventListener('animationend', onEnd);
-      scrim.remove();
-    };
-    // Wait on the sheet's own exit (filtered by name so a child's animationend
-    // can't end it early); the timeout is the backstop for an animationend that
-    // never fires (a hidden tab cancels the animation silently).
-    const onEnd = (e) => { if (e.animationName === 'sheet-out') finish(); };
-    card.addEventListener('animationend', onEnd);
-    setTimeout(finish, 220);
+    animateModalOut(scrim);
   }
 
   /**
@@ -3134,8 +3146,8 @@
     const close = () => {
       clearTimeout(timer);
       release();
-      scrim.remove();
       ui.mapPicker = null;
+      animateModalOut(scrim);
     };
     cancel.onclick = close;
     use.onclick = () => {
@@ -3160,10 +3172,11 @@
   // for eleven things is furniture.
 
   function closeSettings() {
+    const scrim = ui.settings;
     ui.settingsRelease?.();
     ui.settingsRelease = null;
-    ui.settings?.remove();
     ui.settings = null;
+    animateModalOut(scrim);
   }
 
   /** A labelled row. `control` is whatever does the work. */
