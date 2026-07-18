@@ -36,6 +36,7 @@ const WANTED = {
   link: 'link',
   'list-checks': 'list-checks',
   list: 'list',
+  menu: 'menu',
   columns: 'columns-3',
   'chevron-left': 'chevron-left',
   'chevron-right': 'chevron-right',

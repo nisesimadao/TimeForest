@@ -441,6 +441,13 @@
   function renderToolbar() {
     const t = el('div', 'toolbar');
 
+    // Drawer toggle for narrow screens (the sidebar becomes an off-canvas drawer
+    // there — a 208px fixed rail would crush the calendar to ~120px on a phone).
+    // CSS hides this on wide screens, where the sidebar is always in view.
+    const burger = iconBtn('menu', 'カレンダー・アカウント', () => $('#app').classList.toggle('nav-open'));
+    burger.classList.add('tb-burger');
+    t.appendChild(burger);
+
     t.appendChild(el('div', 'tb-title', titleText()));
 
     const unit = ui.view === 'week' ? '週' : '月';
@@ -3602,7 +3609,12 @@
     const body = el('div', 'body');
     const main = el('div', 'main');
     main.appendChild(ui.view === 'month' ? renderMonth() : ui.view === 'week' ? renderWeek() : renderAgenda());
-    body.append(renderSidebar(), main);
+    // Scrim behind the drawer on narrow screens; tapping it closes the sidebar.
+    // Inert (display:none) on wide screens, where the sidebar is not a drawer.
+    // (`nav-scrim`, not `scrim` — the latter is the modal/sheet backdrop.)
+    const scrim = el('div', 'nav-scrim');
+    scrim.onclick = () => app.classList.remove('nav-open');
+    body.append(renderSidebar(), main, scrim);
     app.appendChild(body);
 
     // status is computed during the view render, so backfill the sidebar label

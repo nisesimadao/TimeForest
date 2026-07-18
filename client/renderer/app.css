@@ -321,6 +321,52 @@ button { background: none; border: 0; cursor: default; text-align: left; }
 }
 .sidebar.hidden { display: none; }
 
+/* --- narrow screens: the sidebar becomes a drawer ----------------------- */
+/* The Electron window never gets this narrow — this is for the hosted client
+   and the userscript running on a phone. There a fixed 208px rail crushes the
+   calendar (measured: .main was 112–206px at 320–414px wide, and the toolbar
+   clipped 228–322px off its right edge). So below 640px the sidebar slides in
+   over the calendar from a ☰ button, and the toolbar wraps instead of clipping. */
+.tb-burger { display: none; }   /* the drawer toggle — shown only on narrow screens */
+.nav-scrim { display: none; }   /* NOT .scrim — that's the modal/sheet backdrop below */
+
+@media (max-width: 640px) {
+  .toolbar {
+    height: auto;
+    min-height: var(--toolbar-h);
+    flex-wrap: wrap;
+    padding-top: 5px;
+    padding-bottom: 5px;
+    row-gap: 5px;
+  }
+  .tb-burger { display: grid; }
+  .tb-title { min-width: 0; }               /* was 130px — let it shrink to share the row */
+  .search-hint { min-width: 0; }            /* was 150px */
+  .search-hint .sh-t,
+  .search-hint kbd { display: none; }       /* the search box collapses to its icon */
+
+  .body { position: relative; }             /* positioning context for the drawer + scrim */
+  .sidebar {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 50;
+    width: min(80vw, 280px);                /* a touch wider than the 208px desktop rail */
+    transform: translateX(-100%);
+    transition: transform 0.22s var(--ease);
+    box-shadow: var(--shadow);
+  }
+  #app.nav-open .sidebar { transform: translateX(0); }
+  #app.nav-open .nav-scrim {
+    display: block;
+    position: absolute;
+    inset: 0;
+    z-index: 40;
+    background: rgba(0, 0, 0, 0.4);
+  }
+}
+
 /* --- account switcher --------------------------------------------------- */
 
 .acct {
