@@ -166,14 +166,15 @@ async function search(q) {
  * page. It's the same secret host_permissions already lets this extension send on
  * every API call — held now so switching is possible, not newly exposed.
  *
- * Sessions rotate. Two things keep the store fresh: the content script asks for a
- * `capture` on every boot (refreshing whoever is signed in, and auto-adding a
- * newly-logged-in account), and a `switch` re-captures the account it's LEAVING
- * before writing the target — so returning to it works even if its token rotated
- * mid-session. A token that goes stale anyway just means "log into that one
- * again", which re-captures it. */
+ * Sessions rotate. The content script asks for a `capture` on every boot, which
+ * refreshes whoever is signed in and auto-adds a newly-logged-in account — so
+ * each account's stored token is as fresh as its last page load. If a token
+ * rotates mid-session with no reload and you switch away and back, that one is
+ * stale; TimeTree then shows its sign-in page (where this switcher isn't
+ * mounted), and logging into that account re-captures it. */
 const SESSION_COOKIE = '_session_id';
 const TT_URL = 'https://timetreeapp.com/';
+const TT_TABS = 'https://timetreeapp.com/*';
 const ACCTS_KEY = 'ttx_accounts';
 
 const readSessionCookie = () => chrome.cookies.get({ url: TT_URL, name: SESSION_COOKIE });
@@ -190,34 +191,60 @@ async function writeSessionCookie(value) {
     path: cur?.path || '/',
     secure: cur?.secure ?? true,
     httpOnly: cur?.httpOnly ?? true,
-    sameSite: cur?.sameSite || 'lax',
+    // TimeTree's own _session_id is SameSite=None (measured: "no_restriction");
+    // match it when recreating one into an empty jar rather than downgrading.
+    sameSite: cur?.sameSite || 'no_restriction',
   };
   if (cur && !cur.hostOnly && cur.domain) details.domain = cur.domain;
-  if (cur?.expirationDate) details.expirationDate = cur.expirationDate;
+  // Deliberately NOT copying expirationDate: _session_id is a session cookie (no
+  // expiry, measured), and copying the OUTGOING account's expiry onto the
+  // incoming token would stamp the wrong lifetime the day TimeTree sets one.
   await chrome.cookies.set(details);
 }
 
 const getAccounts = () => chrome.storage.local.get(ACCTS_KEY).then((s) => s[ACCTS_KEY] || {});
-const setAccounts = (accts) => chrome.storage.local.set({ [ACCTS_KEY]: accts });
 
-/** Record whoever is signed in right now, labelled by their TimeTree profile.
- *  Returns null when signed out or unidentifiable — we never store a nameless
- *  token, since a switcher row you can't recognise is worse than none. */
+/* chrome.storage has no transaction, and several paths mutate the accounts map
+ * (boot capture, forget). A bare get→modify→set lets a concurrent capture and
+ * forget read the same snapshot and clobber each other — a just-removed account
+ * (its token) reappears, or a fresh capture is dropped. Serialise every
+ * read-modify-write through one chain so they can't interleave. */
+let storeChain = Promise.resolve();
+function mutateAccounts(fn) {
+  const run = storeChain.then(async () => {
+    const accts = await getAccounts();
+    const ret = await fn(accts);                 // fn mutates accts in place
+    await chrome.storage.local.set({ [ACCTS_KEY]: accts });
+    return ret;
+  });
+  storeChain = run.then(() => {}, () => {});     // keep the chain alive past any failure
+  return run;
+}
+
 // me() carries a display `name` and nothing else human — measured: no email, no
 // nickname (the throwaway has name:""). So label by name, and when it's blank
 // fall back to the id's last four digits rather than the bare id, which reads as
 // an account rather than a database key.
 const accountLabel = (me) => (me.name && me.name.trim()) || ('アカウント ' + String(me.id).slice(-4));
 
+/** Record whoever is signed in right now, labelled by their TimeTree profile.
+ *  Returns null when signed out or unidentifiable — we never store a nameless
+ *  token, since a switcher row you can't recognise is worse than none. */
 async function captureCurrent() {
-  const c = await readSessionCookie();
-  if (!c?.value) return null;
+  const before = await readSessionCookie();
+  if (!before?.value) return null;
   const me = await self.TTX.api.me().catch(() => null);
-  if (!me?.id) return null;
-  const accts = await getAccounts();
-  accts[me.id] = { id: me.id, name: accountLabel(me), sessionId: c.value, updatedAt: Date.now() };
-  await setAccounts(accts);
-  return { id: me.id, name: accts[me.id].name };
+  if (me?.id == null) return null;               // == null: an id of 0 is still an id
+  // me() rode whatever cookie was live at fetch time. If a switch landed while it
+  // was in flight, that identity belongs to a DIFFERENT token than the one we
+  // read — storing it would label this id with another account's session. Only
+  // commit when the live cookie is still the one me() actually used.
+  const after = await readSessionCookie();
+  if (after?.value !== before.value) return null;
+  return mutateAccounts((accts) => {
+    accts[me.id] = { id: me.id, name: accountLabel(me), sessionId: before.value };
+    return { id: me.id, name: accts[me.id].name };
+  });
 }
 
 /** Accounts for the menu, each flagged active if its token is the live cookie. */
@@ -229,24 +256,34 @@ async function listAccounts() {
     .sort((x, y) => (y.active ? 1 : 0) - (x.active ? 1 : 0) || String(x.name).localeCompare(String(y.name)));
 }
 
-/** Make `id` the signed-in account. Re-captures the outgoing one first, writes
- *  the target token, warms a fresh CSRF for it, and reloads the tab that asked. */
-async function switchTo(id, tabId) {
+/** Make `id` the signed-in account: write its token, warm a fresh CSRF, and
+ *  reload EVERY TimeTree tab. The cookie jar is shared across tabs, so one left
+ *  un-reloaded would keep showing the old account while its next request already
+ *  rides the new one's cookie — a silent wrong-account read or write on a shared
+ *  calendar. (The outgoing account isn't re-captured here: boot capture already
+ *  keeps it fresh, and doing it now would put a me() round-trip on the critical
+ *  path of every switch, slowest exactly when that session is degraded.) */
+async function switchTo(id) {
   const accts = await getAccounts();
   const target = accts[id];
   if (!target) throw new Error('unknown account');
-  await captureCurrent().catch(() => {});          // freshen the account we're leaving
   await writeSessionCookie(target.sessionId);
-  self.TTX.api.csrfToken(true).catch(() => {});     // old token belonged to the old account
-  if (tabId != null) chrome.tabs.reload(tabId).catch(() => {});
+  self.TTX.api.csrfToken(true).catch(() => {});     // worker's cached CSRF belonged to the old account
+  const tabs = await chrome.tabs.query({ url: TT_TABS }).catch(() => []);
+  for (const t of tabs) if (t.id != null) chrome.tabs.reload(t.id).catch(() => {});
   return { id: target.id, name: target.name };
 }
 
+/** Drop an account from the switcher — but never the live one. That's the
+ *  account you're using; the UI hides its × and this mirrors the rule
+ *  worker-side, so a stray message can't delete the session in use. */
 async function forgetAccount(id) {
-  const accts = await getAccounts();
-  delete accts[id];
-  await setAccounts(accts);
-  return true;
+  const cur = await readSessionCookie();
+  return mutateAccounts((accts) => {
+    if (accts[id] && accts[id].sessionId === cur?.value) return false;
+    delete accts[id];
+    return true;
+  });
 }
 
 // Exposed on self so the mechanism can be exercised directly (service-worker
@@ -255,9 +292,9 @@ self.ttxSession = { readSessionCookie, writeSessionCookie, captureCurrent, listA
 
 // The content script can't fetch OSM itself (its page CSP forbids it and it has
 // no host access), so it asks here. One message channel, several verbs.
-chrome.runtime.onMessage.addListener((msg, sender, reply) => {
-  if (msg?.ttx === 'tile') { tile(msg.z, msg.x, msg.y).then((uri) => reply({ uri }), (e) => reply({ err: String(e.message) })); return true; }
-  if (msg?.ttx === 'search') { search(msg.q).then((list) => reply({ list }), (e) => reply({ err: String(e.message) })); return true; }
+chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
+  if (msg?.ttx === 'tile') { tile(msg.z, msg.x, msg.y).then((uri) => reply({ uri }), (e) => reply({ err: String(e && e.message || e) })); return true; }
+  if (msg?.ttx === 'search') { search(msg.q).then((list) => reply({ list }), (e) => reply({ err: String(e && e.message || e) })); return true; }
   // The isolated world's fetch hangs here instead — see the header note.
   if (msg?.ttx === 'api') { self.TTX.api.request(msg.method, msg.path, msg.body).then((json) => reply({ json }), (e) => reply({ err: String(e && e.message || e) })); return true; }
   if (msg?.ttx === 'session') {
@@ -265,7 +302,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     const done = (p) => { p.then((r) => reply({ ok: r }), (e) => reply({ err: String(e && e.message || e) })); return true; };
     if (op === 'list') return done(listAccounts());
     if (op === 'capture') return done(captureCurrent());
-    if (op === 'switch') return done(switchTo(msg.id, sender?.tab?.id));
+    if (op === 'switch') return done(switchTo(msg.id));
     if (op === 'forget') return done(forgetAccount(msg.id));
     return false;
   }

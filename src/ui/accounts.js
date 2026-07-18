@@ -121,8 +121,11 @@
 
   async function toggleMenu(menu) {
     if (!menu.hidden) { menu.hidden = true; return; }
-    await populate(menu);
+    // Show first, THEN fill: populate() does a sendMessage round-trip (which can
+    // wake a spun-down worker), and setting hidden=false only after that await
+    // would re-open the menu even if an outside click closed it meanwhile.
     menu.hidden = false;
+    await populate(menu);
   }
 
   function ensureButton() {
@@ -143,15 +146,30 @@
     const menu = elem('div', 'ttx-acct-menu');
     menu.hidden = true;
     btn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); toggleMenu(menu); };
-    document.addEventListener('click', (e) => { if (!wrap.contains(e.target)) menu.hidden = true; });
     wrap.append(btn, menu);
     // left of the theme toggle if it's there, else left of 設定 — same cluster.
     (bar.querySelector('[data-ttx-theme-btn]') || settings).before(wrap);
   }
 
+  // One document-level outside-click handler for the life of the page, resolved
+  // against the LIVE menu each time. Binding it per injection (as the button is
+  // re-added after every React re-render) would stack a new listener — each
+  // pinning a detached wrap — for the tab's lifetime.
+  let outsideBound = false;
+  function bindOutside() {
+    if (outsideBound) return;
+    outsideBound = true;
+    document.addEventListener('click', (e) => {
+      const wrap = document.querySelector(`[${MARK}]`);
+      const menu = wrap?.querySelector('.ttx-acct-menu');
+      if (menu && !menu.hidden && !wrap.contains(e.target)) menu.hidden = true;
+    });
+  }
+
   let observer = null;
   function start() {
     if (observer || !hasWorker()) return;   // extension-only: needs the cookies-capable worker
+    bindOutside();
     observer = new MutationObserver(() => ensureButton());
     observer.observe(document.body, { childList: true, subtree: true });
     ensureButton();
