@@ -326,9 +326,10 @@
   function start() {
     if (observer) return;
     document.addEventListener('click', onNativeViewClick, true);
-    observer = new MutationObserver(() => { ensureButton(); if (visible) ensureShown(); });
-    observer.observe(document.body, { childList: true, subtree: true });
-    ensureButton();
+    // rAF-coalesced: the agenda overlay lives inside React-owned calendar-main, and
+    // on a busy calendar reacting to every subtree mutation synchronously let the
+    // re-attach fight React fast enough to hang the tab (the weekly→agenda freeze).
+    observer = TTX.ui.observeBody(() => { ensureButton(); if (visible) ensureShown(); });
   }
   function stop() {
     observer?.disconnect(); observer = null;

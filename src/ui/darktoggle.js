@@ -18,7 +18,7 @@
   function paint(btn) {
     const d = TTX.dark;
     if (!d) return;
-    btn.textContent = d.ICON[d.mode] || '🌗';    // replace 設定's cloned SVG with the mode glyph
+    btn.replaceChildren(TTX.ui.glyph(d.ICON[d.mode] || 'monitor', 20));   // monochrome icon, not an emoji
     btn.title = 'テーマ：' + (d.LABEL[d.mode] || d.mode);
     btn.setAttribute('aria-label', btn.title);
   }
@@ -31,7 +31,6 @@
     if (!bar || bar.querySelector(`[${MARK}]`)) return;
     const btn = settings.cloneNode(true);        // inherit TimeTree's icon-button styling
     btn.setAttribute(MARK, '1');
-    btn.style.fontSize = '16px';                 // the glyph replaces an SVG; give it a size
     btn.onclick = (e) => { e.preventDefault(); TTX.dark.cycle(); paint(btn); };
     paint(btn);
     settings.before(btn);                        // just left of 設定
@@ -46,9 +45,7 @@
   function start() {
     if (observer) return;
     window.addEventListener('ttx:dark', onThemeChange);
-    observer = new MutationObserver(() => ensureButton());
-    observer.observe(document.body, { childList: true, subtree: true });
-    ensureButton();
+    observer = TTX.ui.observeBody(ensureButton);   // rAF-coalesced (see ui-util.js)
   }
   function stop() {
     observer?.disconnect(); observer = null;

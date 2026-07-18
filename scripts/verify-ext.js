@@ -42,6 +42,9 @@ const check = (c, m) => (c ? ok(m) : bad(m));
     // it. (Same reload-first rule the DOM verify scripts learned the hard way.)
     await page.reload();
     await page.waitForLoadState('domcontentloaded');
+    // The injectors now use TTX.ui.{glyph,observeBody} (src/ui/ui-util.js). Load it
+    // once so the isolated per-file evals below have that dependency on window.TTX.
+    await page.evaluate(fs.readFileSync(path.join(ROOT, 'src/ui/ui-util.js'), 'utf8'));
     const src = fs.readFileSync(path.join(ROOT, 'src/ui/mapform.js'), 'utf8');
     const r = await page.evaluate(async (mapformSrc) => {
       document.getElementById('ttxtest')?.remove();

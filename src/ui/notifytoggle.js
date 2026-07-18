@@ -27,7 +27,7 @@
   }
 
   function paint(btn) {
-    btn.textContent = on ? '🔔' : '🔕';
+    btn.replaceChildren(TTX.ui.glyph(on ? 'bell' : 'bell-off', 20));   // monochrome icon, not an emoji
     btn.title = on ? '通知：オン（この端末で Chrome 起動中に鳴らす）' : '通知：オフ';
     btn.setAttribute('aria-label', btn.title);
   }
@@ -40,7 +40,6 @@
     const btn = settings.cloneNode(true);       // inherit TimeTree's icon-button styling
     btn.removeAttribute('data-test-id');
     btn.setAttribute(MARK, '1');
-    btn.style.fontSize = '16px';                 // the glyph replaces an SVG; give it a size
     btn.onclick = async (e) => {
       e.preventDefault(); e.stopPropagation();
       on = await ask('set', { on: !on });
@@ -67,9 +66,7 @@
         if (b) paint(b);
       }
     });
-    observer = new MutationObserver(() => ensureButton());
-    observer.observe(document.body, { childList: true, subtree: true });
-    ensureButton();
+    observer = TTX.ui.observeBody(ensureButton);   // rAF-coalesced (see ui-util.js)
   }
   function stop() { observer?.disconnect(); observer = null; }
 

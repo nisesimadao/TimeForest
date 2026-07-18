@@ -50,8 +50,8 @@
     const btn = document.createElement('button');
     btn.type = 'button';                 // never submit the form
     btn.setAttribute(MARK, '1');
-    btn.textContent = '🗺 地図で選ぶ';
     btn.className = 'ttx-mapform-btn';
+    btn.append(TTX.ui.glyph('map', 15), document.createTextNode('地図で選ぶ'));   // glyph, not the 🗺 emoji
     btn.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
@@ -298,10 +298,8 @@
     // reason.) globalThis.chrome, so a test can set it before calling start().
     if (typeof globalThis.chrome === 'undefined'
       || typeof globalThis.chrome.runtime?.sendMessage !== 'function') return;
-    observer = new MutationObserver(() => ensureButton());
-    observer.observe(document.body, { childList: true, subtree: true });
     window.addEventListener('message', onCreated);
-    ensureButton();   // in case the form is already open
+    observer = TTX.ui.observeBody(ensureButton);   // rAF-coalesced (see ui-util.js); runs once now too
   }
 
   function stop() {

@@ -23,7 +23,9 @@
   const MODES = ['system', 'light', 'dark'];
 
   const LABEL = { system: 'システムに従う', light: 'ライト', dark: 'ダーク' };
-  const ICON = { system: '🌗', light: '☀️', dark: '🌙' };
+  // Names into TTX.ui.glyph (a monochrome line icon), not emoji — so the toolbar
+  // button matches TimeTree's own icons instead of an OS-coloured 🌗/☀️/🌙.
+  const ICON = { system: 'monitor', light: 'sun', dark: 'moon' };
 
   let mode = 'system';
   let observer = null;

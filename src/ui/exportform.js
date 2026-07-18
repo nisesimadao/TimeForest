@@ -120,7 +120,8 @@
     ensureCss();
     const wrap = elem('div', 'ttx-exp-wrap');
     wrap.setAttribute(MARK, '1');
-    const btn = elem('button', 'ttx-exp-btn', '⬇ エクスポート');
+    const btn = elem('button', 'ttx-exp-btn');   // glyph + label (not the ⬇ emoji)
+    btn.append(TTX.ui.glyph('download', 15), elem('span', null, 'エクスポート'));
     btn.type = 'button';
     const menu = elem('div', 'ttx-exp-menu');
     menu.hidden = true;
@@ -144,9 +145,7 @@
   let observer = null;
   function start() {
     if (observer) return;
-    observer = new MutationObserver(() => ensureButton());
-    observer.observe(document.body, { childList: true, subtree: true });
-    ensureButton();
+    observer = TTX.ui.observeBody(ensureButton);   // rAF-coalesced (see ui-util.js)
   }
   function stop() { observer?.disconnect(); observer = null; }
 

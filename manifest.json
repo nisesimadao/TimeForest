@@ -31,6 +31,7 @@
         "src/lib/model.js",
         "src/lib/export.js",
         "src/lib/map.js",
+        "src/ui/ui-util.js",
         "src/ui/dark.js",
         "src/ui/mapform.js",
         "src/ui/exportform.js",

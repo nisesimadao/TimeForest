@@ -139,8 +139,7 @@
     wrap.setAttribute(MARK, '1');
     const btn = settings.cloneNode(true);     // inherit TimeTree's icon-button styling
     btn.removeAttribute('data-test-id');
-    btn.textContent = '👤';                    // replace 設定's cloned SVG with a glyph
-    btn.style.fontSize = '16px';
+    btn.replaceChildren(TTX.ui.glyph('user', 20));   // monochrome icon, not an emoji
     btn.title = 'アカウント';
     btn.setAttribute('aria-label', 'アカウント');
     const menu = elem('div', 'ttx-acct-menu');
@@ -170,9 +169,7 @@
   function start() {
     if (observer || !hasWorker()) return;   // extension-only: needs the cookies-capable worker
     bindOutside();
-    observer = new MutationObserver(() => ensureButton());
-    observer.observe(document.body, { childList: true, subtree: true });
-    ensureButton();
+    observer = TTX.ui.observeBody(ensureButton);   // rAF-coalesced (see ui-util.js)
   }
   function stop() { observer?.disconnect(); observer = null; }
 
