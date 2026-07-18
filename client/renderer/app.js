@@ -583,13 +583,27 @@
     menu.style.top = r.bottom + 4 + 'px';
     menu.style.minWidth = Math.max(r.width, 220) + 'px';
     requestAnimationFrame(() => menu.classList.add('in'));
-    scrim.onclick = (e) => { if (e.target === scrim) closeMenus(); };
+    scrim.onclick = (e) => { if (e.target === scrim) dismissMenu(); };
     ui.menu = scrim;
   }
 
   function closeMenus() {
     ui.menu?.remove();
     ui.menu = null;
+  }
+
+  /**
+   * The dropdown's animated close, mirroring how it opened (scale/opacity in).
+   * Same split as the detail card: only the user's own dismiss (scrim, Escape)
+   * animates; an item click that switches account or opens a dialog stays on
+   * closeMenus()'s instant path, since the menu is being replaced, not just shut.
+   */
+  function dismissMenu() {
+    const scrim = ui.menu;
+    if (!scrim) return;
+    const menu = scrim.querySelector('.menu');
+    ui.menu = null;
+    animateOverlayOut(scrim, menu, 220);   // transform runs 0.17s
   }
 
   async function refreshAccounts() {
@@ -1456,15 +1470,38 @@
   }
 
   /**
+   * Run an overlay's open transition backwards, then remove its scrim. Both the
+   * detail card and the dropdown open by adding `.in`; taking it away reverses
+   * the SAME CSS transition from wherever it currently is, so an overlay you
+   * open and immediately dismiss reverses mid-flight instead of snapping — the
+   * interruptibility comes free from letting the browser interpolate rather than
+   * scripting the exit. We drop the scrim once `transform` (the longer of the
+   * two animated properties) finishes; `ms` is a hair past it as the backstop
+   * for a transitionend that never fires (a hidden tab cancels the transition
+   * silently). reduced-motion skips straight to removal.
+   */
+  function animateOverlayOut(scrim, inner, ms) {
+    if (!inner || reducedMotion()) { scrim.remove(); return; }
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      inner.removeEventListener('transitionend', onEnd);
+      scrim.remove();
+    };
+    const onEnd = (e) => { if (e.propertyName === 'transform') finish(); };
+    inner.addEventListener('transitionend', onEnd);
+    setTimeout(finish, ms);
+    inner.classList.remove('in');
+  }
+
+  /**
    * A user-initiated close, animated as the mirror of openDetail(): the card
-   * shrinks back into the row it grew from instead of blinking out. The open is
-   * a CSS class toggle (`.in`), so dropping the class runs that same transition
-   * in reverse from wherever it currently is — click-open-then-immediately-
-   * dismiss reverses mid-flight rather than snapping, which a fixed teardown
-   * can't do. Only the closes the user actually asks for (clicking the scrim,
-   * Escape) come here; the internal ones stay on closeDetail()'s instant path,
-   * because they fire precisely when the row or anchor beneath the card is about
-   * to be destroyed, and animating a card off a deleted anchor looks broken.
+   * shrinks back into the row it grew from instead of blinking out. Only the
+   * closes the user actually asks for (clicking the scrim, Escape) come here;
+   * the internal ones stay on closeDetail()'s instant path, because they fire
+   * precisely when the row or anchor beneath the card is about to be destroyed,
+   * and animating a card off a deleted anchor looks broken.
    */
   function dismissDetail() {
     const scrim = ui.detail;
@@ -1477,22 +1514,7 @@
     ui.detailRelease = null;
     ui.detail = null;
     ui.detailPlace = null;
-    if (!card || reducedMotion()) { scrim.remove(); return; }
-    let done = false;
-    const finish = () => {
-      if (done) return;
-      done = true;
-      card.removeEventListener('transitionend', onEnd);
-      scrim.remove();
-    };
-    // transform is the longer of the card's two transitions (0.2s vs opacity's
-    // 0.14s), so its end is the moment the card has fully shrunk back. A timeout
-    // just past it is the backstop for a transitionend that never arrives (the
-    // tab hidden mid-close cancels the transition without firing the event).
-    const onEnd = (e) => { if (e.propertyName === 'transform') finish(); };
-    card.addEventListener('transitionend', onEnd);
-    setTimeout(finish, 260);
-    card.classList.remove('in');
+    animateOverlayOut(scrim, card, 260);   // transform runs 0.2s
   }
 
   /**
@@ -3933,7 +3955,7 @@
   }
 
   function keys(e) {
-    if (e.key === 'Escape' && ui.menu) { e.preventDefault(); return closeMenus(); }
+    if (e.key === 'Escape' && ui.menu) { e.preventDefault(); return dismissMenu(); }
     // The form and the confirm own every key while they're up — otherwise the
     // grid behind them would still navigate under the user's typing. The
     // confirm swallows its own Escape in the capture phase, so this only ever
