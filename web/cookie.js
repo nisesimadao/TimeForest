@@ -45,16 +45,18 @@ function serializeAccounts(list, { secure = true } = {}) {
   return base + (secure ? '; Secure' : '') + life;
 }
 
-/* CSRF guard for the state-changing endpoints (connect / disconnect). Our own
- * client sends them as same-origin fetch with content-type application/json; a
- * cross-site attacker can do neither without a CORS preflight we never grant, so
- * requiring a JSON content-type blocks the simple-form forgery, and an Origin
- * that must match the Host closes the rest. Both must hold. */
+/* CSRF guard for the state-changing endpoints (connect / disconnect / account
+ * switch|forget). Our own client always sends them as a same-origin fetch with
+ * content-type application/json — a cross-site page can set neither the JSON
+ * content-type (it forces a CORS preflight we never grant) nor a matching Origin.
+ * Require BOTH: a JSON content-type AND an Origin whose host equals the request's
+ * Host. A browser POST always carries an Origin, so demanding it (rather than
+ * only checking it when present) is what makes the guard real. */
 function isTrustedWrite(req) {
   const h = req.headers || {};
   if (!/application\/json/i.test(h['content-type'] || '')) return false;
-  if (h.origin) { try { if (new URL(h.origin).host !== h.host) return false; } catch { return false; } }
-  return true;
+  if (!h.origin) return false;
+  try { return new URL(h.origin).host === h.host; } catch { return false; }
 }
 
 module.exports = { parse, serializeSession, readSession, serializeAccounts, readAccounts, isTrustedWrite, SESSION, ACCOUNTS };

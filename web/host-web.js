@@ -15,6 +15,17 @@
   const jget = (url) => fetch(url, { headers: { accept: 'application/json' } });
   const jpost = (url, body) => fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body || {}) });
 
+  // Multi-tab: tt_session is ONE cookie for the whole origin, so switching (or
+  // signing out) in one tab changes which account every OTHER tab proxies as.
+  // A cross-tab ping tells the others to reload and re-sync as the now-active
+  // account — the browser counterpart to the extension reloading all its tabs.
+  let bc = null;
+  try {
+    bc = new BroadcastChannel('ttx-account');
+    bc.onmessage = (e) => { if (e && e.data === 'account-changed') location.reload(); };
+  } catch { /* no BroadcastChannel — single-tab only */ }
+  const pingTabs = () => { try { bc && bc.postMessage('account-changed'); } catch { /* ignore */ } };
+
   // --- connect dialog: collect a _session_id the user copies from their own
   //     logged-in timetreeapp.com (it's httpOnly, so only devtools can read it). --
   function askToken() {
@@ -115,11 +126,13 @@
       switch: async (id) => {
         const r = await jpost('/api/accounts/switch', { id });
         if (!r.ok) throw new Error('切り替えできませんでした');
+        pingTabs();   // other tabs now proxy as this account — have them re-sync
         return (await r.json().catch(() => null)) || { accounts: [], activeId: null };
       },
       remove: async (id) => {
-        const r = await jpost('/api/accounts/forget', { id });
-        if (!r.ok) return window.host.accounts.list();  // refused (e.g. the active one) → leave the list as-is
+        const r = await jpost('/api/accounts/forget', { id });   // active removal falls back / signs out, never refuses
+        pingTabs();   // the active account may have changed for the whole origin
+        if (!r.ok) return window.host.accounts.list().catch(() => ({ accounts: [], activeId: null }));
         return (await r.json().catch(() => null)) || { accounts: [], activeId: null };
       },
       onChanged: () => {},                             // nothing changes it out from under us within a tab

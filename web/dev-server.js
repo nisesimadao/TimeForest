@@ -28,6 +28,9 @@ const PORT = Number(process.argv[2]) || 8787;
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.png': 'image/png', '.svg': 'image/svg+xml', '.json': 'application/json', '.ico': 'image/x-icon' };
 
 const readBody = (req) => new Promise((res) => { let b = ''; req.on('data', (c) => (b += c)); req.on('end', () => res(b)); });
+// Parse the JSON body without throwing (a malformed body → {}), so bad input
+// degrades the same way the Vercel handlers' body access does, not a 500.
+const readJsonBody = async (req) => { try { return JSON.parse((await readBody(req)) || '{}'); } catch { return {}; } };
 const json = (res, status, obj, extra = {}) => { res.writeHead(status, { 'content-type': 'application/json', ...extra }); res.end(JSON.stringify(obj)); };
 const setSession = (v) => serializeSession(v, { secure: false });   // dev is http://localhost
 const setAccounts = (list) => serializeAccounts(list, { secure: false });
@@ -53,7 +56,7 @@ const server = http.createServer(async (req, res) => {
 
     if (p === '/api/connect' && req.method === 'POST') {
       if (!isTrustedWrite(req)) return json(res, 403, { error: 'bad request' });
-      const { session } = JSON.parse((await readBody(req)) || '{}');
+      const { session } = await readJsonBody(req);
       const token = (session || '').trim();
       if (!token) return json(res, 400, { error: 'no token' });
       const me = await whoami(token);
@@ -67,20 +70,18 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === '/api/accounts/switch' && req.method === 'POST') {
       if (!isTrustedWrite(req)) return json(res, 403, { error: 'bad request' });
-      const { id } = JSON.parse((await readBody(req)) || '{}');
+      const { id } = await readJsonBody(req);
       const token = accountsCore.tokenOf(readAccounts(req), id);
       if (!token) return json(res, 404, { error: 'unknown account' });
       return json(res, 200, accountsCore.listPublic(readAccounts(req), token), { 'set-cookie': setSession(token) });
     }
     if (p === '/api/accounts/forget' && req.method === 'POST') {
       if (!isTrustedWrite(req)) return json(res, 403, { error: 'bad request' });
-      const { id } = JSON.parse((await readBody(req)) || '{}');
-      const cur = readSession(req);
-      const accts = readAccounts(req);
-      const target = accts.find((a) => String(a.id) === String(id));
-      if (target && target.token === cur) return json(res, 409, { error: 'active account' });   // switch away first
-      const next = accountsCore.without(accts, id);
-      return json(res, 200, accountsCore.listPublic(next, cur), { 'set-cookie': setAccounts(next) });
+      const { id } = await readJsonBody(req);
+      // Removing the active account falls back to another (or signs out) rather
+      // than refusing, so the renderer's "remove" never lies about success.
+      const { accounts, session } = accountsCore.forget(readAccounts(req), id, readSession(req));
+      return json(res, 200, accountsCore.listPublic(accounts, session), { 'set-cookie': [setAccounts(accounts), setSession(session)] });
     }
     if (p === '/api/disconnect' && req.method === 'POST') {   // full logout: active session + every stored account
       if (!isTrustedWrite(req)) return json(res, 403, { error: 'bad request' });

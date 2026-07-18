@@ -39,13 +39,15 @@ function mockRes() {
   return { _s: 0, _body: undefined, _headers: {}, status(c) { this._s = c; return this; }, json(o) { this._body = o; return this; }, send(t) { this._body = t; return this; }, setHeader(k, v) { this._headers[k.toLowerCase()] = v; } };
 }
 const run = async (handler, req) => { const res = mockRes(); await handler(req, res); return res; };
-const JSONH = { 'content-type': 'application/json' };
+// a trusted same-origin JSON request (isTrustedWrite requires JSON + Origin==Host)
+const JSONH = { 'content-type': 'application/json', origin: 'https://app.test', host: 'app.test' };
 
 (async () => {
   // --- connect: guards before any network ---
   check((await run(connect, { method: 'GET', headers: {} }))._s === 405, 'connect rejects non-POST (405)');
   check((await run(connect, { method: 'POST', headers: { 'content-type': 'text/plain' }, body: { session: 'x' } }))._s === 403, 'connect rejects a non-JSON body — blocks simple-form CSRF (403)');
   check((await run(connect, { method: 'POST', headers: { ...JSONH, origin: 'https://evil.example', host: 'app.vercel.app' }, body: { session: 'x' } }))._s === 403, 'connect rejects a cross-origin POST (403)');
+  check((await run(connect, { method: 'POST', headers: { 'content-type': 'application/json' }, body: { session: 'x' } }))._s === 403, 'connect rejects a POST with NO Origin (403)');
   check((await run(connect, { method: 'POST', headers: { ...JSONH }, body: {} }))._s === 400, 'connect with no token → 400 (never reaches the network)');
 
   // --- disconnect: POST + same-origin JSON, else refused ---
@@ -100,11 +102,19 @@ const JSONH = { 'content-type': 'application/json' };
   }
   check((await run(accountsSwitch, { method: 'POST', headers: { ...JSONH, cookie: cookieHdr(STORE, 'ta') }, body: { id: '9' } }))._s === 404, 'switch to an unknown id → 404');
   check((await run(accountsSwitch, { method: 'POST', headers: { 'content-type': 'text/plain', cookie: cookieHdr(STORE, 'ta') }, body: { id: '2' } }))._s === 403, 'switch rejects a non-JSON POST (403)');
-  check((await run(accountsForget, { method: 'POST', headers: { ...JSONH, cookie: cookieHdr(STORE, 'ta') }, body: { id: '1' } }))._s === 409, 'forget refuses the ACTIVE account (409)');
-  {
+  {   // forget the ACTIVE account → falls back to another (B), never refuses
+    const res = await run(accountsForget, { method: 'POST', headers: { ...JSONH, cookie: cookieHdr(STORE, 'ta') }, body: { id: '1' } });
+    check(res._s === 200 && res._body.accounts.length === 1 && res._body.activeId === '2', 'forget the ACTIVE account falls back to another (B now active)');
+    check(/tt_session=tb/.test(setCookieStr(res)), 'and re-points the session cookie to the fallback');
+  }
+  {   // forget a NON-active account → the active one is untouched
     const res = await run(accountsForget, { method: 'POST', headers: { ...JSONH, cookie: cookieHdr(STORE, 'ta') }, body: { id: '2' } });
-    check(res._s === 200 && res._body.accounts.length === 1 && res._body.accounts[0].id === '1', 'forget a non-active account removes it (1 left)');
-    check(/tt_accounts=/.test(setCookieStr(res)), 'and rewrites the accounts store cookie');
+    check(res._s === 200 && res._body.accounts.length === 1 && res._body.accounts[0].id === '1' && res._body.activeId === '1', 'forget a non-active account leaves the active one (A still active)');
+  }
+  {   // forget the ONLY account (which is active) → signs out
+    const res = await run(accountsForget, { method: 'POST', headers: { ...JSONH, cookie: cookieHdr([{ id: '1', name: 'A', token: 'ta' }], 'ta') }, body: { id: '1' } });
+    check(res._s === 200 && res._body.accounts.length === 0 && res._body.activeId === null, 'forget the only account signs out (empty store, no active)');
+    check(/tt_session=;/.test(setCookieStr(res)), 'and clears the session cookie');
   }
 
   if (fail) { console.log(`\n\x1b[31m${fail} check(s) failed\x1b[0m`); process.exit(1); }
