@@ -743,18 +743,48 @@ section('web deploy — .vercelignore keeps build.js inputs');
 }
 
 // --- 6. userscript builds ---------------------------------------------------
-
-section('userscript build');
-try {
-  execFileSync(process.execPath, [path.join(ROOT, 'build-userscript.js')], { stdio: 'pipe' });
-  const out = path.join(ROOT, 'dist/timeforest.user.js');
-  execFileSync(process.execPath, ['--check', out], { stdio: 'pipe' });
-  const txt = fs.readFileSync(out, 'utf8');
-  if (!/==UserScript==/.test(txt)) bad('userscript is missing its metadata block');
-  else if (!/@match\s+https:\/\/timetreeapp\.com/.test(txt)) bad('userscript @match is wrong');
-  else ok(`builds and parses (${(txt.length / 1024).toFixed(1)} KB)`);
-} catch (e) {
-  bad('userscript build failed: ' + String(e.stderr || e.message).slice(0, 200));
+//
+// Two userscripts ship from this repo, and both must build, parse, carry a
+// correct metadata block, AND be reproducible — same source in, same bytes out.
+// build-userscript.js bootstraps the extension; build-app-userscript.js mounts
+// the whole desktop UI on timetreeapp.com (the mobile client, since a phone has
+// no devtools to paste a _session_id). Both read straight from src/lib +
+// client/renderer, so a renamed source file breaks the build here rather than in
+// someone's browser. A non-reproducible build means embedded state (a timestamp
+// or random id) leaked in — CI's reproducibility diff would then flap.
+section('userscript builds');
+const userscripts = [
+  { build: 'build-userscript.js', out: 'dist/timeforest.user.js', must: [] },
+  {
+    build: 'build-app-userscript.js',
+    out: 'dist/timeforest-app.user.js',
+    // markers that prove this is the desktop-UI build, not a stale copy of the
+    // other one: it runs late enough for TimeTree's page to exist, embeds the
+    // renderer's CSS, and mounts the app root it clears the body down to.
+    must: [
+      [/@run-at\s+document-idle/, 'runs at document-idle'],
+      [/__TTX_APP_CSS__/, 'embeds the renderer CSS'],
+      [/id="app"/, 'mounts #app over the page'],
+    ],
+  },
+];
+for (const u of userscripts) {
+  try {
+    execFileSync(process.execPath, [path.join(ROOT, u.build)], { stdio: 'pipe' });
+    const out = path.join(ROOT, u.out);
+    execFileSync(process.execPath, ['--check', out], { stdio: 'pipe' });
+    const txt = fs.readFileSync(out, 'utf8');
+    execFileSync(process.execPath, [path.join(ROOT, u.build)], { stdio: 'pipe' }); // build again
+    const again = fs.readFileSync(out, 'utf8');
+    const misses = u.must.filter(([re]) => !re.test(txt)).map(([, name]) => name);
+    if (!/==UserScript==/.test(txt)) bad(`${u.out} is missing its metadata block`);
+    else if (!/@match\s+https:\/\/timetreeapp\.com/.test(txt)) bad(`${u.out} @match is wrong`);
+    else if (txt !== again) bad(`${u.build} is not reproducible — two builds differ (embedded timestamp/random?)`);
+    else if (misses.length) bad(`${u.out} is missing: ${misses.join(', ')}`);
+    else ok(`${u.build} → ${path.basename(u.out)} builds, parses, reproduces (${(txt.length / 1024).toFixed(1)} KB)`);
+  } catch (e) {
+    bad(`${u.build} failed: ` + String(e.stderr || e.message).slice(0, 200));
+  }
 }
 
 // --- done -------------------------------------------------------------------

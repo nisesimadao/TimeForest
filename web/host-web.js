@@ -34,15 +34,26 @@
       bk.style.cssText = 'position:fixed;inset:0;z-index:2147483000;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;font-family:-apple-system,"Hiragino Sans","Noto Sans JP",sans-serif';
       const card = document.createElement('div');
       card.style.cssText = 'background:var(--ttx-card,#fff);color:var(--ttx-fg,#111);max-width:440px;width:calc(100% - 40px);padding:22px 24px;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.3)';
+      const step = 'display:flex;gap:8px;margin:0 0 8px;font-size:13px;line-height:1.55';
+      const num = 'flex:0 0 20px;height:20px;border-radius:50%;background:#2ecc87;color:#fff;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center';
       card.innerHTML = `
-        <h2 style="margin:0 0 6px;font-size:17px">TimeTree に接続</h2>
-        <p style="margin:0 0 12px;font-size:13px;line-height:1.6;opacity:.8">
-          別タブで <b>timetreeapp.com</b> にログイン → 開発者ツール →
-          Application → Cookies → <code>_session_id</code> の値を貼り付けてください。
-          （トークンはこの端末のブラウザにだけ保存され、外部に出ません）</p>
-        <input type="password" placeholder="_session_id" autocomplete="off"
-          style="width:100%;box-sizing:border-box;padding:9px 11px;font:inherit;font-size:13px;border:1px solid rgba(128,128,128,.4);border-radius:9px;background:transparent;color:inherit">
+        <h2 style="margin:0 0 4px;font-size:17px">TimeTree に接続</h2>
+        <p style="margin:0 0 14px;font-size:12px;line-height:1.5;opacity:.7">
+          セッションを一度貼るだけ。トークンはこの端末のブラウザにだけ入り、外部にも
+          このアプリのサーバーにも保存されません。</p>
+        <div style="${step}"><span style="${num}">1</span><span>
+          <button class="ttx-open" style="padding:5px 10px;font:inherit;font-size:12px;border:1px solid rgba(128,128,128,.4);border-radius:7px;background:transparent;color:inherit;cursor:pointer">timetreeapp.com を開く ↗</button>
+          <span style="opacity:.7"> でログイン（別タブ）</span></span></div>
+        <div style="${step}"><span style="${num}">2</span><span style="opacity:.85">
+          開発者ツール（F12）→ <b>Application</b> → <b>Cookies</b> →
+          <code>https://timetreeapp.com</code></span></div>
+        <div style="${step}"><span style="${num}">3</span><span style="opacity:.85">
+          <code>_session_id</code> の値をコピーして、下に貼り付け</span></div>
+        <input type="password" placeholder="_session_id を貼り付け" autocomplete="off"
+          style="width:100%;box-sizing:border-box;margin-top:6px;padding:9px 11px;font:inherit;font-size:13px;border:1px solid rgba(128,128,128,.4);border-radius:9px;background:transparent;color:inherit">
         <p class="ttx-err" style="margin:8px 0 0;font-size:12px;color:#e33;min-height:16px"></p>
+        <p style="margin:2px 0 0;font-size:11px;line-height:1.5;opacity:.55">
+          スマホには開発者ツールが無いため、PC で接続してください（スマホへの持ち出しは別途）。</p>
         <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
           <button class="ttx-cancel" style="padding:8px 14px;font:inherit;font-size:13px;border:none;border-radius:9px;background:rgba(128,128,128,.16);color:inherit;cursor:pointer">キャンセル</button>
           <button class="ttx-ok" style="padding:8px 16px;font:inherit;font-size:13px;border:none;border-radius:9px;background:#2ecc87;color:#fff;cursor:pointer">接続</button>
@@ -53,6 +64,7 @@
       const err = card.querySelector('.ttx-err');
       const done = (v) => { bk.remove(); resolve(v); };
       input.focus();
+      card.querySelector('.ttx-open').onclick = () => window.open('https://timetreeapp.com/signin', '_blank', 'noopener');
       card.querySelector('.ttx-cancel').onclick = () => done(null);
       const submit = async () => {
         const token = input.value.trim();

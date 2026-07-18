@@ -9,6 +9,7 @@
   "scripts": {
     "check": "node scripts/check.js",
     "build": "node build-userscript.js",
+    "build:app": "node build-app-userscript.js",
     "client": "npm --prefix client start",
     "client:dev": "npm --prefix client run dev",
     "smoke": "cd client && node ../scripts/smoke-client.js",

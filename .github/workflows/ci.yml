@@ -30,12 +30,15 @@ jobs:
       - name: Structural checks
         run: node scripts/check.js
 
-      - name: Verify the userscript build is reproducible
+      - name: Verify the userscript builds are reproducible
         run: |
-          node build-userscript.js
+          for b in build-userscript.js build-app-userscript.js; do node "$b"; done
           cp dist/timeforest.user.js /tmp/first.js
+          cp dist/timeforest-app.user.js /tmp/first-app.js
           node build-userscript.js
+          node build-app-userscript.js
           diff -q /tmp/first.js dist/timeforest.user.js
+          diff -q /tmp/first-app.js dist/timeforest-app.user.js
 
       # Zero-dep, no browser: builds web/dist, boots the dev server, and checks it
       # serves the bundle + API routes and blocks traversal. Guards the hosted
@@ -48,12 +51,14 @@ jobs:
       - name: Verify the Vercel API adapters
         run: node scripts/verify-api.js
 
-      - name: Upload userscript
+      - name: Upload userscripts
         if: matrix.node == 24
         uses: actions/upload-artifact@v5
         with:
-          name: timeforest-userscript
-          path: dist/timeforest.user.js
+          name: timeforest-userscripts
+          path: |
+            dist/timeforest.user.js
+            dist/timeforest-app.user.js
           if-no-files-found: error
 
   client:
