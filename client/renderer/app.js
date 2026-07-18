@@ -1482,6 +1482,12 @@
    */
   function animateOverlayOut(scrim, inner, ms) {
     if (!inner || reducedMotion()) { scrim.remove(); return; }
+    // The scrim is invisible but full-screen, and the card stays hit-testable
+    // even at opacity 0. Once we're closing, kill pointer events on the whole
+    // subtree so a click during the exit falls through to the row underneath
+    // instead of being eaten by a scrim whose handler now no-ops — or worse,
+    // landing on the card's 編集/削除 for the event just dismissed.
+    scrim.style.pointerEvents = 'none';
     let done = false;
     const finish = () => {
       if (done) return;
@@ -1509,6 +1515,10 @@
     if (!scrim) return;
     const card = scrim.firstElementChild;
     if (!card || reducedMotion()) { scrim.remove(); return; }
+    // Stop the fading modal (its dim backdrop and the card's buttons) from
+    // taking clicks during the ~160ms exit — they belong to whatever the close
+    // reveals, not to a sheet on its way out.
+    scrim.style.pointerEvents = 'none';
     scrim.classList.add('out');
     let done = false;
     const finish = () => {
@@ -3171,12 +3181,17 @@
   // One sheet, sections, no tabs. There are eleven things to set; a nav rail
   // for eleven things is furniture.
 
-  function closeSettings() {
+  function closeSettings(animate = true) {
     const scrim = ui.settings;
     ui.settingsRelease?.();
     ui.settingsRelease = null;
     ui.settings = null;
-    animateModalOut(scrim);
+    // refresh() closes and immediately reopens to redraw; animating that exit
+    // would leave the old sheet sliding out while the new one slides in over it
+    // (two dim backdrops, a ghost image). An in-place redraw wants the instant
+    // teardown — only a real user dismiss animates.
+    if (animate) animateModalOut(scrim);
+    else scrim?.remove();
   }
 
   /** A labelled row. `control` is whatever does the work. */
@@ -3375,7 +3390,7 @@
   /** Toggles change labels elsewhere in the sheet, so redraw it in place. */
   openSettings.refresh = () => {
     if (!ui.settings) return;
-    closeSettings();
+    closeSettings(false);   // instant: an in-place redraw, not a user dismiss
     openSettings();
   };
 
