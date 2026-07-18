@@ -36,6 +36,7 @@
     TTX.mapform?.start();     // map pin on TimeTree's own event form
     TTX.exportform?.start();  // export control on TimeTree's own toolbar
     TTX.agendaview?.start();  // agenda (list) view over TimeTree's month grid
+    TTX.darktoggle?.start();  // theme toggle in TimeTree's toolbar (dark.js has no UI)
     await TTX.dark.init();
     await TTX.panel.init();
   }

@@ -35,6 +35,7 @@
         "src/ui/mapform.js",
         "src/ui/exportform.js",
         "src/ui/agendaview.js",
+        "src/ui/darktoggle.js",
         "src/content.js"
       ],
       "css": ["src/ui/panel.css"],
