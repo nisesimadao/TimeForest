@@ -232,7 +232,17 @@
     };
     q.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); results.querySelector('.ttx-mf-r')?.click(); } };
 
-    const close = () => { clearTimeout(timer); scrim.remove(); };
+    // Escape closes it — and close() removes THIS listener, whichever way the
+    // picker was dismissed. The obvious version (remove the listener inside the
+    // Escape branch) leaks: cancel, the scrim, and 決定 all close without ever
+    // pressing Escape, so their handler stays on document, fires on the next
+    // Escape anywhere on TimeTree, and calls scrim.remove() on a gone node.
+    const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+    const close = () => {
+      clearTimeout(timer);
+      document.removeEventListener('keydown', onKey, true);
+      scrim.remove();
+    };
     cancel.onclick = close;
     use.onclick = () => {
       const text = q.value.trim();
@@ -244,9 +254,9 @@
       close();
     };
     scrim.onclick = (e) => { if (e.target === scrim) close(); };
-    document.addEventListener('keydown', function esc(e) {
-      if (e.key === 'Escape') { close(); document.removeEventListener('keydown', esc); }
-    });
+    // Capture phase + stopPropagation so Escape closes the picker without also
+    // reaching TimeTree's form (which would discard what they were typing).
+    document.addEventListener('keydown', onKey, true);
     q.focus();
   }
 

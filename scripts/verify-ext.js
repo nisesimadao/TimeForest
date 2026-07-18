@@ -192,6 +192,48 @@ const check = (c, m) => (c ? ok(m) : bad(m));
     check(!!pk.pending && Math.abs(pk.pending.lat - 35.681) < 0.01, 'and remembers lat/lon for the save hook');
     check(pk.closed, 'and closes');
 
+    // Open and close it three different ways; no keydown listener may survive.
+    // The tempting version — remove the Escape handler only in the Escape branch
+    // — leaks on every other exit, and a stale handler fires on the next Escape
+    // anywhere on TimeTree. Silent, cumulative, invisible without a count.
+    sec('the picker leaves no listeners behind');
+    const leak = await page.evaluate(async ({ mapformSrc, px }) => {
+      let net = 0;
+      const add = document.addEventListener.bind(document);
+      const rem = document.removeEventListener.bind(document);
+      document.addEventListener = (t, f, o) => { if (t === 'keydown') net++; return add(t, f, o); };
+      document.removeEventListener = (t, f, o) => { if (t === 'keydown') net--; return rem(t, f, o); };
+
+      const box = document.createElement('div');
+      box.id = 'lk';
+      box.innerHTML = '<div data-test-id="event-form"><div><input name="location"></div></div>';
+      document.body.appendChild(box);
+      const sc = window.chrome; const sf = window.confirm;
+      window.confirm = () => true;
+      window.chrome = { storage: { local: { get: async () => ({ maps: true }), set: async () => {} } },
+        runtime: { sendMessage(m, cb) { cb(m.ttx === 'tile' ? { uri: px } : { list: [] }); }, lastError: null, onMessage: { addListener() {} } } };
+      delete window.TTX.mapform;
+      (0, eval)(mapformSrc);            // eslint-disable-line no-eval
+      window.TTX.mapform.start();
+
+      const openClose = async (how) => {
+        box.querySelector('[data-ttx-mapform]').click();
+        await new Promise((r2) => setTimeout(r2, 150));
+        const scrim = document.querySelector('.ttx-mf-scrim');
+        if (how === 'cancel') scrim.querySelector('.ttx-mf-btn:not(.pri)').click();
+        else if (how === 'scrim') scrim.click();
+        else scrim.querySelector('.ttx-mf-btn.pri').click();
+        await new Promise((r2) => setTimeout(r2, 80));
+      };
+      await openClose('cancel'); await openClose('scrim'); await openClose('use');
+
+      document.addEventListener = add; document.removeEventListener = rem;   // restore
+      box.remove(); window.TTX.mapform.stop?.();
+      window.chrome = sc; window.confirm = sf;
+      return net;
+    }, { mapformSrc: src, px: PX });
+    check(leak === 0, `no keydown listener survives close, whichever exit (${leak})`);
+
     await b.close();
   }
 
