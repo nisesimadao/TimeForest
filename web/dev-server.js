@@ -15,8 +15,13 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const { proxy, whoami } = require('./proxy-core');
-const { readSession, serializeSession, isTrustedWrite } = require('./cookie');
+const { readSession, serializeSession, readAccounts, serializeAccounts, isTrustedWrite } = require('./cookie');
 const mapCore = require('./map-core');
+const accountsCore = require('./accounts-core');
+
+// A connected account's human label — TimeTree's display name, or the id's last
+// four when it's unset (matches the extension's account switcher).
+const accountLabel = (me) => (me.name && me.name.trim()) || ('アカウント ' + String(me.id).slice(-4));
 
 const DIST = path.join(__dirname, 'dist');
 const PORT = Number(process.argv[2]) || 8787;
@@ -25,6 +30,7 @@ const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; ch
 const readBody = (req) => new Promise((res) => { let b = ''; req.on('data', (c) => (b += c)); req.on('end', () => res(b)); });
 const json = (res, status, obj, extra = {}) => { res.writeHead(status, { 'content-type': 'application/json', ...extra }); res.end(JSON.stringify(obj)); };
 const setSession = (v) => serializeSession(v, { secure: false });   // dev is http://localhost
+const setAccounts = (list) => serializeAccounts(list, { secure: false });
 
 function serveStatic(req, res) {
   let rel = decodeURIComponent((req.url.split('?')[0]) || '/');
@@ -48,14 +54,37 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/connect' && req.method === 'POST') {
       if (!isTrustedWrite(req)) return json(res, 403, { error: 'bad request' });
       const { session } = JSON.parse((await readBody(req)) || '{}');
-      if (!session) return json(res, 400, { error: 'no token' });
-      const me = await whoami(session.trim());
+      const token = (session || '').trim();
+      if (!token) return json(res, 400, { error: 'no token' });
+      const me = await whoami(token);
       if (!me) return json(res, 401, { error: 'そのトークンではログインできませんでした' });
-      return json(res, 200, { user: { id: me.id, name: me.name } }, { 'set-cookie': setSession(session.trim()) });
+      // add (or refresh) this account AND make it active
+      const accts = accountsCore.upsert(readAccounts(req), { id: me.id, name: accountLabel(me), token });
+      return json(res, 200, { user: { id: me.id, name: me.name } }, { 'set-cookie': [setSession(token), setAccounts(accts)] });
     }
-    if (p === '/api/disconnect' && req.method === 'POST') {
+    if (p === '/api/accounts' && req.method === 'GET') {
+      return json(res, 200, accountsCore.listPublic(readAccounts(req), readSession(req)));
+    }
+    if (p === '/api/accounts/switch' && req.method === 'POST') {
       if (!isTrustedWrite(req)) return json(res, 403, { error: 'bad request' });
-      return json(res, 200, { ok: true }, { 'set-cookie': setSession('') });
+      const { id } = JSON.parse((await readBody(req)) || '{}');
+      const token = accountsCore.tokenOf(readAccounts(req), id);
+      if (!token) return json(res, 404, { error: 'unknown account' });
+      return json(res, 200, accountsCore.listPublic(readAccounts(req), token), { 'set-cookie': setSession(token) });
+    }
+    if (p === '/api/accounts/forget' && req.method === 'POST') {
+      if (!isTrustedWrite(req)) return json(res, 403, { error: 'bad request' });
+      const { id } = JSON.parse((await readBody(req)) || '{}');
+      const cur = readSession(req);
+      const accts = readAccounts(req);
+      const target = accts.find((a) => String(a.id) === String(id));
+      if (target && target.token === cur) return json(res, 409, { error: 'active account' });   // switch away first
+      const next = accountsCore.without(accts, id);
+      return json(res, 200, accountsCore.listPublic(next, cur), { 'set-cookie': setAccounts(next) });
+    }
+    if (p === '/api/disconnect' && req.method === 'POST') {   // full logout: active session + every stored account
+      if (!isTrustedWrite(req)) return json(res, 403, { error: 'bad request' });
+      return json(res, 200, { ok: true }, { 'set-cookie': [setSession(''), setAccounts([])] });
     }
     if (p === '/api/whoami') {
       const session = readSession(req);

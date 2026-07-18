@@ -13,11 +13,22 @@ const ROOT = path.join(__dirname, '..');
 const proxyCore = require(path.join(ROOT, 'web', 'proxy-core'));
 let lastProxyArgs = null;
 proxyCore.proxy = async (args) => { lastProxyArgs = args; return { status: 299, contentType: 'application/json', text: '{}' }; };
+proxyCore.whoami = async () => ({ id: 12345, name: 'Tester' });   // stub the network so connect's happy path is testable
 
 const connect = require(path.join(ROOT, 'api', 'connect'));
 const disconnect = require(path.join(ROOT, 'api', 'disconnect'));
 const whoami = require(path.join(ROOT, 'api', 'whoami'));
 const ttHandler = require(path.join(ROOT, 'api', 'tt', '[...path]'));
+const accountsList = require(path.join(ROOT, 'api', 'accounts'));
+const accountsSwitch = require(path.join(ROOT, 'api', 'accounts', 'switch'));
+const accountsForget = require(path.join(ROOT, 'api', 'accounts', 'forget'));
+
+// A Cookie header for the multi-account store + active session.
+const cookieHdr = (accts, session) => [
+  accts ? `tt_accounts=${encodeURIComponent(JSON.stringify(accts))}` : '',
+  session ? `tt_session=${session}` : '',
+].filter(Boolean).join('; ');
+const setCookieStr = (res) => [].concat(res._headers['set-cookie'] || []).join(' || ');
 
 let fail = 0;
 const ok = (m) => console.log('  \x1b[32mok\x1b[0m   ' + m);
@@ -65,6 +76,36 @@ const JSONH = { 'content-type': 'application/json' };
   lastProxyArgs = null;
   await run(ttHandler, { method: 'PUT', url: '/api/tt/api/v1/calendar/1/event/u', query: { path: ['api', 'v1', 'calendar', '1', 'event', 'u'] }, headers: { cookie: 'tt_session=abc' }, body: { title: 'x' } });
   check(lastProxyArgs && lastProxyArgs.body === '{"title":"x"}', 'a PUT body is forwarded as JSON text');
+
+  // --- connect happy path (whoami stubbed): adds the account + activates it ---
+  {
+    const res = await run(connect, { method: 'POST', headers: { ...JSONH }, body: { session: 'newtok' } });
+    const sc = setCookieStr(res);
+    check(res._s === 200 && res._body.user && res._body.user.id === 12345, 'connect (valid) signs in and returns the user');
+    check(/tt_session=newtok/.test(sc) && /tt_accounts=/.test(sc), 'and sets BOTH the session and the accounts cookie');
+  }
+
+  // --- multi-account: list / switch / forget over the store cookie ---
+  const STORE = [{ id: '1', name: 'A', token: 'ta' }, { id: '2', name: 'B', token: 'tb' }];
+  {
+    const res = await run(accountsList, { method: 'GET', headers: { cookie: cookieHdr(STORE, 'ta') } });
+    const b = res._body;
+    check(res._s === 200 && b.accounts.length === 2 && b.activeId === '1', `accounts list returns both, A active (${b.activeId})`);
+    check(b.accounts.every((a) => !('token' in a)), 'and never leaks a token to the client');
+  }
+  {
+    const res = await run(accountsSwitch, { method: 'POST', headers: { ...JSONH, cookie: cookieHdr(STORE, 'ta') }, body: { id: '2' } });
+    check(res._s === 200 && res._body.activeId === '2', `switch to B makes B active (${res._body.activeId})`);
+    check(/tt_session=tb/.test(setCookieStr(res)), 'and re-points the session cookie to B');
+  }
+  check((await run(accountsSwitch, { method: 'POST', headers: { ...JSONH, cookie: cookieHdr(STORE, 'ta') }, body: { id: '9' } }))._s === 404, 'switch to an unknown id → 404');
+  check((await run(accountsSwitch, { method: 'POST', headers: { 'content-type': 'text/plain', cookie: cookieHdr(STORE, 'ta') }, body: { id: '2' } }))._s === 403, 'switch rejects a non-JSON POST (403)');
+  check((await run(accountsForget, { method: 'POST', headers: { ...JSONH, cookie: cookieHdr(STORE, 'ta') }, body: { id: '1' } }))._s === 409, 'forget refuses the ACTIVE account (409)');
+  {
+    const res = await run(accountsForget, { method: 'POST', headers: { ...JSONH, cookie: cookieHdr(STORE, 'ta') }, body: { id: '2' } });
+    check(res._s === 200 && res._body.accounts.length === 1 && res._body.accounts[0].id === '1', 'forget a non-active account removes it (1 left)');
+    check(/tt_accounts=/.test(setCookieStr(res)), 'and rewrites the accounts store cookie');
+  }
 
   if (fail) { console.log(`\n\x1b[31m${fail} check(s) failed\x1b[0m`); process.exit(1); }
   console.log('\n\x1b[32mapi adapters ok\x1b[0m');

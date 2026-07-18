@@ -64,12 +64,9 @@
     return j?.user || null;
   }
 
-  // The renderer treats an account id as a STRING (it hashes it char-by-char for
-  // the avatar colour, and compares it by ===). TimeTree's user id is a number,
-  // so stringify it here or renderAccountBar throws "id is not iterable".
-  const listShape = (user) => (user
-    ? { accounts: [{ id: String(user.id), name: user.name || 'アカウント', email: '' }], activeId: String(user.id) }
-    : { accounts: [], activeId: null });
+  // (Account ids are STRINGS end to end — the renderer hashes them char-by-char
+  // for the avatar colour and compares by ===. accounts-core.js stringifies the
+  // TimeTree numeric id, so renderAccountBar never sees a number.)
 
   // --- theme: purely client-side here (no native process to tell) -------------
   const mq = window.matchMedia('(prefers-color-scheme: dark)');
@@ -101,18 +98,31 @@
       },
     },
     accounts: {
-      list: async () => listShape(await currentAccount()),
-      add: async () => {
-        const token = await askToken();               // dialog already verified the token + set the cookie
-        // The connect succeeded if we got a token back; base `added` on THAT, not
-        // on the follow-up whoami, or a transient hiccup there would bounce a
-        // genuinely-connected user back to the sign-in card.
-        const me = await currentAccount().catch(() => null);
-        return { ...listShape(me || (token ? { id: 'me', name: 'アカウント' } : null)), added: !!token };
+      // Multi-account: the connected accounts live in an httpOnly cookie; the
+      // backend keeps the tokens and only ever hands back id + name + which is
+      // active. Switching just re-points the session cookie — the renderer then
+      // re-syncs through the proxy with the new account's session.
+      list: async () => {
+        const r = await jget('/api/accounts').catch(() => null);
+        if (!r || !r.ok) return { accounts: [], activeId: null };
+        return (await r.json().catch(() => null)) || { accounts: [], activeId: null };
       },
-      switch: async () => listShape(await currentAccount()),   // single account for now
-      remove: async () => { await jpost('/api/disconnect'); return { accounts: [], activeId: null }; },
-      onChanged: () => {},                             // nothing changes it out from under us
+      add: async () => {
+        const token = await askToken();               // dialog verified the token + connected (added it, made it active)
+        const list = await window.host.accounts.list().catch(() => ({ accounts: [], activeId: null }));
+        return { ...list, added: !!token };           // base `added` on the connect, not a follow-up read
+      },
+      switch: async (id) => {
+        const r = await jpost('/api/accounts/switch', { id });
+        if (!r.ok) throw new Error('切り替えできませんでした');
+        return (await r.json().catch(() => null)) || { accounts: [], activeId: null };
+      },
+      remove: async (id) => {
+        const r = await jpost('/api/accounts/forget', { id });
+        if (!r.ok) return window.host.accounts.list();  // refused (e.g. the active one) → leave the list as-is
+        return (await r.json().catch(() => null)) || { accounts: [], activeId: null };
+      },
+      onChanged: () => {},                             // nothing changes it out from under us within a tab
     },
     auth: { check: async () => !!(await currentAccount()) },
     notify: {

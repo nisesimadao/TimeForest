@@ -16,6 +16,7 @@ function parse(header) {
 }
 
 const SESSION = 'tt_session';
+const ACCOUNTS = 'tt_accounts';   // httpOnly JSON [{id,name,token}] — the multi-account store
 
 /** The Set-Cookie for the session token. `secure` off for http://localhost (dev),
  *  on for the https deployment. An empty value expires it (disconnect). */
@@ -26,6 +27,23 @@ function serializeSession(value, { secure = true } = {}) {
 }
 
 const readSession = (req) => parse(req.headers && req.headers.cookie)[SESSION] || null;
+
+/** The connected-accounts store as an array (tokens included; never sent to JS —
+ *  the /api/accounts response strips them). Empty on a malformed/absent cookie. */
+function readAccounts(req) {
+  const raw = parse(req.headers && req.headers.cookie)[ACCOUNTS];
+  if (!raw) return [];
+  try { const v = JSON.parse(raw); return Array.isArray(v) ? v : []; } catch { return []; }
+}
+
+/** Set-Cookie for the accounts store. httpOnly like the session — the tokens it
+ *  holds are logins. An empty array expires it. */
+function serializeAccounts(list, { secure = true } = {}) {
+  const arr = Array.isArray(list) ? list : [];
+  const base = `${ACCOUNTS}=${arr.length ? encodeURIComponent(JSON.stringify(arr)) : ''}; HttpOnly; SameSite=Lax; Path=/`;
+  const life = arr.length ? `; Max-Age=${60 * 60 * 24 * 30}` : '; Max-Age=0';
+  return base + (secure ? '; Secure' : '') + life;
+}
 
 /* CSRF guard for the state-changing endpoints (connect / disconnect). Our own
  * client sends them as same-origin fetch with content-type application/json; a
@@ -39,4 +57,4 @@ function isTrustedWrite(req) {
   return true;
 }
 
-module.exports = { parse, serializeSession, readSession, isTrustedWrite, SESSION };
+module.exports = { parse, serializeSession, readSession, serializeAccounts, readAccounts, isTrustedWrite, SESSION, ACCOUNTS };

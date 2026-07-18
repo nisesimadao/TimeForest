@@ -57,4 +57,7 @@ vercel deploy
   （月/週/アジェンダ・コマンドパレット・予定詳細、pageerror ゼロ、6/0）。
 - 地図：`api/map/tile`・`api/map/search` がサーバー側で OSM/Nominatim を UA 付きで
   取得（タイルは data: URI 化）。ページは同一オリジンしか触らず CSP は閉じたまま。
-- 未対応：複数アカウント切り替え（接続中の1つのみ）。次段階。
+- 複数アカウント：`tt_accounts`（httpOnly, `[{id,name,token}]`）に接続済みアカウントを
+  持ち、`tt_session` を差し替えて切替（`api/accounts` の list/switch/forget）。トークンは
+  クライアントに返さず、アクティブなアカウントは forget できない。別アカウントで接続
+  すると自動で追加。UI はデスクトップのアカウントメニューがそのまま動く。
