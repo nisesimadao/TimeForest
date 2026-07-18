@@ -1433,7 +1433,7 @@
     ui.detailPlace = place;
 
     requestAnimationFrame(() => card.classList.add('in'));
-    scrim.onclick = (e) => { if (e.target === scrim) closeDetail(); };
+    scrim.onclick = (e) => { if (e.target === scrim) dismissDetail(); };
     ui.detail = scrim;
     ui.detailRelease = dialog(card, { label: o.title });
     // Focus has to ENTER the card, or its 編集/削除 are unreachable by keyboard
@@ -1453,6 +1453,46 @@
     ui.detail?.remove();
     ui.detail = null;
     ui.detailPlace = null;
+  }
+
+  /**
+   * A user-initiated close, animated as the mirror of openDetail(): the card
+   * shrinks back into the row it grew from instead of blinking out. The open is
+   * a CSS class toggle (`.in`), so dropping the class runs that same transition
+   * in reverse from wherever it currently is — click-open-then-immediately-
+   * dismiss reverses mid-flight rather than snapping, which a fixed teardown
+   * can't do. Only the closes the user actually asks for (clicking the scrim,
+   * Escape) come here; the internal ones stay on closeDetail()'s instant path,
+   * because they fire precisely when the row or anchor beneath the card is about
+   * to be destroyed, and animating a card off a deleted anchor looks broken.
+   */
+  function dismissDetail() {
+    const scrim = ui.detail;
+    if (!scrim) return;
+    const card = scrim.querySelector('.d-card');
+    // Detach from the app's handle up front: focus returns to the row now, and
+    // a fresh openDetail() neither waits on nor removes a card that is still
+    // fading — the exit animation owns this scrim from here on.
+    ui.detailRelease?.();
+    ui.detailRelease = null;
+    ui.detail = null;
+    ui.detailPlace = null;
+    if (!card || reducedMotion()) { scrim.remove(); return; }
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      card.removeEventListener('transitionend', onEnd);
+      scrim.remove();
+    };
+    // transform is the longer of the card's two transitions (0.2s vs opacity's
+    // 0.14s), so its end is the moment the card has fully shrunk back. A timeout
+    // just past it is the backstop for a transitionend that never arrives (the
+    // tab hidden mid-close cancels the transition without firing the event).
+    const onEnd = (e) => { if (e.propertyName === 'transform') finish(); };
+    card.addEventListener('transitionend', onEnd);
+    setTimeout(finish, 260);
+    card.classList.remove('in');
   }
 
   /**
@@ -3906,7 +3946,7 @@
       if (e.key === 'Escape' && ui.form && !ui.confirm) { e.preventDefault(); ui.formClose?.(); }
       return;
     }
-    if (e.key === 'Escape' && ui.detail) { e.preventDefault(); return closeDetail(); }
+    if (e.key === 'Escape' && ui.detail) { e.preventDefault(); return dismissDetail(); }
     // Escape has to be handled HERE, not only on the palette's input. It used
     // to live on input.onkeydown, and `if (ui.palette) return` sat above it —
     // so one Tab moved focus to a result and the only way out of the palette
