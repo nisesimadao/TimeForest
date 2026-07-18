@@ -27,32 +27,34 @@
   };
 
   const CSS = `
+/* Colours are TimeTree's own (its themed CSS tokens, light → dark), not Apple
+   approximations, so the agenda matches the month grid it covers. */
 .${OVL} {
   position: absolute; inset: 0; z-index: 20; overflow-y: auto;
   background: #fff; padding: 8px 0 40px;
   font-family: -apple-system, "Hiragino Sans", "Noto Sans JP", "Segoe UI", sans-serif;
 }
-.ttx-ag-load, .ttx-ag-empty { padding: 40px; text-align: center; color: rgba(60,60,67,0.5); font-size: 14px; }
-.ttx-ag-day { display: flex; gap: 14px; padding: 9px 22px; border-top: 0.5px solid rgba(60,60,67,0.16); }
+.ttx-ag-load, .ttx-ag-empty { padding: 40px; text-align: center; color: #8f8f8f; font-size: 14px; }
+.ttx-ag-day { display: flex; gap: 14px; padding: 9px 22px; border-top: 0.5px solid #ededed; }
 .ttx-ag-day:first-child { border-top: none; }
 .ttx-ag-day.today { background: #fff9ec; }
 .ttx-ag-date { flex: 0 0 88px; padding-top: 2px; }
-.ttx-ag-dnum { font-size: 17px; font-weight: 700; color: #1c1c1e; letter-spacing: -0.01em; }
-.ttx-ag-dnum .wd { font-size: 12px; font-weight: 600; margin-left: 5px; color: rgba(60,60,67,0.5); }
+.ttx-ag-dnum { font-size: 17px; font-weight: 700; color: #212121; letter-spacing: -0.01em; }
+.ttx-ag-dnum .wd { font-size: 12px; font-weight: 600; margin-left: 5px; color: #8f8f8f; }
 .ttx-ag-day.sat .ttx-ag-dnum .wd { color: #2f6fed; }
 .ttx-ag-day.sun .ttx-ag-dnum .wd, .ttx-ag-day.hol .ttx-ag-dnum .wd { color: #e0335b; }
 .ttx-ag-evs { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .ttx-ag-ev { display: flex; align-items: baseline; gap: 9px; padding: 4px 6px; border-radius: 7px; }
-.ttx-ag-ev:hover { background: #f2f2f7; }
-.ttx-ag-time { flex: 0 0 90px; font-size: 12px; color: rgba(60,60,67,0.6); font-variant-numeric: tabular-nums; }
+.ttx-ag-ev:hover { background: #f4f4f4; }
+.ttx-ag-time { flex: 0 0 90px; font-size: 12px; color: #8f8f8f; font-variant-numeric: tabular-nums; }
 .ttx-ag-bar { flex: 0 0 4px; align-self: stretch; border-radius: 2px; background: #909090; }
-.ttx-ag-title { flex: 1; font-size: 14px; color: #1c1c1e; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-:root.ttx-dark .${OVL} { background: #1c1c1e; }
-:root.ttx-dark .ttx-ag-day { border-color: rgba(84,84,88,0.5); }
+.ttx-ag-title { flex: 1; font-size: 14px; color: #212121; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+:root.ttx-dark .${OVL} { background: #0f0f0f; }
+:root.ttx-dark .ttx-ag-day { border-color: #363636; }
 :root.ttx-dark .ttx-ag-day.today { background: #2a2616; }
-:root.ttx-dark .ttx-ag-dnum { color: #f2f2f7; }
-:root.ttx-dark .ttx-ag-title { color: #f2f2f7; }
-:root.ttx-dark .ttx-ag-ev:hover { background: #2c2c2e; }`;
+:root.ttx-dark .ttx-ag-dnum, :root.ttx-dark .ttx-ag-title { color: #fff; }
+:root.ttx-dark .ttx-ag-load, :root.ttx-dark .ttx-ag-empty, :root.ttx-dark .ttx-ag-time { color: #606060; }
+:root.ttx-dark .ttx-ag-ev:hover { background: #2c2c2c; }`;
 
   function ensureCss() {
     if (document.getElementById('ttx-ag-css')) return;
@@ -83,49 +85,39 @@
     return ovl;
   }
 
-  async function render(ovl, force) {
-    rendering = true;
-    ovl.dataset.rendered = '';
-    ovl.textContent = '';
-    ovl.appendChild(el('div', 'ttx-ag-load', '読み込み中…'));
-
-    const DAY = TTX.tz.DAY;
+  /** today .. today+60d as day keys, plus an epoch window widened ±1 day so
+   *  occurrences()'s epoch filter doesn't drop a JST-early/late boundary event
+   *  whose day IS in range (groupByDay clips back to the day keys). */
+  function range() {
     const from = TTX.tz.ymd(Date.now(), 'Asia/Tokyo');
-    const to = TTX.tz.ymd(Date.now() + 60 * DAY, 'Asia/Tokyo');
-    // parseYmd anchors a day key at UTC midnight (= 09:00 JST), so the epoch
-    // window is widened a day each side: occurrences() filters by epoch and would
-    // otherwise drop a JST-early event on `from` (or a late one on `to`) whose
-    // day IS in range. groupByDay then clips back to the day-key range, so the
-    // extra span never shows stray days.
-    const lo = TTX.tz.parseYmd(from) - DAY;
-    const hi = TTX.tz.parseYmd(to) + DAY;
+    const to = TTX.tz.ymd(Date.now() + 60 * TTX.tz.DAY, 'Asia/Tokyo');
+    return { from, to, lo: TTX.tz.parseYmd(from) - TTX.tz.DAY, hi: TTX.tz.parseYmd(to) + TTX.tz.DAY };
+  }
 
-    let data = cache;
-    try {
-      const cal = await currentCalendar();
-      if (!cal) throw new Error('カレンダーが見つかりません');
-      if (force || !data || data.calId !== cal.id) {
-        const [raw, labels, mem] = await Promise.all([
-          TTX.api.allEvents(cal.id),
-          TTX.api.labels(cal.id),
-          TTX.api.memorialdays(lo, hi).catch(() => []),   // public holidays, like the month grid shows
-        ]);
-        data = cache = { calId: cal.id, name: cal.name, raw, labels, mem };
-      }
-    } catch (e) {
-      ovl.textContent = '';
-      ovl.appendChild(el('div', 'ttx-ag-empty', '読み込めませんでした：' + (e.message || e)));
-      ovl.dataset.rendered = '1';
-      rendering = false;
-      return;
-    }
+  /** The slow part — allEvents is 5000+ events over ~18 chunks — so callers show
+   *  the cache first and await this in the background. */
+  async function fetchData() {
+    const cal = await currentCalendar();
+    if (!cal) throw new Error('カレンダーが見つかりません');
+    const { lo, hi } = range();
+    const [raw, labels, mem] = await Promise.all([
+      TTX.api.allEvents(cal.id),
+      TTX.api.labels(cal.id),
+      TTX.api.memorialdays(lo, hi).catch(() => []),   // public holidays, like the month grid shows
+    ]);
+    return { calId: cal.id, name: cal.name, raw, labels, mem };
+  }
 
+  /** Compute occurrences and paint the list from a data object — pure DOM, no
+   *  network, so it's instant on a cached re-open. */
+  function buildDOM(ovl, data) {
+    const { from, to, lo, hi } = range();
     const occs = TTX.model
       .occurrences(data.raw, lo, hi, { id: data.calId, name: data.name, calendar_labels: data.labels }, {})
       .concat(TTX.model.holidayOccurrences(data.mem));
     const byDay = TTX.model.groupByDay(occs, from, to);
     const labelById = new Map((data.labels || []).map((l) => [l.id, l]));
-    const today = TTX.tz.ymd(Date.now(), 'Asia/Tokyo');
+    const today = from;
 
     const frag = document.createDocumentFragment();
     let shown = 0;
@@ -168,19 +160,38 @@
     if (!shown) ovl.appendChild(el('div', 'ttx-ag-empty', 'この先60日に予定はありません'));
     else ovl.appendChild(frag);
     ovl.dataset.rendered = '1';
-    rendering = false;
   }
 
-  /** Observer path: React fully removed the overlay while it was open — re-mount
-   *  and re-render it (reusing the cached fetch) so the agenda doesn't go blank.
-   *  Skips while a render is in flight, so the user's force-refetch on open is
-   *  never raced by a stale cache-render triggered by the same open's mutations. */
+  /** Show the cached list instantly, then refresh in the background — so a
+   *  re-open is immediate and only the first open of a session waits on the full
+   *  events fetch (allEvents is 5000+ events over ~18 chunks). */
+  async function render(ovl) {
+    rendering = true;
+    try {
+      if (cache) buildDOM(ovl, cache);
+      else { ovl.dataset.rendered = ''; ovl.textContent = ''; ovl.appendChild(el('div', 'ttx-ag-load', '読み込み中…')); }
+      let fresh = null;
+      try {
+        fresh = await fetchData();
+      } catch (e) {
+        if (!cache) { ovl.textContent = ''; ovl.appendChild(el('div', 'ttx-ag-empty', '読み込めませんでした：' + (e.message || e))); ovl.dataset.rendered = '1'; }
+        return;
+      }
+      cache = fresh;
+      if (visible && ovl.isConnected) buildDOM(ovl, fresh);
+    } finally { rendering = false; }
+  }
+
+  /** Observer path: React fully removed the overlay while it was open. Re-populate
+   *  from cache instantly (no refetch — the data is seconds old); only load if we
+   *  have nothing cached yet. */
   async function ensureShown() {
     const ovl = overlay();
     if (!ovl) return;
     ovl.hidden = false;
     if (ovl.dataset.rendered || rendering) return;
-    await render(ovl, false);
+    if (cache) buildDOM(ovl, cache);
+    else render(ovl);
   }
 
   // ---- the toggle button, cloned from TimeTree's own マンスリー/ウィークリー ----
@@ -261,7 +272,7 @@
     const ovl = overlay();
     if (!ovl) { visible = false; applyState(); return; }
     ovl.hidden = false;
-    await render(ovl, true);         // user open → always refetch (never show stale)
+    await render(ovl);               // cache shows instantly; a background refresh follows
   }
 
   function ensureButton() {
