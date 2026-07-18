@@ -12,6 +12,9 @@
     booted = true;
     await TTX.dark.init();
     await TTX.panel.init();
+    // Add a map pin to TimeTree's own event form. Watches for the form rather
+    // than needing it open now — the SPA opens and closes it without a reload.
+    TTX.mapform?.start();
   }
 
   // The app renders asynchronously; poll briefly rather than racing it.

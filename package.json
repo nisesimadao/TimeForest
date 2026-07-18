@@ -22,7 +22,8 @@
     "tf": "node client/cli.js",
     "verify:cli": "node scripts/verify-cli.js",
     "verify:mcp": "node scripts/verify-mcp.js",
-    "mcp": "node client/mcp.js"
+    "mcp": "node client/mcp.js",
+    "verify:ext": "node scripts/verify-ext.js"
   },
   "engines": {
     "node": ">=20"

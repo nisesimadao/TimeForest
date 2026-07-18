@@ -32,6 +32,7 @@
         "src/lib/map.js",
         "src/ui/dark.js",
         "src/ui/panel.js",
+        "src/ui/mapform.js",
         "src/content.js"
       ],
       "css": ["src/ui/panel.css"],
