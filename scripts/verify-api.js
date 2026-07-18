@@ -18,7 +18,7 @@ proxyCore.whoami = async () => ({ id: 12345, name: 'Tester' });   // stub the ne
 const connect = require(path.join(ROOT, 'api', 'connect'));
 const disconnect = require(path.join(ROOT, 'api', 'disconnect'));
 const whoami = require(path.join(ROOT, 'api', 'whoami'));
-const ttHandler = require(path.join(ROOT, 'api', 'tt', '[...path]'));
+const ttHandler = require(path.join(ROOT, 'api', 'tt'));
 const accountsList = require(path.join(ROOT, 'api', 'accounts'));
 const accountsSwitch = require(path.join(ROOT, 'api', 'accounts', 'switch'));
 const accountsForget = require(path.join(ROOT, 'api', 'accounts', 'forget'));
@@ -63,11 +63,20 @@ const JSONH = { 'content-type': 'application/json', origin: 'https://app.test', 
   check((await run(whoami, { method: 'GET', headers: {} }))._s === 401, 'whoami with no cookie → 401');
 
   // --- tt proxy: path/search/body mapping (proxy-core stubbed) ---
+  // (a) req.url preserved through the rewrite — the primary path the function reads.
   lastProxyArgs = null;
-  await run(ttHandler, { method: 'GET', url: '/api/tt/api/v1/calendar/123/events?since=5', query: { path: ['api', 'v1', 'calendar', '123', 'events'], since: '5' }, headers: { cookie: 'tt_session=abc' } });
-  check(lastProxyArgs && lastProxyArgs.path === '/api/v1/calendar/123/events', `tt maps the catch-all to the API path (${lastProxyArgs && lastProxyArgs.path})`);
+  await run(ttHandler, { method: 'GET', url: '/api/tt/api/v1/calendar/123/events?since=5', headers: { cookie: 'tt_session=abc' } });
+  check(lastProxyArgs && lastProxyArgs.path === '/api/v1/calendar/123/events', `tt maps /api/tt/* to the API path (${lastProxyArgs && lastProxyArgs.path})`);
   check(lastProxyArgs && lastProxyArgs.search === '?since=5', `and preserves the query string (${lastProxyArgs && lastProxyArgs.search})`);
   check(lastProxyArgs && lastProxyArgs.session === 'abc', 'and reads the session from the cookie');
+
+  // (b) rewrite fallback: Vercel handed us /api/tt?__path=…&<query> instead of the
+  //     original url. The function must recover the same path + query either way —
+  //     this is the shape that broke the deploy (the [...path] catch-all never routed).
+  lastProxyArgs = null;
+  await run(ttHandler, { method: 'GET', url: '/api/tt?__path=api/v1/calendar/123/events&since=5', query: { __path: 'api/v1/calendar/123/events', since: '5' }, headers: { cookie: 'tt_session=abc' } });
+  check(lastProxyArgs && lastProxyArgs.path === '/api/v1/calendar/123/events', `and recovers the path when rewritten to ?__path (${lastProxyArgs && lastProxyArgs.path})`);
+  check(lastProxyArgs && lastProxyArgs.search === '?since=5', `and the query survives the rewrite (${lastProxyArgs && lastProxyArgs.search})`);
 
   // body: an empty object (Vercel's parse of a body-less DELETE) forwards NO body
   lastProxyArgs = null;
