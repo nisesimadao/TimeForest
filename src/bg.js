@@ -39,6 +39,38 @@ const NOMINATIM = 'https://nominatim.openstreetmap.org/search';
 const tileCache = new Map();
 const TILE_CACHE_MAX = 400;
 
+/* OSM's tile policy requires a User-Agent that identifies the app. MV3 forbids
+ * setting it on fetch, and — measured, painfully — OSM does NOT reject an
+ * unidentified request with an error. It returns an "Access blocked" PNG with
+ * status 200 (every one exactly 6987 bytes; a real Tokyo tile is ~33KB). So the
+ * fetch looked fine and drew a blocked image.
+ *
+ * declarativeNetRequest CAN set the header that fetch cannot. One rule rewrites
+ * the User-Agent on requests to OSM's two hosts. Registered once at startup;
+ * cleared first so a reload doesn't stack duplicates. */
+const OSM_UA = `TimeForest/${chrome.runtime.getManifest().version} (unofficial TimeTree extension)`;
+async function installOsmUaRule() {
+  try {
+    const existing = await chrome.declarativeNetRequest.getDynamicRules();
+    await chrome.declarativeNetRequest.updateDynamicRules({
+      removeRuleIds: existing.map((r) => r.id),
+      addRules: [{
+        id: 1,
+        priority: 1,
+        condition: {
+          requestDomains: ['tile.openstreetmap.org', 'nominatim.openstreetmap.org'],
+          resourceTypes: ['xmlhttprequest'],
+        },
+        action: {
+          type: 'modifyHeaders',
+          requestHeaders: [{ header: 'user-agent', operation: 'set', value: OSM_UA }],
+        },
+      }],
+    });
+  } catch (e) { /* older Chrome without DNR header edit — tiles will be blocked */ }
+}
+installOsmUaRule();
+
 const mapsOn = () => chrome.storage.local.get('maps').then((s) => !!s.maps);
 
 async function tile(z, x, y) {

@@ -343,12 +343,26 @@ const check = (c, m) => (c ? ok(m) : bad(m));
         await chrome.storage.local.set({ maps: false });
         try { await tile(13, 7280, 3225); out.off = false; } catch { out.off = true; }
         await chrome.storage.local.set({ maps: true });
-        try { const u = await tile(13, 7280, 3225); out.tile = /^data:image\/png/.test(u); } catch (e) { out.tile = 'ERR ' + e.message; }
+        // Fetch several DIFFERENT tiles and look at their sizes. A data: png is
+        // not enough: OSM rejects an unidentified client (MV3 can't set a
+        // User-Agent on fetch) by returning an "Access blocked" PNG with status
+        // 200 — every one the same size. Real map tiles differ tile to tile. So
+        // the test is: more than one distinct size ⇒ real tiles, ⇒ the
+        // declarativeNetRequest User-Agent rule is working.
+        try {
+          const sizes = [];
+          for (const [z, x, y] of [[13, 7280, 3225], [13, 7281, 3225], [14, 14560, 6451]]) {
+            const u = await tile(z, x, y);
+            sizes.push(/^data:image\/png/.test(u) ? u.length : -1);
+          }
+          out.tileSizes = sizes;
+          out.tilesReal = sizes.every((s) => s > 0) && new Set(sizes).size > 1;
+        } catch (e) { out.tilesReal = 'ERR ' + e.message; }
         try { const s = await search('東京駅'); out.search = Array.isArray(s) && s.length > 0; } catch (e) { out.search = 'ERR ' + e.message; }
         return out;
       }).catch((e) => ({ evalErr: e.message }));
       check(r.off === true, 'tiles are refused while maps are off (the default)');
-      check(r.tile === true, `and returned as a data: png once on (${r.tile})`);
+      check(r.tilesReal === true, `and come back as REAL tiles, not OSM's block image (sizes ${JSON.stringify(r.tileSizes)})`);
       check(r.search === true, `and Nominatim search works from the worker (${r.search})`);
     }
     await ctx.close();

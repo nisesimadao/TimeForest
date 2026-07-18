@@ -3,7 +3,7 @@
   "name": "TimeForest",
   "version": "0.1.0",
   "description": "TimeTree に アジェンダ表示 / 全文検索 / エクスポート(MD・CSV・JSON・ICS) / ダークモード / 複数カレンダー横断 を追加する非公式拡張。",
-  "permissions": ["storage", "tabs"],
+  "permissions": ["storage", "tabs", "declarativeNetRequest"],
   "host_permissions": [
     "https://timetreeapp.com/*",
     "https://tile.openstreetmap.org/*",
