@@ -10,11 +10,14 @@
     if (booted || !onCalendarPage()) return;
     if (!document.querySelector('meta[name="csrf-token"]')) return; // signed out
     booted = true;
+    // The toolbar/form injections must not wait on the panel's network. They
+    // only watch the DOM and add a sibling; starting them first means a slow or
+    // stalled panel.init() (which loads every event before it resolves) can't
+    // keep the map pin and export button from appearing.
+    TTX.mapform?.start();     // map pin on TimeTree's own event form
+    TTX.exportform?.start();  // export control on TimeTree's own toolbar
     await TTX.dark.init();
     await TTX.panel.init();
-    // Add a map pin to TimeTree's own event form. Watches for the form rather
-    // than needing it open now — the SPA opens and closes it without a reload.
-    TTX.mapform?.start();
   }
 
   // The app renders asynchronously; poll briefly rather than racing it.

@@ -314,6 +314,52 @@ const check = (c, m) => (c ? ok(m) : bad(m));
     check(inj.count === 1, `exactly one post, for the create only (${inj.count})`);
     check(inj.uuid?.startsWith('U-') && inj.cal === 42, `carrying the new event's uuid and calendar (${inj.uuid}, ${inj.cal})`);
 
+    // Export control injects into TimeTree's toolbar (the search-field's parent),
+    // opens a format menu, and doesn't double-inject. The actual file-building is
+    // covered end-to-end elsewhere (it needs a logged-in session); here it's the
+    // injection, same shape as the map pin.
+    sec('export control injects into TimeTree\'s toolbar');
+    const expSrc = fs.readFileSync(path.join(ROOT, 'src/ui/exportform.js'), 'utf8');
+    const ex = await page.evaluate(async (exportformSrc) => {
+      document.getElementById('extest')?.remove();
+      const box = document.createElement('div');
+      box.id = 'extest';
+      // TimeTree's toolbar shape: a bar with the search field and add button.
+      box.innerHTML = '<div class="bar"><div data-test-id="search-field">検索</div><div>予定を作成</div></div>';
+      document.body.appendChild(box);
+
+      delete window.TTX.exportform;
+      (0, eval)(exportformSrc);          // eslint-disable-line no-eval
+      window.TTX.exportform.start();
+      await new Promise((r2) => setTimeout(r2, 100));
+
+      const bar = box.querySelector('.bar');
+      const wrap = box.querySelector('[data-ttx-export]');
+      const out = {
+        injected: !!wrap,
+        inBar: wrap && wrap.parentElement === bar,
+        items: box.querySelectorAll('.ttx-exp-item').length,
+      };
+      // Open the menu.
+      box.querySelector('.ttx-exp-btn')?.click();
+      await new Promise((r2) => setTimeout(r2, 50));
+      out.menuOpens = !box.querySelector('.ttx-exp-menu')?.hidden;
+      out.formats = [...box.querySelectorAll('.ttx-exp-item .k')].map((n) => n.textContent);
+      // Churn: no double-inject.
+      document.body.appendChild(document.createElement('span'));
+      await new Promise((r2) => setTimeout(r2, 60));
+      out.afterChurn = box.querySelectorAll('[data-ttx-export]').length;
+      window.TTX.exportform.stop();
+      box.remove();
+      return out;
+    }, expSrc);
+
+    check(ex.injected && ex.inBar, 'a button lands in the toolbar, next to search');
+    check(ex.items === 4, `with four formats (${ex.items})`);
+    check(ex.menuOpens && JSON.stringify(ex.formats) === JSON.stringify(['MD', 'CSV', 'JSON', 'ICS']),
+      `the menu opens to MD/CSV/JSON/ICS (${JSON.stringify(ex.formats)})`);
+    check(ex.afterChurn === 1, 'and DOM churn does not double-inject');
+
     await b.close();
   }
 
