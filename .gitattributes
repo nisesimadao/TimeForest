@@ -1,0 +1,20 @@
+# Images are binary. Without this, core.autocrlf on Windows will offer to
+# "fix line endings" in a PNG — which corrupts it. The README's banner and
+# badges live in docs/*.png; a mangled one renders as a broken image, which is
+# exactly the failure this repo just spent a commit fixing.
+*.png binary
+*.jpg binary
+*.ico binary
+
+# Source stays LF in the repo regardless of the checkout platform, so a Windows
+# clone and a CI runner hash the same bytes (the userscript's reproducible-build
+# check in CI depends on this).
+*.js   text eol=lf
+*.mjs  text eol=lf
+*.json text eol=lf
+*.css  text eol=lf
+*.html text eol=lf
+*.svg  text eol=lf
+*.md   text eol=lf
+.gitattributes text eol=lf
+.gitignore     text eol=lf
