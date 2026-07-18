@@ -42,6 +42,7 @@
     TTX.agendaview?.start();  // agenda (list) view in TimeTree's マンスリー/ウィークリー toggle
     TTX.darktoggle?.start();  // theme toggle in TimeTree's toolbar (dark.js has no UI)
     TTX.accounts?.start();    // account switcher in TimeTree's toolbar (extension-only)
+    TTX.notifytoggle?.start(); // reminders on/off in TimeTree's toolbar (extension-only)
     await TTX.dark.init();
   }
 

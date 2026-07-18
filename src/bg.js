@@ -11,7 +11,16 @@
  * csrf handshake and error handling stay identical — request() with no
  * transport of its own does the real fetch, and csrfToken() scrapes the token
  * from the /calendars HTML (a worker has no DOM), which it already supports. */
-importScripts(chrome.runtime.getURL('src/lib/api.js'));
+// api.js does the network; tz/recur/model expand events into occurrences and
+// compute alert fire-times for reminders (same libs the renderer uses — they're
+// DOM-agnostic, verified by scripts/check.js). Order matters: recur needs tz,
+// model needs tz + recur.
+importScripts(
+  chrome.runtime.getURL('src/lib/tz.js'),
+  chrome.runtime.getURL('src/lib/recur.js'),
+  chrome.runtime.getURL('src/lib/api.js'),
+  chrome.runtime.getURL('src/lib/model.js'),
+);
 
 /* Toolbar button and keyboard shortcuts -> tell the content script. */
 const send = async (msg) => {
@@ -290,6 +299,144 @@ async function forgetAccount(id) {
 // E2E) without driving the UI; the message handler below is the real entry.
 self.ttxSession = { readSessionCookie, writeSessionCookie, captureCurrent, listAccounts, switchTo, forgetAccount };
 
+/* --- reminders (chrome.alarms + chrome.notifications) ----------------------
+ *
+ * TimeTree's servers already push reminders to the user's PHONE; this fires the
+ * same ones on the desktop while Chrome is running — the browser counterpart to
+ * the Electron client's "while I'm open" reminders. The renderer decides WHEN
+ * from the events and each event's `alerts`; this is that scheduler
+ * (client/renderer/app.js checkAlerts) moved into the worker, using the identical
+ * model.occurrences / model.alertAt / api.alertLabel.
+ *
+ * A service worker can't hold a setInterval — it's evicted when idle — so a
+ * periodic chrome.alarm (min 1 min) wakes it. Each tick expands the cached events
+ * around now and fires any alert whose moment has just passed (within GRACE, so a
+ * throttled/slept tick doesn't drop one). Off by default: reminders are opt-in
+ * (a second stream on top of TimeTree's own phone push), armed by the 🔔 toggle. */
+const NOTIFY_ALARM = 'ttx-notify';
+const NOTIFY_KEY = 'notify';                     // storage flag (default false)
+const FIRED_KEY = 'ttx_notify_fired';            // { key: firedAtMs } — dedupe across worker restarts
+const EVENTS_KEY = 'ttx_notify_events';          // { at, cals: [{ id, name, alias, raw:[…] }] }
+const NOTIFY_TZ = 'Asia/Tokyo';
+const GRACE = 5 * 60 * 1000;                     // "missed while closed is missed" (mirror the client)
+const EVENTS_TTL = 10 * 60 * 1000;               // re-fetch events at most this often
+const ALERT_HORIZON = 8 * 24 * 60 * 60 * 1000;   // an alert can precede its event by ~7d (all-day 7日前)
+const FIRED_TTL = 2 * 24 * 60 * 60 * 1000;       // forget fired keys after 2 days
+
+const notifyOn = () => chrome.storage.local.get(NOTIFY_KEY).then((s) => s[NOTIFY_KEY] === true);
+
+/** Cache the alert-bearing events for every calendar. Only events that carry
+ *  `alerts` can ever notify, so the rest are dropped; each is slimmed to the
+ *  fields the expander reads, keeping the stored cache small. Recurring masters
+ *  are kept regardless of date — they expand into future occurrences. */
+async function refreshEvents(force = false) {
+  const prev = (await chrome.storage.local.get(EVENTS_KEY))[EVENTS_KEY];
+  if (!force && prev && (Date.now() - prev.at) < EVENTS_TTL) return prev;
+  const cals = await self.TTX.api.calendars();
+  const outCals = [];
+  for (const cal of cals) {
+    const raw = await self.TTX.api.allEvents(cal.id).catch(() => []);
+    const kept = raw
+      .filter((e) => Array.isArray(e.alerts) && e.alerts.length && !e.deactivated_at)
+      .map((e) => ({
+        uuid: e.uuid, title: e.title, all_day: e.all_day,
+        start_at: e.start_at, end_at: e.end_at,
+        start_timezone: e.start_timezone, end_timezone: e.end_timezone,
+        recurrences: e.recurrences || [], recurring_uuid: e.recurring_uuid,
+        alerts: e.alerts, location: e.location || '', category: e.category,
+        calendar_id: cal.id,
+      }));
+    outCals.push({ id: cal.id, name: cal.name, alias: cal.alias_code, raw: kept });
+  }
+  const cache = { at: Date.now(), cals: outCals };
+  await chrome.storage.local.set({ [EVENTS_KEY]: cache }).catch(() => {});
+  return cache;
+}
+
+/** Alerts whose fire-time just passed (in the GRACE window), across all calendars.
+ *  Mirrors app.js dueAlerts: expand occurrences, then each occurrence's raw
+ *  event's `alerts` give the minutes-before, and model.alertAt the instant. */
+function dueAlerts(cache, now) {
+  const out = [];
+  for (const cal of cache.cals) {
+    const rawByUuid = new Map(cal.raw.map((e) => [e.uuid, e]));
+    const occs = self.TTX.model.occurrences(
+      cal.raw, now - GRACE, now + ALERT_HORIZON,
+      { id: cal.id, name: cal.name, calendar_labels: [] }, {},
+    );
+    for (const o of occs) {
+      if (o.holiday || !o.calendarId) continue;
+      const raw = rawByUuid.get(o.uuid);
+      for (const m of raw?.alerts || []) {
+        const at = self.TTX.model.alertAt(o, m, NOTIFY_TZ);
+        if (at <= now && at > now - GRACE) out.push({ cal, o, m, at });
+      }
+    }
+  }
+  return out;
+}
+
+async function checkAlerts() {
+  if (!(await notifyOn())) return;
+  const cache = await refreshEvents().catch(() => null);
+  if (!cache) return;
+  const now = Date.now();
+  const fired = (await chrome.storage.local.get(FIRED_KEY))[FIRED_KEY] || {};
+  let dirty = false;
+  for (const { cal, o, m, at } of dueAlerts(cache, now)) {
+    const key = `${o.uuid}@${o.start}#${m}`;
+    if (fired[key]) continue;
+    fired[key] = at;
+    dirty = true;
+    const when = o.allDay ? '終日' : `${o.startTime}〜${o.endTime}`;
+    const body = [self.TTX.api.alertLabel(m, o.allDay), when, o.location].filter(Boolean).join(' · ');
+    // The alias rides in the notification id so a click can open that calendar
+    // even after the worker was evicted and restarted (no in-memory lookup).
+    const nid = `ttx~${cal.alias || '-'}~${key}`;
+    chrome.notifications.create(nid, {
+      type: 'basic',
+      iconUrl: chrome.runtime.getURL('icons/icon-128.png'),
+      title: o.title || '(無題)',
+      message: body || cal.name,
+    });
+  }
+  if (dirty) {
+    for (const k of Object.keys(fired)) if (fired[k] < now - FIRED_TTL) delete fired[k];
+    await chrome.storage.local.set({ [FIRED_KEY]: fired }).catch(() => {});
+  }
+}
+
+/** Arm or disarm the periodic tick to match the stored flag. */
+async function syncNotifyAlarm() {
+  if (await notifyOn()) chrome.alarms.create(NOTIFY_ALARM, { periodInMinutes: 1 });
+  else chrome.alarms.clear(NOTIFY_ALARM);
+}
+
+async function setNotify(on) {
+  await chrome.storage.local.set({ [NOTIFY_KEY]: on === true });
+  await syncNotifyAlarm();
+  if (on === true) checkAlerts().catch(() => {});   // don't wait a whole minute for the first tick
+  return on === true;
+}
+
+chrome.alarms.onAlarm.addListener((a) => { if (a.name === NOTIFY_ALARM) checkAlerts().catch(() => {}); });
+// Re-arm after a browser restart / update (alarms persist, but this covers a
+// cleared-alarms edge and a freshly-installed worker reading an on flag).
+chrome.runtime.onStartup?.addListener(() => { syncNotifyAlarm(); });
+chrome.runtime.onInstalled?.addListener(() => { syncNotifyAlarm(); });
+syncNotifyAlarm();   // worker cold-start
+
+chrome.notifications.onClicked.addListener(async (id) => {
+  const alias = String(id || '').startsWith('ttx~') ? id.split('~')[1] : '';
+  const url = alias && alias !== '-' ? `https://timetreeapp.com/calendars/${alias}` : 'https://timetreeapp.com/';
+  const [tab] = await chrome.tabs.query({ url: 'https://timetreeapp.com/*' }).catch(() => []);
+  if (tab) { chrome.tabs.update(tab.id, { active: true, url }).catch(() => {}); chrome.windows.update(tab.windowId, { focused: true }).catch(() => {}); }
+  else chrome.tabs.create({ url }).catch(() => {});
+  chrome.notifications.clear(id);
+});
+
+self.ttxNotify = { refreshEvents, dueAlerts, checkAlerts, setNotify, notifyOn, syncNotifyAlarm };
+
 // The content script can't fetch OSM itself (its page CSP forbids it and it has
 // no host access), so it asks here. One message channel, several verbs.
 chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
@@ -304,6 +451,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
     if (op === 'capture') return done(captureCurrent());
     if (op === 'switch') return done(switchTo(msg.id));
     if (op === 'forget') return done(forgetAccount(msg.id));
+    return false;
+  }
+  if (msg?.ttx === 'notify') {
+    const done = (p) => { p.then((r) => reply({ ok: r }), (e) => reply({ err: String(e && e.message || e) })); return true; };
+    if (msg.op === 'get') return done(notifyOn());
+    if (msg.op === 'set') return done(setNotify(msg.on));
     return false;
   }
   return false;
