@@ -4,7 +4,11 @@
   "version": "0.1.0",
   "description": "TimeTree に アジェンダ表示 / 全文検索 / エクスポート(MD・CSV・JSON・ICS) / ダークモード / 複数カレンダー横断 を追加する非公式拡張。",
   "permissions": ["storage", "tabs"],
-  "host_permissions": ["https://timetreeapp.com/*"],
+  "host_permissions": [
+    "https://timetreeapp.com/*",
+    "https://tile.openstreetmap.org/*",
+    "https://nominatim.openstreetmap.org/*"
+  ],
   "background": { "service_worker": "src/bg.js" },
   "commands": {
     "toggle-panel": {
@@ -25,6 +29,7 @@
         "src/lib/api.js",
         "src/lib/model.js",
         "src/lib/export.js",
+        "src/lib/map.js",
         "src/ui/dark.js",
         "src/ui/panel.js",
         "src/content.js"
