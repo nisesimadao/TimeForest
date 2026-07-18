@@ -47,13 +47,26 @@
       paint(btn);
     };
     paint(btn);
-    settings.before(btn);                        // in the 設定 cluster
+    // Deterministic slot in the 設定 cluster: left of the account / theme buttons
+    // if they're in yet, else left of 設定 — so the order doesn't depend on which
+    // injector's observer happened to fire first.
+    (bar.querySelector('[data-ttx-acct]')
+      || bar.querySelector('[data-ttx-theme-btn]')
+      || settings).before(btn);
   }
 
   let observer = null;
   async function start() {
     if (observer || !hasWorker()) return;        // extension-only
     on = await ask('get');
+    // Keep the glyph honest when the flag is flipped in another tab.
+    chrome.storage.onChanged.addListener((ch, area) => {
+      if (area === 'local' && ch.notify) {
+        on = ch.notify.newValue === true;
+        const b = document.querySelector(`[${MARK}]`);
+        if (b) paint(b);
+      }
+    });
     observer = new MutationObserver(() => ensureButton());
     observer.observe(document.body, { childList: true, subtree: true });
     ensureButton();

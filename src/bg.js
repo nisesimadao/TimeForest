@@ -316,39 +316,58 @@ self.ttxSession = { readSessionCookie, writeSessionCookie, captureCurrent, listA
 const NOTIFY_ALARM = 'ttx-notify';
 const NOTIFY_KEY = 'notify';                     // storage flag (default false)
 const FIRED_KEY = 'ttx_notify_fired';            // { key: firedAtMs } — dedupe across worker restarts
-const EVENTS_KEY = 'ttx_notify_events';          // { at, cals: [{ id, name, alias, raw:[…] }] }
-const NOTIFY_TZ = 'Asia/Tokyo';
+const EVENTS_KEY = 'ttx_notify_events';          // { at, military, cals: [{ id, name, alias, raw:[…] }] }
+const NOTIFY_TZ = 'Asia/Tokyo';                  // the whole app is JST-pinned (see README 既知の制限)
 const GRACE = 5 * 60 * 1000;                     // "missed while closed is missed" (mirror the client)
-const EVENTS_TTL = 10 * 60 * 1000;               // re-fetch events at most this often
-const ALERT_HORIZON = 8 * 24 * 60 * 60 * 1000;   // an alert can precede its event by ~7d (all-day 7日前)
+const EVENTS_TTL = 5 * 60 * 1000;                // re-fetch events at most this often (≤ GRACE: an event
+                                                 //   created since the last refresh is picked up before its
+                                                 //   alert can age out of the fire window)
+const ALERT_HORIZON = 10 * 24 * 60 * 60 * 1000;  // an alert can precede its event by up to 7d (1週間前 /
+                                                 //   all-day 7日前 ≈ 6.6d); 10d leaves headroom
 const FIRED_TTL = 2 * 24 * 60 * 60 * 1000;       // forget fired keys after 2 days
 
 const notifyOn = () => chrome.storage.local.get(NOTIFY_KEY).then((s) => s[NOTIFY_KEY] === true);
 
 /** Cache the alert-bearing events for every calendar. Only events that carry
- *  `alerts` can ever notify, so the rest are dropped; each is slimmed to the
- *  fields the expander reads, keeping the stored cache small. Recurring masters
- *  are kept regardless of date — they expand into future occurrences. */
+ *  `alerts` can ever notify, so the rest are dropped; a past one-off can't fire
+ *  again either, so only recurring masters (which expand into the future) and
+ *  not-yet-finished events are kept. Each is slimmed to the fields the expander
+ *  reads, so the stored cache stays small and the per-tick expansion cheap. */
 async function refreshEvents(force = false) {
+  const now = Date.now();
   const prev = (await chrome.storage.local.get(EVENTS_KEY))[EVENTS_KEY];
-  if (!force && prev && (Date.now() - prev.at) < EVENTS_TTL) return prev;
+  if (!force && prev && (now - prev.at) < EVENTS_TTL) return prev;
   const cals = await self.TTX.api.calendars();
+  const prevById = new Map((prev?.cals || []).map((c) => [c.id, c]));
+  // Honour the account's 12/24-hour preference in the body, like the desktop —
+  // but only an EXPLICIT 12-hour choice flips it; an unset setting (null, as on a
+  // fresh account) stays 24h, which is TimeTree's own default and unambiguous. One
+  // cheap GET per refresh; fall back to the last known value on failure.
+  const military = await self.TTX.api.setting().then((s) => s?.military_time !== false).catch(() => prev?.military !== false);
   const outCals = [];
   for (const cal of cals) {
-    const raw = await self.TTX.api.allEvents(cal.id).catch(() => []);
-    const kept = raw
-      .filter((e) => Array.isArray(e.alerts) && e.alerts.length && !e.deactivated_at)
-      .map((e) => ({
-        uuid: e.uuid, title: e.title, all_day: e.all_day,
-        start_at: e.start_at, end_at: e.end_at,
-        start_timezone: e.start_timezone, end_timezone: e.end_timezone,
-        recurrences: e.recurrences || [], recurring_uuid: e.recurring_uuid,
-        alerts: e.alerts, location: e.location || '', category: e.category,
-        calendar_id: cal.id,
-      }));
+    let kept;
+    try {
+      const raw = await self.TTX.api.allEvents(cal.id);
+      kept = raw
+        .filter((e) => Array.isArray(e.alerts) && e.alerts.length && !e.deactivated_at)
+        .filter((e) => (e.recurrences || []).some((l) => l.startsWith('RRULE:')) || e.end_at >= now - GRACE)
+        .map((e) => ({
+          uuid: e.uuid, title: e.title, all_day: e.all_day,
+          start_at: e.start_at, end_at: e.end_at,
+          start_timezone: e.start_timezone, end_timezone: e.end_timezone,
+          recurrences: e.recurrences || [], recurring_uuid: e.recurring_uuid,
+          alerts: e.alerts, location: e.location || '', category: e.category,
+          calendar_id: cal.id,
+        }));
+    } catch {
+      // A transient per-calendar failure must not blank that calendar's reminders
+      // for a whole TTL — keep its last-known events instead.
+      kept = prevById.get(cal.id)?.raw || [];
+    }
     outCals.push({ id: cal.id, name: cal.name, alias: cal.alias_code, raw: kept });
   }
-  const cache = { at: Date.now(), cals: outCals };
+  const cache = { at: now, military, cals: outCals };
   await chrome.storage.local.set({ [EVENTS_KEY]: cache }).catch(() => {});
   return cache;
 }
@@ -365,7 +384,6 @@ function dueAlerts(cache, now) {
       { id: cal.id, name: cal.name, calendar_labels: [] }, {},
     );
     for (const o of occs) {
-      if (o.holiday || !o.calendarId) continue;
       const raw = rawByUuid.get(o.uuid);
       for (const m of raw?.alerts || []) {
         const at = self.TTX.model.alertAt(o, m, NOTIFY_TZ);
@@ -376,19 +394,31 @@ function dueAlerts(cache, now) {
   return out;
 }
 
-async function checkAlerts() {
+// Single-flight: the alarm tick and setNotify's immediate call (or a slow refresh
+// that spans a tick) would otherwise both read the same `fired` snapshot before
+// either writes it back, and fire the same reminder twice. Coalescing overlapping
+// runs makes the read-modify-write effectively atomic within the one worker.
+let checking = null;
+function checkAlerts() {
+  if (checking) return checking;
+  checking = _checkAlerts().catch(() => {}).finally(() => { checking = null; });
+  return checking;
+}
+
+async function _checkAlerts() {
   if (!(await notifyOn())) return;
   const cache = await refreshEvents().catch(() => null);
   if (!cache) return;
   const now = Date.now();
   const fired = (await chrome.storage.local.get(FIRED_KEY))[FIRED_KEY] || {};
+  const clk = (t) => self.TTX.tz.clock(t, cache.military);
   let dirty = false;
   for (const { cal, o, m, at } of dueAlerts(cache, now)) {
     const key = `${o.uuid}@${o.start}#${m}`;
     if (fired[key]) continue;
     fired[key] = at;
     dirty = true;
-    const when = o.allDay ? '終日' : `${o.startTime}〜${o.endTime}`;
+    const when = o.allDay ? '終日' : `${clk(o.startTime)}〜${clk(o.endTime)}`;
     const body = [self.TTX.api.alertLabel(m, o.allDay), when, o.location].filter(Boolean).join(' · ');
     // The alias rides in the notification id so a click can open that calendar
     // even after the worker was evicted and restarted (no in-memory lookup).
@@ -408,8 +438,15 @@ async function checkAlerts() {
 
 /** Arm or disarm the periodic tick to match the stored flag. */
 async function syncNotifyAlarm() {
-  if (await notifyOn()) chrome.alarms.create(NOTIFY_ALARM, { periodInMinutes: 1 });
-  else chrome.alarms.clear(NOTIFY_ALARM);
+  if (await notifyOn()) {
+    // create() with only periodInMinutes RESETS the next fire to +1 min, and this
+    // runs on every worker cold-start — which content-script messages trigger
+    // constantly. Re-creating an existing alarm would perpetually postpone it and
+    // the tick could never fire, so only create it when it's actually missing.
+    if (!(await chrome.alarms.get(NOTIFY_ALARM))) chrome.alarms.create(NOTIFY_ALARM, { periodInMinutes: 1 });
+  } else {
+    chrome.alarms.clear(NOTIFY_ALARM);
+  }
 }
 
 async function setNotify(on) {
@@ -428,10 +465,16 @@ syncNotifyAlarm();   // worker cold-start
 
 chrome.notifications.onClicked.addListener(async (id) => {
   const alias = String(id || '').startsWith('ttx~') ? id.split('~')[1] : '';
-  const url = alias && alias !== '-' ? `https://timetreeapp.com/calendars/${alias}` : 'https://timetreeapp.com/';
   const [tab] = await chrome.tabs.query({ url: 'https://timetreeapp.com/*' }).catch(() => []);
-  if (tab) { chrome.tabs.update(tab.id, { active: true, url }).catch(() => {}); chrome.windows.update(tab.windowId, { focused: true }).catch(() => {}); }
-  else chrome.tabs.create({ url }).catch(() => {});
+  if (tab) {
+    // Focus the existing tab as-is — navigating it to the calendar would discard
+    // an open event form or unsaved input and lose the user's place.
+    chrome.tabs.update(tab.id, { active: true }).catch(() => {});
+    chrome.windows.update(tab.windowId, { focused: true }).catch(() => {});
+  } else {
+    const url = alias && alias !== '-' ? `https://timetreeapp.com/calendars/${alias}` : 'https://timetreeapp.com/';
+    chrome.tabs.create({ url }).catch(() => {});
+  }
   chrome.notifications.clear(id);
 });
 
