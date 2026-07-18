@@ -70,7 +70,7 @@ const header = `// ==UserScript==
 // @name         TimeForest
 // @namespace    https://github.com/nisesimadao/TimeForest
 // @version      ${manifest.version}
-// @description  TimeTree にダークモード・アジェンダ表示・検索・エクスポートを追加（非公式）
+// @description  TimeTree 自身の UI にアジェンダ・テーマ切替・エクスポート・地図ピンを足す（非公式）
 // @author       -
 // @match        https://timetreeapp.com/*
 // @run-at       document-start

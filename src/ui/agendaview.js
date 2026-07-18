@@ -229,7 +229,15 @@
     const mine = document.querySelector(`[${BTN}]`);
     if (!mine || !clsCache) return;
     paint(mine, visible);
-    if (visible) nativeViewBtns().forEach((b) => paint(b, false));
+    if (visible) {
+      // Capture the lit native the FIRST time we're about to grey them out —
+      // here, not in toggle(), because a keyboard/toolbar open can fire before
+      // the button (and its native pair) exist, and applyState no-ops until they
+      // do. Doing it here means underlying is always the tab that was really lit,
+      // so hide() can relight it and never leaves the segment blank.
+      if (!underlying) underlying = activeNative();
+      nativeViewBtns().forEach((b) => paint(b, false));
+    }
   }
 
   function hide(clickedNative) {
@@ -250,9 +258,8 @@
 
   async function toggle() {
     if (visible) return hide(null);
-    underlying = activeNative();     // capture BEFORE applyState paints the natives
     visible = true;
-    applyState();
+    applyState();                    // captures `underlying` before greying the natives out
     const ovl = overlay();
     if (!ovl) { visible = false; applyState(); return; }
     ovl.hidden = false;
