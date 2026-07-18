@@ -13,6 +13,7 @@
     "client:dev": "npm --prefix client run dev",
     "smoke": "cd client && node ../scripts/smoke-client.js",
     "smoke:web": "node scripts/smoke-web.js",
+    "verify:api": "node scripts/verify-api.js",
     "verify:form": "node scripts/verify-form.js",
     "verify:recur": "node scripts/verify-recur.js",
     "verify:notify": "node scripts/verify-notify.js",

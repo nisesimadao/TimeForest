@@ -43,6 +43,11 @@ jobs:
       - name: Smoke-test the web client backend
         run: node scripts/smoke-web.js
 
+      # Unit-test the Vercel serverless adapters (guards, path/body mapping) with
+      # mock req/res — the production deploy code the dev server never runs.
+      - name: Verify the Vercel API adapters
+        run: node scripts/verify-api.js
+
       - name: Upload userscript
         if: matrix.node == 24
         uses: actions/upload-artifact@v5
