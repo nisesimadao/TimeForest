@@ -64,16 +64,22 @@
 
   const WD = ['日', '月', '火', '水', '木', '金', '土'];
 
-  /** The calendar the URL is showing, resolved to its id via the API. */
+  /** The calendar alias in the URL. TimeTree switches calendars by changing it
+   *  with no reload, so it's how we tell whether the cache belongs to the
+   *  calendar currently on screen. */
+  const currentAlias = () => location.pathname.match(/\/calendars\/([^/]+)/)?.[1] || '';
+
+  /** That alias resolved to its id via the API. */
   async function currentCalendar() {
-    const alias = location.pathname.match(/\/calendars\/([^/]+)/)?.[1];
+    const alias = currentAlias();
     const cals = await TTX.api.calendars();
     return cals.find((c) => c.alias_code === alias) || cals[0] || null;
   }
 
   let visible = false;
-  let cache = null;       // { calId, name, raw, labels, mem } — refreshed each time the user opens
-  let rendering = false;  // one render at a time: keeps the observer's cache-render off the user's refetch
+  let cache = null;       // { alias, calId, name, raw, labels, mem } — last fetch, tagged with its calendar
+  let rendering = false;  // true while the newest render is in flight (the observer's re-render defers to it)
+  let renderSeq = 0;      // generation counter — only the newest render writes cache / paints
 
   // ---- overlay ----
   function overlay() {
@@ -97,6 +103,7 @@
   /** The slow part — allEvents is 5000+ events over ~18 chunks — so callers show
    *  the cache first and await this in the background. */
   async function fetchData() {
+    const alias = currentAlias();
     const cal = await currentCalendar();
     if (!cal) throw new Error('カレンダーが見つかりません');
     const { lo, hi } = range();
@@ -105,7 +112,7 @@
       TTX.api.labels(cal.id),
       TTX.api.memorialdays(lo, hi).catch(() => []),   // public holidays, like the month grid shows
     ]);
-    return { calId: cal.id, name: cal.name, raw, labels, mem };
+    return { alias, calId: cal.id, name: cal.name, raw, labels, mem };
   }
 
   /** Compute occurrences and paint the list from a data object — pure DOM, no
@@ -164,22 +171,33 @@
 
   /** Show the cached list instantly, then refresh in the background — so a
    *  re-open is immediate and only the first open of a session waits on the full
-   *  events fetch (allEvents is 5000+ events over ~18 chunks). */
+   *  events fetch (allEvents is 5000+ events over ~18 chunks). A generation
+   *  counter plus the calendar alias keep a fast open/close/open or a calendar
+   *  switch from painting — or caching — the wrong calendar's events. */
   async function render(ovl) {
+    const seq = ++renderSeq;
     rendering = true;
     try {
-      if (cache) buildDOM(ovl, cache);
+      const alias = currentAlias();
+      const hit = !!cache && cache.alias === alias;   // cache is for the calendar on screen
+      if (hit) buildDOM(ovl, cache);
       else { ovl.dataset.rendered = ''; ovl.textContent = ''; ovl.appendChild(el('div', 'ttx-ag-load', '読み込み中…')); }
       let fresh = null;
       try {
         fresh = await fetchData();
       } catch (e) {
-        if (!cache) { ovl.textContent = ''; ovl.appendChild(el('div', 'ttx-ag-empty', '読み込めませんでした：' + (e.message || e))); ovl.dataset.rendered = '1'; }
+        if (!hit && seq === renderSeq) { ovl.textContent = ''; ovl.appendChild(el('div', 'ttx-ag-empty', '読み込めませんでした：' + (e.message || e))); ovl.dataset.rendered = '1'; }
         return;
       }
+      if (seq !== renderSeq) return;                   // a newer render superseded this one
       cache = fresh;
-      if (visible && ovl.isConnected) buildDOM(ovl, fresh);
-    } finally { rendering = false; }
+      // Paint the CURRENT overlay — React may have re-attached or replaced it mid
+      // fetch — and only while it's still the calendar we fetched.
+      if (visible && fresh.alias === currentAlias()) {
+        const cur = overlay();
+        if (cur) buildDOM(cur, fresh);
+      }
+    } finally { if (seq === renderSeq) rendering = false; }
   }
 
   /** Observer path: React fully removed the overlay while it was open. Re-populate
@@ -190,7 +208,7 @@
     if (!ovl) return;
     ovl.hidden = false;
     if (ovl.dataset.rendered || rendering) return;
-    if (cache) buildDOM(ovl, cache);
+    if (cache && cache.alias === currentAlias()) buildDOM(ovl, cache);
     else render(ovl);
   }
 
