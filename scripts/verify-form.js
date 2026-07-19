@@ -18,7 +18,7 @@
  * `dowa`. Writing to a shared calendar notifies its members; that is an
  * outward, irreversible act, and no test is worth sending a push notification
  * to someone's family. The guard is load-bearing, not ceremony — verified by
- * renaming a calendar to 家族 in a live session and watching this abort.
+ * renaming a calendar to 仕事 in a live session and watching this abort.
  */
 let chromium;
 try {

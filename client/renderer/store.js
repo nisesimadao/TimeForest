@@ -144,7 +144,7 @@
   /**
    * Merging calendars surfaces genuine mirrors: a birthday, for instance, is
    * written into every calendar the person belongs to, so 🎂たろうの誕生日 lands in
-   * both 家族 and プライベート and renders twice. Collapse those — but only
+   * both 仕事 and プライベート and renders twice. Collapse those — but only
    * across calendars. Two identical entries inside ONE calendar are two real
    * events (そろばん教室 twice in a day happens), so the true count is the
    * highest count seen within any single calendar.

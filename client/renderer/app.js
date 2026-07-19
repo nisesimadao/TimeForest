@@ -895,7 +895,7 @@
     const meta = [];
     if (o.multiDay) meta.push(`${o.days.indexOf(dayKey) + 1}/${o.days.length}日目`);
     if (o.location) meta.push(o.location);
-    // Tag only the *other* calendars. Stamping "家族" on all 255 rows is noise;
+    // Tag only the *other* calendars. Stamping "仕事" on all 255 rows is noise;
     // leaving the main calendar implicit makes the odd one out actually visible.
     const primary = primaryCalendarId();
     if (primary && o.calendarId && o.calendarId !== primary && o.calendarName) {

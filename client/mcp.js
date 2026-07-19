@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /* TimeForest as an MCP server, so an assistant can read and write the calendar.
  *
- *   claude mcp add timeforest -- node E:/coding/TimeTree/client/mcp.js
+ *   claude mcp add timeforest -- node /path/to/TimeForest/client/mcp.js
  *
  * It is the CLI's twin: same door (client/rpc.js), same answers (cli-host.js in
  * the renderer), same reason. The app is a tray app, it already holds every
@@ -395,7 +395,7 @@ async function handle(msg) {
       protocolVersion: SUPPORTED.includes(want) ? want : PROTOCOL,
       capabilities: { tools: {} },
       serverInfo: { name: 'timeforest', title: 'TimeForest', version: VERSION },
-      instructions: 'TimeTree の家族カレンダーです。日付は today / week / 7/21 のように'
+      instructions: 'TimeTree の共有カレンダーです。日付は today / week / 7/21 のように'
         + '書けます。予定の uuid は list_events が返します（先頭8文字でも通ります）。'
         + 'add_comment は共有カレンダーだと他のメンバーのスマホに通知が飛びます。',
     });

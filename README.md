@@ -160,7 +160,7 @@ npm link          # tf をパスに置く（戻すなら npm unlink -g timefores
 
 ```sh
 tf ls today
-tf ls week --cal 家族
+tf ls week --cal 仕事
 tf ls 7/21 --json
 tf find 歯医者               # 日付を知らないとき
 tf show 7110a578            # ls が出す先頭8文字でいい
@@ -169,7 +169,7 @@ tf add 歯医者 --at "7/21 10:00" --for 1h --where 駅前歯科 --alert 30m
 tf add 旅行 --at 8/1 --to 8/3   # 時刻を書かなければ終日
 tf edit 7110a578 --at "7/21 10:30"   # ずらす。長さはそのまま
 tf rm 7110a578
-tf use you@example.com   # → たろう に切り替えました  家族、プライベート
+tf use you@example.com   # → たろう に切り替えました  仕事、プライベート
 ```
 
 日付は `today 明日 week nextweek month 7/21 2026-07-21 +7d -3d`。
@@ -198,7 +198,7 @@ CLI は素の Node。Electron ではない。理由は3つとも測って決め�
 ## アシスタントから使う（MCP）
 
 ```sh
-claude mcp add timeforest -- node E:/coding/TimeTree/client/mcp.js
+claude mcp add timeforest -- node /path/to/TimeForest/client/mcp.js
 ```
 
 | tool | |
@@ -509,7 +509,7 @@ npm run verify:comment         # コメント（51 アサーション）
 > ⚠ どちらのスクリプトも、**有効なカレンダーが捨てアカウントの `dowa` だけで
 > なければ中断する**。共有カレンダーへの書き込みはメンバーへ通知が飛ぶ、
 > 取り消しの効かない外向きの操作なので、このガードは飾りではない
-> （実際にカレンダー名を `家族` に書き換えて、中断することを確認済み）。
+> （実際にカレンダー名を `仕事` に書き換えて、中断することを確認済み）。
 
 CI（`.github/workflows/ci.yml`）は Node 20 / 24 でこれを走らせ、ユーザースクリプトの
 ビルドが再現可能かを diff で確認し、Electron クライアントを xvfb 上で起動して
@@ -547,7 +547,9 @@ npm run dist:dir  # インストーラ無しで client/dist/win-unpacked/ に展
   アカウントでは本家自身が `400 {"code":-462}` を受け取り
   「プレミアムユーザーのみファイルを追加できます」と表示する。つまりこれは
   実装の差ではなく課金の差で、**無料プランの範囲では本家と機能同等**
-- **自動同期** — Google カレンダーへのミラーなど
+- **外部カレンダーへの自動同期** — 見送り。エクスポート（ICS / CSV / JSON / MD）で
+  Google などへ取り込めるうえ、ライブ同期は OAuth や常時フィード配信の実装・運用・
+  セキュリティのコストが大きい。労力対効果が見合わないと判断した
 - **常駐** — 拡張である以上 Chrome が起動している必要がある。Chrome の
   「Google Chrome を閉じた際にバックグラウンド アプリの処理を続行する」を
   有効にすれば、ウィンドウを閉じても動き続ける。完全な常駐が要るなら
@@ -564,9 +566,6 @@ npm run dist:dir  # インストーラ無しで client/dist/win-unpacked/ に展
 - 繰り返しの `INTERVAL` と `COUNT` はフォームから編集できない（保存はされる）。
   「2週ごと」の予定を作りたい場合は本家側で作る
 - 画像添付は非対応（上記のとおり有料機能で、無料アカウントでは本家もできない）
-- 週の開始曜日はユーザー設定を見ておらず日曜固定
-- 12/24時間表記の設定（`military_time`）を見ておらず 24h 固定
 - デスクトップクライアントの通知は**アプリが起動している間だけ**鳴る。
   トレイに常駐し、Windows 起動時の自動起動も選べるが、本家アプリのような
   サーバープッシュではない
-- アイコン未設定（Chrome のデフォルト表示になる）

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /* TimeForest from a terminal. Plain Node — no Electron here.
  *
- *   tf ls [--from 2026-07-01] [--to 2026-07-31] [--cal 家族] [--json]
+ *   tf ls [--from 2026-07-01] [--to 2026-07-31] [--cal 仕事] [--json]
  *   tf show <uuid> [--json]
  *   tf comments <uuid> [--json]
  *   tf say <uuid> "14時でいい？"
