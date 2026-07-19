@@ -596,3 +596,10 @@ npm run dist:dir  # インストーラ無しで client/dist/win-unpacked/ に展
 ただし本ソフトは **TimeTree の非公式クライアント**で公式 API ではない。TimeTree
 本体の利用規約に従うこと、自分のアカウントの自分のデータを個人的に扱う用途を
 想定している点は上記「既知の制限」のとおり。
+
+## 貢献・セキュリティ
+
+- 開発の入り口とルール（共有ライブラリ規約・`npm run check`・4形態の配線）は
+  [CONTRIBUTING.md](CONTRIBUTING.md) を参照。
+- 脆弱性の報告は公開 issue ではなく [SECURITY.md](SECURITY.md) の手順（GitHub の
+  非公開報告）で。セッション/クッキーの扱いに関わるものは最優先で見る。
