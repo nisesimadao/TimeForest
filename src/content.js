@@ -22,12 +22,28 @@
     // sendMessage), and it never had the isolated-world hang anyway — it runs in
     // the page, where api.js's own direct fetch is fine. Same guard mapform uses.
     if (typeof chrome !== 'undefined' && typeof chrome.runtime?.sendMessage === 'function') {
-      TTX.api.setTransport((path, { method, body }) =>
-        chrome.runtime.sendMessage({ ttx: 'api', method, path, body }).then((r) => {
-          if (!r) throw new Error('background worker did not respond');
-          if (r.err) throw new Error(r.err);
-          return r.json;
-        }));
+      // A message to a SPUN-DOWN MV3 worker can be dropped and never settle — the
+      // promise just hangs, which surfaced as the agenda stuck on 「読み込み中」 after
+      // a calendar switch (the refetch never returned). So bound every call with a
+      // timeout, and for idempotent reads retry once (a retry re-sends and wakes the
+      // worker). Writes are NOT retried — a duplicate POST/PUT/DELETE could
+      // double-apply; they just reject on timeout so the caller can surface it.
+      const WORKER_TIMEOUT = 12000;
+      const call = (path, method, body) => new Promise((resolve, reject) => {
+        let settled = false;
+        const timer = setTimeout(() => { if (!settled) { settled = true; reject(new Error('worker timeout')); } }, WORKER_TIMEOUT);
+        chrome.runtime.sendMessage({ ttx: 'api', method, path, body }).then(
+          (r) => { if (settled) return; settled = true; clearTimeout(timer);
+            if (!r) reject(new Error('background worker did not respond'));
+            else if (r.err) reject(new Error(r.err));
+            else resolve(r.json); },
+          (e) => { if (settled) return; settled = true; clearTimeout(timer); reject(e); });
+      });
+      TTX.api.setTransport((path, { method = 'GET', body } = {}) => {
+        const idempotent = /^(GET|HEAD)$/i.test(method);
+        return call(path, method, body).catch((e) =>
+          (idempotent && /worker timeout/.test(String(e && e.message)) ? call(path, method, body) : Promise.reject(e)));
+      });
       // Record whoever is signed in right now, so the account switcher knows this
       // account (and picks up one you just logged into). Fire-and-forget — the
       // menu re-reads on open, and a failure here must not hold up boot.

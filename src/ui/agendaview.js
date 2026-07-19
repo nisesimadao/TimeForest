@@ -363,6 +363,15 @@
       if (visible && fresh.alias === currentAlias()) {
         const cur = overlay();
         if (cur) buildDOM(cur, fresh);
+      } else if (visible && currentAlias() && fresh.alias !== currentAlias()) {
+        // The calendar switched WHILE we were fetching — or this render started mid-
+        // SPA-navigation, when the URL briefly had no alias so fetchData captured the
+        // wrong one. Painting now would show the old calendar's events under the new
+        // URL; instead re-render for the calendar actually on screen, rather than
+        // strand the overlay on 「読み込み中」 (the observer may go quiet before firing
+        // again). The recursive render bumps renderSeq, so this one's finally won't
+        // clear `rendering` — the inner render owns it.
+        return render(overlay() || ovl);
       }
     } finally { if (seq === renderSeq) rendering = false; }
   }
@@ -375,6 +384,7 @@
     if (!ovl) return;
     ovl.hidden = false;
     if (rendering) return;
+    if (!currentAlias()) return;   // mid-navigation, no calendar yet — wait for it to settle
     // Already showing the calendar that's on screen — nothing to do. But TimeTree
     // switches calendars by changing /calendars/<alias> with NO reload, and this
     // body-level overlay (React doesn't own it) survives that; without the alias
