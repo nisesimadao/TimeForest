@@ -65,11 +65,11 @@
 .ttx-ag-d-k { flex: 0 0 68px; color: #8f8f8f; }
 .ttx-ag-d-v { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .ttx-ag-d-note { white-space: pre-wrap; }
-.ttx-ag-d-link { color: #06a374; text-decoration: none; }
+.ttx-ag-d-link { color: var(--ttx-accent); text-decoration: none; }
 .ttx-ag-d-hint { margin-top: 12px; font-size: 11px; color: #a0a0a0; }
-.ttx-ag-d-edit { margin-top: 15px; width: 100%; padding: 10px 12px; border: none; border-radius: 10px; background: #06a374; color: #fff; font-size: 14px; font-weight: 600; cursor: pointer; font-family: inherit; }
-.ttx-ag-d-edit:hover { background: #058863; }
-:root.ttx-dark .${OVL} { background: #0f0f0f; }
+.ttx-ag-d-edit { margin-top: 15px; width: 100%; padding: 10px 12px; border: none; border-radius: 10px; background: var(--ttx-accent); color: #fff; font-size: 14px; font-weight: 600; cursor: pointer; font-family: inherit; }
+.ttx-ag-d-edit:hover { background: var(--ttx-accent-hover); }
+:root.ttx-dark .${OVL} { background: #1c1c1e; }
 :root.ttx-dark .ttx-ag-day { border-color: #363636; }
 :root.ttx-dark .ttx-ag-day.today { background: #2a2616; }
 :root.ttx-dark .ttx-ag-dnum, :root.ttx-dark .ttx-ag-title { color: #fff; }

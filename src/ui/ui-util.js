@@ -89,5 +89,15 @@
     setTimeout(() => t.remove(), 3200);
   }
 
+  // Shared accent tokens (light + dark) so every injected surface uses ONE green
+  // instead of three slightly different hardcoded values. Injected once, up front.
+  if (!document.getElementById('ttx-root-css')) {
+    const s = document.createElement('style');
+    s.id = 'ttx-root-css';
+    s.textContent = ':root{--ttx-accent:#06a374;--ttx-accent-hover:#058863;}'
+      + ':root.ttx-dark{--ttx-accent:#13b981;--ttx-accent-hover:#0f9e6e;}';
+    (document.head || document.documentElement).appendChild(s);
+  }
+
   TTX.ui = { glyph, observeBody, toast };
 })();

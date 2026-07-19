@@ -46,11 +46,11 @@
   font: inherit; font-size: 13px; color: #1c1c1e; text-align: left;
 }
 .ttx-acct-pick:disabled { cursor: default; }
-.ttx-acct-pick .ck { flex: 0 0 14px; width: 14px; color: #2ecc87; font-weight: 700; }
+.ttx-acct-pick .ck { flex: 0 0 14px; width: 14px; height: 14px; display: grid; place-items: center; color: var(--ttx-accent); }
 .ttx-acct-pick .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ttx-acct-forget {
-  flex: 0 0 auto; margin-right: 5px; width: 22px; height: 22px; line-height: 20px; padding: 0;
-  background: none; border: none; border-radius: 6px; cursor: pointer; color: rgba(60,60,67,0.5); font-size: 16px;
+  flex: 0 0 auto; margin-right: 5px; width: 22px; height: 22px; display: grid; place-items: center; padding: 0;
+  background: none; border: none; border-radius: 6px; cursor: pointer; color: rgba(60,60,67,0.5);
   opacity: 0; transition: opacity .12s;
 }
 .ttx-acct-row:hover .ttx-acct-forget { opacity: 1; }
@@ -82,7 +82,9 @@
     const row = elem('div', 'ttx-acct-row');
     const pick = elem('button', 'ttx-acct-pick');
     pick.type = 'button';
-    pick.append(elem('span', 'ck', a.active ? '✓' : ''), elem('span', 'nm', a.name));
+    const ck = elem('span', 'ck');
+    if (a.active) ck.appendChild(TTX.ui.glyph('check', 13));   // monochrome, not a font ✓
+    pick.append(ck, elem('span', 'nm', a.name));
     pick.disabled = !!a.active;
     pick.onclick = async () => {
       if (a.active) return;
@@ -100,7 +102,8 @@
     row.appendChild(pick);
     // You can't remove the account you're currently using — switch away first.
     if (!a.active) {
-      const forget = elem('button', 'ttx-acct-forget', '×');
+      const forget = elem('button', 'ttx-acct-forget');
+      forget.appendChild(TTX.ui.glyph('x', 15));   // monochrome, not a font ×
       forget.type = 'button';
       forget.title = 'このアカウントを一覧から削除';
       forget.setAttribute('aria-label', a.name + ' を一覧から削除');
