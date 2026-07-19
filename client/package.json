@@ -2,6 +2,7 @@
   "name": "timeforest-client",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "description": "TimeForest — TimeTree 非公式デスクトップクライアント",
   "main": "main.js",
   "scripts": {
