@@ -52,6 +52,9 @@
 .ttx-ag-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .ttx-ag-title { font-size: 14px; color: #212121; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ttx-ag-meta { font-size: 12px; color: #8f8f8f; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ttx-ag-av { display: inline-grid; place-items: center; border-radius: 50%; overflow: hidden; flex: none; align-self: center; color: #fff; font-weight: 600; line-height: 1; }
+.ttx-ag-av img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.ttx-ag-d-author { display: flex; align-items: center; gap: 7px; }
 /* detail card */
 .ttx-ag-dscrim { position: fixed; inset: 0; z-index: 2147483001; background: rgba(0,0,0,0.28); display: flex; align-items: center; justify-content: center; }
 .ttx-ag-detail { background: #fff; color: #212121; width: min(420px, calc(100vw - 40px)); max-height: 80vh; overflow-y: auto; border-radius: 14px; box-shadow: 0 18px 60px rgba(0,0,0,0.32); padding: 18px 20px; }
@@ -218,6 +221,9 @@
           if (bits.length) main.appendChild(el('div', 'ttx-ag-meta', bits.join('　·　')));
         }
         ev.appendChild(main);
+        if (!o.holiday && multiMember && o.authorId != null) {
+          ev.appendChild(avatar(membersById.get(o.authorId), 18));   // who added it, at a glance
+        }
         if (!o.holiday) {                       // holidays aren't real events — nothing to open
           ev.classList.add('clickable');
           ev.onclick = () => openDetail(o, lb, data.name, membersById);
@@ -234,6 +240,28 @@
   }
 
   const fmtDate = (key) => `${+key.slice(5, 7)}/${+key.slice(8)}(${WD[new Date(key + 'T00:00:00Z').getUTCDay()]})`;
+
+  /** A member's avatar: their badge image, or their initial on a coloured disc.
+   *  `badge` is TimeTree's own avatar URL (on its asset host, which the page CSP
+   *  already allows); empty on a member who never set a photo. */
+  const AV_COLORS = ['#2ecc87', '#47b2f7', '#f35f8c', '#fdc02d', '#b38bdc', '#3dc2c8'];
+  function avatar(member, size) {
+    const av = el('span', 'ttx-ag-av');
+    av.style.width = av.style.height = size + 'px';
+    if (member && member.badge) {
+      const img = document.createElement('img');
+      img.src = member.badge; img.alt = ''; img.loading = 'lazy';
+      av.appendChild(img);
+    } else {
+      const nm = ((member && member.name) || '').trim();
+      av.textContent = nm ? [...nm][0] : '?';
+      av.classList.add('initials');
+      av.style.fontSize = Math.round(size * 0.5) + 'px';
+      let h = 0; for (const c of (nm || '?')) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+      av.style.background = AV_COLORS[h % AV_COLORS.length];
+    }
+    return av;
+  }
 
   /** A read-only detail card for an agenda event — everything the bare row can't
    *  show (where / who / memo / url). Editing still happens in TimeTree itself, so
@@ -277,7 +305,11 @@
     if (o.attendees && o.attendees.length) {
       row('参加者', o.attendees.map((a) => membersById.get(a && a.id != null ? a.id : a)?.name || (a && a.name) || '？').join('、'));
     }
-    if (o.authorName) row('作成者', o.authorName);
+    if (o.authorName) {
+      const who = el('div', 'ttx-ag-d-author');
+      who.append(avatar(membersById.get(o.authorId), 22), el('span', null, o.authorName));
+      row('作成者', who);
+    }
     if (o.note) row('メモ', el('div', 'ttx-ag-d-note', o.note));
     if (o.url) {
       const a = el('a', 'ttx-ag-d-link', o.url);
