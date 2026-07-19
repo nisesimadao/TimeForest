@@ -67,6 +67,9 @@
 .ttx-ag-d-note { white-space: pre-wrap; }
 .ttx-ag-d-link { color: #06a374; text-decoration: none; }
 .ttx-ag-d-hint { margin-top: 12px; font-size: 11px; color: #a0a0a0; }
+.ttx-ag-d-edit { margin-top: 15px; width: 100%; padding: 10px 12px; border: none; border-radius: 10px; background: #06a374; color: #fff; font-size: 14px; font-weight: 600; cursor: pointer; font-family: inherit; }
+.ttx-ag-d-edit:hover { background: #058863; }
+.ttx-ag-toast { position: fixed; left: 50%; bottom: 44px; transform: translateX(-50%); z-index: 2147483020; background: rgba(28,28,30,0.95); color: #fff; padding: 10px 18px; border-radius: 10px; font-size: 13px; box-shadow: 0 10px 34px rgba(0,0,0,0.34); font-family: -apple-system, "Hiragino Sans", sans-serif; }
 :root.ttx-dark .${OVL} { background: #0f0f0f; }
 :root.ttx-dark .ttx-ag-day { border-color: #363636; }
 :root.ttx-dark .ttx-ag-day.today { background: #2a2616; }
@@ -316,7 +319,11 @@
       a.href = o.url; a.target = '_blank'; a.rel = 'noopener';
       row('URL', a);
     }
-    card.appendChild(el('div', 'ttx-ag-d-hint', '編集はアジェンダを閉じて本家の予定から'));
+    // Editing stays 100% TimeTree: this drives the app's own UI rather than
+    // reimplement its editor — opens the native event sidebar and its 編集 form.
+    const editBtn = el('button', 'ttx-ag-d-edit', '本家で編集');
+    editBtn.onclick = () => { if (closeDetail) closeDetail(); openInHonke(o, true); };
+    card.appendChild(editBtn);
 
     scrim.appendChild(card);
     document.body.appendChild(scrim);
@@ -503,5 +510,137 @@
     window.removeEventListener('resize', onResize);
   }
 
-  TTX.agendaview = { start, stop, toggle, _internals: { render, currentCalendar } };
+  // ---- open the event in TimeTree's own event sidebar ------------------------
+  // Editing stays entirely in TimeTree: rather than reimplement its editor, drive
+  // its UI. Clicking a month-grid chip opens data-test-id="event-detail" (a
+  // right-hand sidebar); its メニュー → 編集 is the native edit form. So: switch to
+  // monthly, page to the event's month (the calendar-pagination label + 前月/翌月),
+  // match the chip by title within its date cell, click it, then advance to 編集.
+  // Stable test-ids (event-detail, calendar-pagination) and structure carry this —
+  // the chip's own class is a build hash and is never relied on.
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  async function waitFor(fn, timeout) {
+    const t0 = Date.now();
+    for (;;) { const v = fn(); if (v) return v; if (Date.now() - t0 > timeout) return null; await sleep(90); }
+  }
+
+  function toast(msg) {
+    const t = el('div', 'ttx-ag-toast', msg);
+    document.body.appendChild(t);
+    setTimeout(() => t.remove(), 3200);
+  }
+
+  const EN_MONTH = { january: 1, february: 2, march: 3, april: 4, may: 5, june: 6, july: 7, august: 8, september: 9, october: 10, november: 11, december: 12 };
+  /** The month currently on screen, read from the calendar-pagination label
+   *  ("…2026年7月" or "July 2026"). null when it can't be parsed. */
+  function shownMonth() {
+    const p = document.querySelector('[data-test-id="calendar-pagination"]');
+    const t = p ? (p.textContent || '') : '';
+    let m = t.match(/(\d{4})\s*年\s*(\d{1,2})\s*月/);
+    if (m) return { y: +m[1], m: +m[2] };
+    m = t.match(/([A-Za-z]+)\s+(\d{4})/);
+    if (m && EN_MONTH[m[1].toLowerCase()]) return { y: +m[2], m: EN_MONTH[m[1].toLowerCase()] };
+    return null;
+  }
+
+  /** Make TimeTree show the month grid (needed for chips + month paging). Clicking
+   *  マンスリー is a real React click, so it also switches the view when weekly. */
+  function ensureMonthly() {
+    if (document.querySelector('[data-test-id="monthly-calendar"]')) return true;
+    const b = nativeViewBtns().find((x) => ['マンスリー', 'Monthly'].includes((x.textContent || '').trim()));
+    if (b) { b.click(); return true; }
+    return false;
+  }
+
+  /** Page the grid to (y, mo) by clicking 前月/翌月 the computed number of times,
+   *  re-reading the label each step so it stops exactly on target. */
+  async function navToMonth(y, mo) {
+    for (let i = 0; i < 30; i++) {
+      const cur = shownMonth();
+      if (!cur) return false;
+      const delta = (y * 12 + mo) - (cur.y * 12 + cur.m);
+      if (delta === 0) return true;
+      const aria = delta > 0 ? ['翌月', 'Next month'] : ['前月', 'Previous month'];
+      const btn = [...document.querySelectorAll('button')].find((b) => aria.includes(b.getAttribute('aria-label') || ''));
+      if (!btn) return false;
+      btn.click();
+      await sleep(340);
+    }
+    const c = shownMonth();
+    return !!c && (c.y * 12 + c.m) === (y * 12 + mo);
+  }
+
+  const ownText = (n) => [...n.childNodes].filter((c) => c.nodeType === 3).map((c) => c.textContent.trim()).join('');
+
+  /** The day-of-month of the grid cell a chip sits in: the numeric date label
+   *  directly above it in the same column. 0 when undetermined. Lets us pick the
+   *  right occurrence when a title repeats (daily/recurring events). */
+  function chipDay(chip, nums) {
+    const r = chip.getBoundingClientRect();
+    const cx = r.left + r.width / 2;
+    let best = null;
+    for (const nd of nums) {
+      if (nd.y > r.top + 2) continue;            // the date number sits above its events
+      if (Math.abs(nd.x - cx) > 95) continue;    // same column
+      if (!best || nd.y > best.y) best = nd;      // nearest one above
+    }
+    return best ? best.d : 0;
+  }
+
+  /** The month-grid chip for occurrence o, matched by title within its date cell.
+   *  null when the event isn't on the grid (e.g. filtered calendar). */
+  function findChip(o) {
+    const grid = document.querySelector('[data-test-id="monthly-calendar"]');
+    if (!grid || !o.title) return null;
+    const day = +o.startKey.slice(8, 10);
+    const nums = [];
+    for (const n of grid.querySelectorAll('*')) {
+      if (!/^\d{1,2}$/.test(ownText(n))) continue;
+      const r = n.getBoundingClientRect();
+      if (r.width > 0 && r.height > 0) nums.push({ d: +ownText(n), x: r.left + r.width / 2, y: r.top });
+    }
+    const chips = [...grid.querySelectorAll('button')].filter((b) => {
+      const t = (b.textContent || '').trim(); const r = b.getBoundingClientRect();
+      return t && !/^\d{1,2}$/.test(t) && r.height >= 8 && r.height <= 30 && r.width >= 24 && r.top >= 120;
+    });
+    const matches = chips.filter((b) => (b.textContent || '').includes(o.title));
+    if (matches.length <= 1) return matches[0] || null;
+    return matches.find((b) => chipDay(b, nums) === day) || matches[0];
+  }
+
+  /** From an open event-detail sidebar, advance to the native edit form via
+   *  メニュー → 編集. false (leaving the sidebar open) on any miss. */
+  async function openEditorInHonke() {
+    const detail = document.querySelector('[data-test-id="event-detail"]');
+    if (!detail) return false;
+    const menu = [...detail.querySelectorAll('button')].find((b) => /メニュー|Menu/.test((b.textContent || '').trim() || b.getAttribute('aria-label') || ''));
+    if (!menu) return false;
+    menu.click();
+    // The menu items (編集 / コピー / 削除) render in a portal; match by exact label
+    // across the shapes TimeTree uses, then click the clickable ancestor-or-self.
+    const edit = await waitFor(() => [...document.querySelectorAll('button, [role=menuitem], [role=button], a, li')].find((x) => /^(編集|Edit)$/.test((x.textContent || '').trim())), 1600);
+    if (!edit) return false;
+    (edit.closest('button, [role=menuitem], [role=button], a') || edit).click();
+    return true;
+  }
+
+  /** Route an agenda event into TimeTree's own event UI. edit=true advances to the
+   *  native editor; on any miss it leaves the detail sidebar open, so the user is
+   *  always left inside TimeTree, never stranded. (A test seam skips the final 編集
+   *  click so E2E never opens a real edit form.) */
+  async function openInHonke(o, edit) {
+    hide(null);                                   // drop the agenda overlay so the grid is clickable
+    if (document.documentElement.hasAttribute('data-ttx-test-noedit')) edit = false;
+    if (!ensureMonthly()) { toast('本家のマンスリーを開けませんでした'); return; }
+    if (!(await waitFor(() => document.querySelector('[data-test-id="monthly-calendar"]'), 3000))) { toast('本家のマンスリーを開けませんでした'); return; }
+    if (!(await navToMonth(+o.startKey.slice(0, 4), +o.startKey.slice(5, 7)))) { toast('本家グリッドで対象月を開けませんでした'); return; }
+    await sleep(220);
+    const chip = await waitFor(() => findChip(o), 1600);
+    if (!chip) { toast('該当の予定が本家グリッドに見つかりませんでした'); return; }
+    chip.click();
+    if (!(await waitFor(() => document.querySelector('[data-test-id="event-detail"]'), 3000))) { toast('本家の予定を開けませんでした'); return; }
+    if (edit) await openEditorInHonke();
+  }
+
+  TTX.agendaview = { start, stop, toggle, _internals: { render, currentCalendar, findChip, openInHonke } };
 })();
