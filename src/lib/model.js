@@ -193,6 +193,38 @@
     return base - mins * 60000;
   }
 
+  // --- reminders: shared by the desktop renderer (app.js) AND the extension
+  // worker (bg.js) so the two can never drift. Each form still owns its event
+  // source (store vs raw), its 12/24h clock, and how it stores fired keys and
+  // shows notifications — only the due-window, the dedupe key and the body live here.
+
+  /** "Missed while closed is missed": how far past its fire-instant an alert may
+   *  still fire. Both forms use this one value. */
+  const ALERT_GRACE = 5 * 60 * 1000;
+
+  /** The dedupe key for a fired reminder. A recurring master's uuid repeats for
+   *  every occurrence, so the key names the instant AND the minutes-before too. */
+  const reminderKey = (occ, mins) => `${occ.uuid}@${occ.start}#${mins}`;
+
+  /** For ONE occurrence, the alerts (minutes-before) whose fire-instant has just
+   *  passed within `grace`. Returns `[{ minutes, at, key }]`. */
+  function dueAlertsFor(occ, alerts, now, tz = 'Asia/Tokyo', grace = ALERT_GRACE) {
+    const out = [];
+    for (const m of alerts || []) {
+      const at = alertAt(occ, m, tz);
+      if (at <= now && at > now - grace) out.push({ minutes: m, at, key: reminderKey(occ, m) });
+    }
+    return out;
+  }
+
+  /** The one-line notification body both forms show: "10分前 · 14:00〜15:00 · 渋谷".
+   *  `alertLabel` (api.alertLabel) and `clock` are passed in, so this needs no lib
+   *  dependency and each form keeps its own 12/24-hour setting. */
+  function reminderBody(occ, mins, alertLabel, clock) {
+    const when = occ.allDay ? '終日' : `${clock(occ.startTime)}〜${clock(occ.endTime)}`;
+    return [alertLabel(mins, occ.allDay), when, occ.location].filter(Boolean).join(' · ');
+  }
+
   function matchesQuery(o, q) {
     if (!q) return true;
     const hay = (o.title + ' ' + o.location + ' ' + o.note + ' ' + o.calendarName).toLowerCase();
@@ -240,6 +272,7 @@
 
   TTX.model = {
     occurrences, holidayOccurrences, groupByDay, matchesQuery, normalize, alertAt,
+    dueAlertsFor, reminderKey, reminderBody, ALERT_GRACE,
     normalizeActivities,
   };
 })();

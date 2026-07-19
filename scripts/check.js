@@ -401,6 +401,28 @@ for (const [name, got, want] of timing) {
   else bad(`${name}: expected ${want}, got ${got}`);
 }
 
+// dueAlertsFor / reminderKey / reminderBody are shared by the desktop renderer AND
+// the extension worker, so the due-window, the dedupe key and the notification body
+// can't drift between them (a drift would double-fire or format differently). Both
+// forms used to hand-roll these identically; now they call the lib, guarded here.
+const EV = { uuid: 'evt-1', allDay: false, startKey: '2026-08-03', start: Date.UTC(2026, 7, 3, 1, 0), startTime: '10:00', endTime: '11:00', location: '渋谷' };
+const at30 = model.alertAt(EV, 30, 'Asia/Tokyo');
+const shared = [
+  ['dueAlertsFor picks only the just-passed alert', model.dueAlertsFor(EV, [0, 30, 1440], at30, 'Asia/Tokyo').map((d) => d.minutes).join(','), '30'],
+  ['dueAlertsFor reports the fire instant', model.dueAlertsFor(EV, [30], at30, 'Asia/Tokyo')[0].at, at30],
+  ['1ms before the instant: not due yet', model.dueAlertsFor(EV, [30], at30 - 1, 'Asia/Tokyo').length, 0],
+  ['inside the grace window: still due', model.dueAlertsFor(EV, [30], at30 + model.ALERT_GRACE - 1, 'Asia/Tokyo').length, 1],
+  ['past the grace window: missed', model.dueAlertsFor(EV, [30], at30 + model.ALERT_GRACE + 1, 'Asia/Tokyo').length, 0],
+  ['reminderKey names uuid @ instant # minutes', model.reminderKey(EV, 30), `evt-1@${EV.start}#30`],
+  ['dueAlertsFor tags each alert with its key', model.dueAlertsFor(EV, [30], at30, 'Asia/Tokyo')[0].key, model.reminderKey(EV, 30)],
+  ['reminderBody: label · when · place', model.reminderBody(EV, 30, (m) => `${m}分前`, (t) => t), '30分前 · 10:00〜11:00 · 渋谷'],
+  ['reminderBody: 終日 for all-day, empty parts dropped', model.reminderBody({ ...EV, allDay: true, location: '' }, 900, () => '1日前', (t) => t), '1日前 · 終日'],
+];
+for (const [name, got, want] of shared) {
+  if (got === want) ok(`${name} — ${JSON.stringify(got)}`);
+  else bad(`${name}: expected ${JSON.stringify(want)}, got ${JSON.stringify(got)}`);
+}
+
 // --- 5a. dates a person types -----------------------------------------------
 //
 // Pure, so it runs here with no app and no calendar. `now` is injected on

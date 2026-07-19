@@ -2960,8 +2960,6 @@
   // in-memory list that already costs nothing.
 
   const TICK = 30000;
-  /** Missed while closed is missed. Don't open the laptop to yesterday's alarms. */
-  const GRACE = 5 * 60 * 1000;
   const FIRED_KEY = 'ttc.fired';
 
   function loadFired() {
@@ -2997,10 +2995,9 @@
     for (const o of occs) {
       if (o.holiday || !o.calendarId) continue;
       const raw = TTX.store.rawEvent(o.calendarId, o.uuid);
-      for (const m of raw?.alerts || []) {
-        const at = TTX.model.alertAt(o, m, TZ);
-        if (at <= now && at > now - GRACE) out.push({ o, m, at });
-      }
+      // Shared with the extension worker (see model.dueAlertsFor) so the due-window
+      // and the dedupe key can't drift between the two.
+      for (const d of TTX.model.dueAlertsFor(o, raw?.alerts, now, TZ)) out.push({ o, ...d });
     }
     return out;
   }
@@ -3009,14 +3006,11 @@
     if (!ui.notify || !window.host?.notify) return;
     const now = Date.now();
     let dirty = false;
-    for (const { o, m, at } of dueAlerts(now)) {
-      const key = `${o.uuid}@${o.start}#${m}`;
+    for (const { o, minutes, at, key } of dueAlerts(now)) {
       if (ui.fired.has(key)) continue;
       ui.fired.set(key, at);
       dirty = true;
-      const when = o.allDay ? '終日' : `${clock(o.startTime)}〜${clock(o.endTime)}`;
-      const body = [TTX.api.alertLabel(m, o.allDay), when, o.location]
-        .filter(Boolean).join(' · ');
+      const body = TTX.model.reminderBody(o, minutes, TTX.api.alertLabel, clock);
       await window.host.notify.show({ title: o.title, body, key: o.startKey })
         .catch(() => {});
     }

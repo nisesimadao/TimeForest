@@ -360,7 +360,7 @@ const NOTIFY_KEY = 'notify';                     // storage flag (default false)
 const FIRED_KEY = 'ttx_notify_fired';            // { key: firedAtMs } — dedupe across worker restarts
 const EVENTS_KEY = 'ttx_notify_events';          // { at, military, cals: [{ id, name, alias, raw:[…] }] }
 const NOTIFY_TZ = 'Asia/Tokyo';                  // the whole app is JST-pinned (see README 既知の制限)
-const GRACE = 5 * 60 * 1000;                     // "missed while closed is missed" (mirror the client)
+const GRACE = self.TTX.model.ALERT_GRACE;        // "missed while closed is missed" — shared with the client
 const EVENTS_TTL = 5 * 60 * 1000;                // re-fetch events at most this often (≤ GRACE: an event
                                                  //   created since the last refresh is picked up before its
                                                  //   alert can age out of the fire window)
@@ -427,10 +427,9 @@ function dueAlerts(cache, now) {
     );
     for (const o of occs) {
       const raw = rawByUuid.get(o.uuid);
-      for (const m of raw?.alerts || []) {
-        const at = self.TTX.model.alertAt(o, m, NOTIFY_TZ);
-        if (at <= now && at > now - GRACE) out.push({ cal, o, m, at });
-      }
+      // Shared with the desktop renderer (model.dueAlertsFor) so the due-window and
+      // the dedupe key stay in lock-step between the two.
+      for (const d of self.TTX.model.dueAlertsFor(o, raw?.alerts, now, NOTIFY_TZ)) out.push({ cal, o, ...d });
     }
   }
   return out;
@@ -455,13 +454,11 @@ async function _checkAlerts() {
   const fired = (await chrome.storage.local.get(FIRED_KEY))[FIRED_KEY] || {};
   const clk = (t) => self.TTX.tz.clock(t, cache.military);
   let dirty = false;
-  for (const { cal, o, m, at } of dueAlerts(cache, now)) {
-    const key = `${o.uuid}@${o.start}#${m}`;
+  for (const { cal, o, minutes, at, key } of dueAlerts(cache, now)) {
     if (fired[key]) continue;
     fired[key] = at;
     dirty = true;
-    const when = o.allDay ? '終日' : `${clk(o.startTime)}〜${clk(o.endTime)}`;
-    const body = [self.TTX.api.alertLabel(m, o.allDay), when, o.location].filter(Boolean).join(' · ');
+    const body = self.TTX.model.reminderBody(o, minutes, self.TTX.api.alertLabel, clk);
     // The alias rides in the notification id so a click can open that calendar
     // even after the worker was evicted and restarted (no in-memory lookup).
     const nid = `ttx~${cal.alias || '-'}~${key}`;
