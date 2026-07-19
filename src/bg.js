@@ -276,8 +276,23 @@ async function switchTo(id) {
   const accts = await getAccounts();
   const target = accts[id];
   if (!target) throw new Error('unknown account');
+  // Switching between accounts in one browser means logging out of one to log into
+  // another (a single cookie jar), which invalidates the logged-out session server
+  // side — so a stored token can be DEAD by the time you switch back. Verify the
+  // target session BEFORE reloading: swap the cookie, ask who it is, and only if it
+  // answers do we commit + reload. If it's dead, put the previous account's cookie
+  // back and report it, rather than reload every tab onto TimeTree's login page.
+  const prev = await readSessionCookie();
   await writeSessionCookie(target.sessionId);
   self.TTX.api.csrfToken(true).catch(() => {});     // worker's cached CSRF belonged to the old account
+  const me = await self.TTX.api.me().catch(() => null);
+  if (me?.id == null) {
+    if (prev?.value) await writeSessionCookie(prev.value);   // restore — don't strand the user
+    self.TTX.api.csrfToken(true).catch(() => {});
+    const err = new Error('このアカウントのセッションが切れています。TimeTree でログインし直すと、また切り替えられます。');
+    err.code = 'session-expired';
+    throw err;
+  }
   const tabs = await chrome.tabs.query({ url: TT_TABS }).catch(() => []);
   for (const t of tabs) if (t.id != null) chrome.tabs.reload(t.id).catch(() => {});
   return { id: target.id, name: target.name };

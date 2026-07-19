@@ -57,6 +57,7 @@
 .ttx-acct-forget:hover { background: rgba(60,60,67,0.12); color: #1c1c1e; }
 .ttx-acct-hint { padding: 6px 10px 4px; font-size: 11px; line-height: 1.4; color: rgba(60,60,67,0.5); }
 .ttx-acct-empty { padding: 8px 10px; font-size: 12px; color: rgba(60,60,67,0.5); }
+.ttx-acct-err { padding: 7px 10px; margin-top: 2px; font-size: 11px; line-height: 1.5; color: #e0335b; border-top: 0.5px solid rgba(60,60,67,0.12); }
 :root.ttx-dark .ttx-acct-menu { background: #1c1c1e; border-color: rgba(84,84,88,0.6); }
 :root.ttx-dark .ttx-acct-row:hover { background: #2c2c2e; }
 :root.ttx-dark .ttx-acct-pick { color: #f2f2f7; }
@@ -87,8 +88,14 @@
       if (a.active) return;
       const nm = pick.querySelector('.nm');
       nm.textContent = '切り替え中…';
-      try { await sessionOp({ op: 'switch', id: a.id }); } // worker swaps the cookie and reloads this tab
-      catch (e) { nm.textContent = a.name; console.warn('[TTX] account switch failed', e); }
+      try { await sessionOp({ op: 'switch', id: a.id }); } // worker verifies + swaps the cookie + reloads
+      catch (e) {
+        // Most likely the stored session expired (switching accounts means logging
+        // out of one, which the server invalidates). Say so, rather than fail mute.
+        nm.textContent = a.name;
+        showError(menu, e.message || '切り替えできませんでした');
+        console.warn('[TTX] account switch failed', e);
+      }
     };
     row.appendChild(pick);
     // You can't remove the account you're currently using — switch away first.
@@ -105,6 +112,12 @@
       row.appendChild(forget);
     }
     return row;
+  }
+
+  function showError(menu, msg) {
+    let err = menu.querySelector('.ttx-acct-err');
+    if (!err) { err = elem('div', 'ttx-acct-err'); menu.appendChild(err); }
+    err.textContent = msg;   // cleared next time the menu opens (populate wipes it)
   }
 
   async function populate(menu) {
