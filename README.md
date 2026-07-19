@@ -539,6 +539,21 @@ npm run dist:dir  # インストーラ無しで client/dist/win-unpacked/ に展
 署名はしていないので Windows は警告を出す。zip 版も出しているのはそのため
 （どのみち警告が出るなら、解凍して実行できる方が筋が良い場面がある）。
 
+### リリース（GitHub Actions）
+
+`v0.2.0` のようなタグを push すると、[`.github/workflows/release.yml`](.github/workflows/release.yml)
+が GitHub Release に成果物を並べる:
+
+- **ユーザースクリプト** — `timeforest.user.js`（拡張ブートストラップ）と
+  `timeforest-app.user.js`（スマホ用フル UI）
+- **拡張** — `timeforest-extension.zip`（manifest + src + icons。そのまま「パッケージ化
+  されていない拡張機能を読み込む」で使える）
+- **デスクトップアプリ** — Windows（.exe / .zip）・macOS（.dmg）・Linux（AppImage）を
+  各 OS の runner でビルド
+
+軽量な成果物（ユーザースクリプト・拡張 zip）は数秒で終わる。Electron は各 OS 分だけ
+重いので、リリースを切るときだけ走る（`workflow_dispatch` で成果物だけの試走も可）。
+
 ## これから
 
 - **画像添付** — **実装しない（できない）。TimeTree の有料機能だった。**
