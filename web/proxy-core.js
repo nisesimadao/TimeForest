@@ -59,10 +59,18 @@ async function proxy({ method = 'GET', path, search = '', body, session }) {
   // Relay ONLY the JSON API, never arbitrary pages. This keeps the proxy from
   // reflecting authenticated TimeTree HTML (its csrf-token meta) under our own
   // origin, and bounds what a top-level GET navigation could reach.
-  if (!/^\/api\/v[0-9]+\//.test(path)) {
+  //
+  // Resolve the URL FIRST and test the NORMALISED pathname: a raw prefix check
+  // (`/^\/api\//.test(path)`) is defeated by `/api/v1/../../calendars` (and its
+  // %2e%2e encoding), which fetch would normalise to `/calendars` — back to the
+  // HTML page this guard exists to refuse. The extension already blocks `..` in
+  // client/main.js; the internet-facing proxy must too.
+  let u;
+  try { u = new URL(ORIGIN + path + search); } catch { u = null; }
+  if (!u || u.origin !== ORIGIN || !/^\/api\/v[0-9]+\//.test(u.pathname)) {
     return { status: 404, contentType: 'application/json', text: JSON.stringify({ error: 'not an API path' }) };
   }
-  const url = `${ORIGIN}${path}${search}`;
+  const url = u.href;
   const send = async (csrf) => fetch(url, {
     method,
     // Never follow a redirect: TimeTree API calls don't legitimately 3xx, and

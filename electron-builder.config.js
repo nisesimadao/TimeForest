@@ -26,7 +26,7 @@ const clientPkg = JSON.parse(
 const electronVersion = (clientPkg.devDependencies.electron || '').replace(/^[^\d]*/, '');
 
 module.exports = {
-  appId: 'net.raiid.timeforest',
+  appId: 'io.github.nisesimadao.timeforest',
   productName: 'TimeForest',
   copyright: 'nisesimadao',
   electronVersion,
