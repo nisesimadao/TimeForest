@@ -20,7 +20,8 @@ const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
 const version = JSON.parse(read('package.json')).version;
 
 const LIBS = ['tz', 'recur', 'api', 'model', 'export', 'map'].map((l) => `src/lib/${l}.js`);
-const RENDERER = ['icons.js', 'store.js', 'cli-host.js', 'app.js'].map((f) => `client/renderer/${f}`);
+// Same order as client/renderer/index.html and web/index.html (cli-host first).
+const RENDERER = ['cli-host.js', 'icons.js', 'store.js', 'app.js'].map((f) => `client/renderer/${f}`);
 const appCss = read('client/renderer/app.css');
 
 // Where the built script is served from, so a userscript manager can auto-update

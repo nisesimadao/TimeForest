@@ -21,7 +21,7 @@ const accountsCore = require('./accounts-core');
 
 // A connected account's human label — TimeTree's display name, or the id's last
 // four when it's unset (matches the extension's account switcher).
-const accountLabel = (me) => (me.name && me.name.trim()) || ('アカウント ' + String(me.id).slice(-4));
+const accountLabel = accountsCore.accountLabel;   // shared (web/accounts-core.js)
 
 const DIST = path.join(__dirname, 'dist');
 const PORT = Number(process.argv[2]) || 8787;

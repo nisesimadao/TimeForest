@@ -6,7 +6,7 @@ const { whoami } = require('../web/proxy-core');
 const { serializeSession, serializeAccounts, readAccounts, isTrustedWrite } = require('../web/cookie');
 const accountsCore = require('../web/accounts-core');
 
-const accountLabel = (me) => (me.name && me.name.trim()) || ('アカウント ' + String(me.id).slice(-4));
+const accountLabel = accountsCore.accountLabel;   // shared (web/accounts-core.js)
 function tokenOf(req) {
   if (req.body && typeof req.body === 'object') return req.body.session;
   try { return JSON.parse(req.body || '{}').session; } catch { return null; }

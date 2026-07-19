@@ -51,4 +51,13 @@ function listPublic(accounts, activeToken) {
   };
 }
 
-module.exports = { upsert, tokenOf, without, forget, listPublic };
+/** A human label for a signed-in user: their name, or a stable fallback from the
+ *  id so a nameless account still reads as an account, not a database key. Shared
+ *  by the dev server and the Vercel connect function; the browser/worker forms
+ *  can't require this CommonJS module, so they keep their own copy (guarded by
+ *  scripts/check.js). */
+function accountLabel(me) {
+  return (me && me.name && me.name.trim()) || ('アカウント ' + String(me && me.id).slice(-4));
+}
+
+module.exports = { upsert, tokenOf, without, forget, listPublic, accountLabel };

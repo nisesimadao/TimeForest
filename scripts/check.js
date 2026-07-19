@@ -160,6 +160,48 @@ for (const name of SHARED) {
   const copies = jsFiles.filter((f) => path.basename(f) === `${name}.js` && !f.includes(`src${path.sep}lib`));
   if (copies.length) bad(`${name}.js duplicated at: ${copies.map(rel).join(', ')}`);
 }
+// The hosted web build and the mobile userscript each carry their OWN hardcoded
+// lib list (web/build.js, build-app-userscript.js). Verified above: extension +
+// client. NOT verified until now: these two — so a lib added to SHARED (manifest +
+// index.html, passing every check) but forgotten in either array ships a deploy /
+// userscript missing it, a runtime `TTX.<lib> is undefined` that still parses.
+for (const file of ['web/build.js', 'build-app-userscript.js']) {
+  const src = fs.readFileSync(path.join(ROOT, file), 'utf8');
+  const m = src.match(/LIBS\s*=\s*\[([^\]]*)\]/);
+  const list = m ? [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1].replace(/^src\/lib\//, '').replace(/\.js$/, '')) : [];
+  const missing = SHARED.filter((n) => !list.includes(n));
+  const extra = list.filter((n) => !SHARED.includes(n));
+  if (missing.length || extra.length) bad(`${file} LIBS drift from SHARED — missing [${missing}] extra [${extra}]`);
+  else ok(`${file} LIBS match the shared set (${SHARED.length})`);
+}
+// CLIENT_TAG (the x-timetreea header) can't be physically shared: session.js,
+// proxy-core.js and host-userscript.js run where TTX.api isn't loaded (Electron
+// main, the Node server, before the renderer), so each re-hardcodes it. api.js is
+// the source of truth; enforce that the copies still agree — a stale tag makes
+// TimeTree reject that ONE form's writes, invisibly, until someone writes from it.
+{
+  const tagM = fs.readFileSync(path.join(ROOT, 'src/lib/api.js'), 'utf8').match(/CLIENT_TAG\s*=\s*'([^']+)'/);
+  const tag = tagM && tagM[1];
+  if (!tag) bad('api.js: CLIENT_TAG literal not found — this guard is looking at the wrong shape');
+  else {
+    let drift = 0;
+    for (const f of ['client/session.js', 'web/proxy-core.js', 'web/host-userscript.js']) {
+      if (!fs.readFileSync(path.join(ROOT, f), 'utf8').includes(tag)) { bad(`${f}: CLIENT_TAG drifted from api.js ('${tag}')`); drift++; }
+    }
+    if (!drift) ok(`CLIENT_TAG '${tag}' consistent across the 4 forms`);
+  }
+}
+// accountLabel: the dev server + connect function share web/accounts-core.js, but
+// the extension worker (src/bg.js) and the mobile userscript can't require it, so
+// they keep their own copy. Assert the blank-name fallback hasn't drifted, so an
+// account added from one form isn't labelled differently than from another.
+{
+  let drift = 0;
+  for (const f of ['src/bg.js', 'web/host-userscript.js', 'web/accounts-core.js']) {
+    if (!/'アカウント ' \+ String\(/.test(fs.readFileSync(path.join(ROOT, f), 'utf8'))) { bad(`${f}: accountLabel fallback drifted`); drift++; }
+  }
+  if (!drift) ok('accountLabel fallback consistent across the forms');
+}
 
 // --- 4. libs must not assume a DOM -----------------------------------------
 

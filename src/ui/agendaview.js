@@ -85,7 +85,7 @@
     document.head.appendChild(s);
   }
 
-  const WD = ['日', '月', '火', '水', '木', '金', '土'];
+  const WD = TTX.tz.WEEKDAY_JA;   // shared JST weekday labels (src/lib/tz.js)
 
   /** The calendar alias in the URL. TimeTree switches calendars by changing it
    *  with no reload, so it's how we tell whether the cache belongs to the
@@ -185,7 +185,7 @@
       const evs = byDay[key];
       if (!evs.length) continue;                        // agenda skips empty days
       shown++;
-      const wd = new Date(key + 'T00:00:00Z').getUTCDay();
+      const wd = TTX.tz.weekdayOf(key);
       const holiday = evs.some((o) => o.holiday);
       const row = el('div', 'ttx-ag-day' + (key === today ? ' today' : '')
         + (holiday ? ' hol' : wd === 0 ? ' sun' : wd === 6 ? ' sat' : ''));
@@ -242,7 +242,7 @@
     ovl.dataset.alias = data.alias || '';   // which calendar this paint is for (see ensureShown)
   }
 
-  const fmtDate = (key) => `${+key.slice(5, 7)}/${+key.slice(8)}(${WD[new Date(key + 'T00:00:00Z').getUTCDay()]})`;
+  const fmtDate = (key) => `${+key.slice(5, 7)}/${+key.slice(8)}(${WD[TTX.tz.weekdayOf(key)]})`;
 
   /** A member's avatar: their badge image, or their initial on a coloured disc.
    *  `badge` is TimeTree's own avatar URL (on its asset host, which the page CSP
