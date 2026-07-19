@@ -98,6 +98,7 @@
   let cache = null;       // { alias, calId, name, raw, labels, mem } — last fetch, tagged with its calendar
   let rendering = false;  // true while the newest render is in flight (the observer's re-render defers to it)
   let renderSeq = 0;      // generation counter — only the newest render writes cache / paints
+  let closeDetail = null; // closes the open event-detail card (and removes its keydown listener); null when none
 
   // ---- overlay ----
   // The calendar box the agenda covers. `calendarOutline-mainUi` is present in BOTH
@@ -235,7 +236,7 @@
    *  show (where / who / memo / url). Editing still happens in TimeTree itself, so
    *  the card names that rather than pretend to be an editor. */
   function openDetail(o, lb, calName, membersById) {
-    document.querySelector('.ttx-ag-dscrim')?.remove();
+    if (closeDetail) closeDetail();   // close+unbind any card already open (never stack listeners)
     const scrim = el('div', 'ttx-ag-dscrim');
     const card = el('div', 'ttx-ag-detail');
 
@@ -284,10 +285,11 @@
 
     scrim.appendChild(card);
     document.body.appendChild(scrim);
-    const close = () => { scrim.remove(); document.removeEventListener('keydown', onKey); };
+    const close = () => { scrim.remove(); document.removeEventListener('keydown', onKey); closeDetail = null; };
     const onKey = (e) => { if (e.key === 'Escape') close(); };
     scrim.onclick = (e) => { if (e.target === scrim) close(); };
     document.addEventListener('keydown', onKey);
+    closeDetail = close;
   }
 
   /** Show the cached list instantly, then refresh in the background — so a
@@ -390,6 +392,7 @@
 
   function hide(clickedNative) {
     if (!visible) return;
+    if (closeDetail) closeDetail();   // don't leave a detail card floating once the agenda is gone
     visible = false;
     const ovl = document.querySelector('.' + OVL);
     if (ovl) ovl.hidden = true;
