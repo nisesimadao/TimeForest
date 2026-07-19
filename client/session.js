@@ -1,11 +1,13 @@
 /* Accounts, partitions, and authenticated fetch — everything needed to talk to
  * TimeTree as a signed-in user, and nothing that needs a window.
  *
- * This exists so the CLI doesn't have to grow a second copy of it. The desktop
+ * This is the Electron main process's authenticated-fetch layer. The desktop
  * app's sessions live in Electron partitions (Chromium cookie jars under
- * userData), which a plain Node process can't read: they're SQLite encrypted
- * with DPAPI. So the CLI is an Electron process too, and reuses this. Nobody
- * logs in twice, and there is one place that knows how to be authenticated.
+ * userData) — SQLite encrypted with DPAPI, which a plain Node process can't read
+ * — so the fetch that needs them runs HERE, in main. The CLI and MCP server are
+ * plain Node and never require this file: they reach the already-running tray
+ * app over a local socket (rpc.js), which is the one process holding the session.
+ * One place knows how to be authenticated, and nobody logs in twice.
  *
  * Signing IN stays in main.js — it needs a real browser window.
  *

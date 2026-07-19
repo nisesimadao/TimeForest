@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "TimeForest",
   "version": "0.1.0",
-  "description": "TimeTree 自身の UI に アジェンダ表示 / エクスポート(MD・CSV・JSON・ICS) / ダークモード / 地図ピン / アカウント切り替え を足す非公式拡張。",
+  "description": "TimeTree 自身の UI に アジェンダ表示 / エクスポート(MD・CSV・JSON・ICS) / ダークモード / 地図ピン / アカウント切り替え / リマインド通知 を足す非公式拡張。",
   "permissions": ["storage", "tabs", "declarativeNetRequest", "cookies", "alarms", "notifications"],
   "host_permissions": [
     "https://timetreeapp.com/*",
