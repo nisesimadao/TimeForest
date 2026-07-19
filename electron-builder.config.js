@@ -31,6 +31,11 @@ module.exports = {
   copyright: 'nisesimadao',
   electronVersion,
 
+  // Just BUILD — never publish. A git tag otherwise triggers electron-builder's
+  // implicit GitHub publish, which fails without GH_TOKEN (and would double up
+  // with the release workflow's own upload step, which is what attaches these).
+  publish: null,
+
   directories: {
     output: 'client/dist',
     buildResources: 'client/build',

@@ -6,6 +6,7 @@
     "tf": "client/cli.js"
   },
   "description": "TimeTree 非公式クライアント — デスクトップアプリ / Chrome 拡張 / ユーザースクリプト",
+  "author": "nisesimadao",
   "scripts": {
     "check": "node scripts/check.js",
     "build": "node build-userscript.js",
