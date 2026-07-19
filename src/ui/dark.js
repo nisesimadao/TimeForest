@@ -77,6 +77,17 @@
 
     // In `system` mode the effective theme can change without us doing anything.
     media().addEventListener('change', () => { if (mode === 'system') { assert(); announce(); } });
+
+    // Sync across tabs: another timetreeapp.com tab changing the theme writes
+    // chrome.storage, which fires here. Apply it via set(..., false) so the theme
+    // AND the toolbar icon follow, without re-persisting (which would loop).
+    try {
+      chrome.storage?.onChanged.addListener((ch, area) => {
+        if (area === 'local' && ch[KEY] && ch[KEY].newValue && ch[KEY].newValue !== mode) {
+          set(ch[KEY].newValue, false);
+        }
+      });
+    } catch { /* no chrome.storage (userscript build) — a single tab, nothing to sync */ }
   }
 
   TTX.dark = { init, set, cycle, isDark, get mode() { return mode; }, LABEL, ICON, MODES };

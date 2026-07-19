@@ -128,6 +128,9 @@
 .ttx-mf-btn { padding: 7px 15px; font: inherit; font-size: 14px; cursor: pointer;
   border: 1px solid rgba(60,60,67,0.29); border-radius: 8px; background: #fff; color: inherit; }
 .ttx-mf-btn.pri { background: var(--ttx-accent); color: #fff; border-color: transparent; font-weight: 600; }
+.ttx-mf-confirm { width: min(400px, 92vw); background: #fff; color: #1c1c1e; border-radius: 14px; box-shadow: 0 12px 48px rgba(0,0,0,0.35); overflow: hidden; }
+.ttx-mf-cmsg { padding: 20px 18px 4px; font-size: 14px; line-height: 1.6; }
+:root.ttx-dark .ttx-mf-confirm { background: #1c1c1e; color: #f2f2f7; }
 :root.ttx-dark .ttx-mf-card { background: #1c1c1e; color: #f2f2f7; }
 :root.ttx-dark .ttx-mf-q, :root.ttx-dark .ttx-mf-r:hover { background: #2c2c2e; }
 :root.ttx-dark .ttx-mf-btn { background: #2c2c2e; border-color: rgba(84,84,88,0.6); }
@@ -150,10 +153,34 @@
    * before talking to OSM — telling OSM roughly where the family's events are is
    * worth a confirm when it isn't already allowed.
    */
+  /** A themed yes/no dialog. window.confirm can't be dark-themed and reads as a
+   *  browser popup in an otherwise themed UI; this matches the picker. true/false. */
+  function confirmDialog(message) {
+    return new Promise((resolve) => {
+      ensureCss();
+      const scrim = elem('div', 'ttx-mf-scrim');
+      const card = elem('div', 'ttx-mf-confirm');
+      card.appendChild(elem('div', 'ttx-mf-cmsg', message));
+      const foot = elem('div', 'ttx-mf-foot');
+      const no = elem('button', 'ttx-mf-btn', TTX.i18n.t('キャンセル', 'Cancel'));
+      const yes = elem('button', 'ttx-mf-btn pri', TTX.i18n.t('有効にする', 'Enable'));
+      foot.append(elem('div', 'ttx-mf-sp'), no, yes);
+      card.appendChild(foot);
+      scrim.appendChild(card);
+      document.body.appendChild(scrim);
+      const done = (v) => { scrim.remove(); document.removeEventListener('keydown', onKey); resolve(v); };
+      const onKey = (e) => { if (e.key === 'Escape') done(false); };
+      no.onclick = () => done(false);
+      yes.onclick = () => done(true);
+      scrim.onclick = (e) => { if (e.target === scrim) done(false); };
+      document.addEventListener('keydown', onKey);
+      yes.focus();
+    });
+  }
+
   async function ensureMaps() {
     if (await mapsOn()) return true;
-    // eslint-disable-next-line no-alert
-    const yes = window.confirm(TTX.i18n.t(
+    const yes = await confirmDialog(TTX.i18n.t(
       '地図を使うと、表示する範囲を OpenStreetMap に問い合わせます（予定の内容は送りません）。有効にしますか？',
       'Using maps queries OpenStreetMap for the area you view (never your event content). Enable?',
     ));
