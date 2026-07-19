@@ -19,17 +19,37 @@
      a badge cannot drift or be hand-edited without CI going red. A test-count
      badge is deliberately absent — it would lie the moment a test was added. -->
 
-TimeTree 非公式クライアント。4つの形で同じものを届ける。
+TimeTree 非公式クライアント。**本家（＝公式 TimeTree の Web / アプリ）に無いもの**を、
+同じアカウントの同じ予定へ足す道具です — ダークモード、今日から先を縦に読むアジェンダ、
+月セルに入り切らない予定の救済、場所の地図ピン、エクスポート（Markdown / CSV / JSON /
+ICS）、複数アカウント切替、リマインド通知。
+
+**自分の TimeTree アカウント（無料）が要ります。** 本家にログインして使う道具で、
+モックやデモアカウントはありません。
+
+> **免責・商標** — 本ソフトは TimeTree の**非公式**クライアントであり、TimeTree Inc.
+> とは提携・出資・承認のいずれの関係もありません。「TimeTree」は権利者の商標で、
+> 互換性を示す識別目的でのみ用いています。公式 API ではなく、自分のアカウントの
+> 自分のデータを個人的に扱う用途を想定しています。
+
+### まず試すなら
+
+いちばん手軽なのは **Chrome 拡張**（ビルド不要・このリポジトリを `chrome://extensions`
+で「パッケージ化されていない拡張機能」として読み込むだけ）→ 下記
+[インストール](#インストールpc--chrome-拡張)。ビルド済みの実行ファイル（各 OS の
+インストーラ・拡張 zip・ユーザースクリプト）は
+[Releases](https://github.com/nisesimadao/TimeForest/releases/latest) からどうぞ。
+
+### 4つの形（`src/lib/*` を共有、コピーは無い）
 
 | | 何 | どこで |
 | --- | --- | --- |
-| **[client/](client/)** | Electron デスクトップクライアント | Windows / macOS / Linux |
 | **本リポジトリ直下** | Chrome 拡張 (MV3) | PC のブラウザ |
-| **`dist/*.user.js`** | ユーザースクリプト | **スマホ**（iOS Safari / Firefox Android） |
-| **[web/](web/)** | ブラウザ版（ホスト型 3P クライアント） | どのブラウザでも（Vercel などにデプロイ） |
+| **[client/](client/)** | Electron デスクトップクライアント | Windows / macOS / Linux |
+| **`dist/*.user.js`** | ユーザースクリプト（本家強化／スマホ用デスクトップ UI の2種） | **スマホ**（iOS Safari / Firefox Android）含む |
+| **[web/](web/)** | ブラウザ版（サーバーにデプロイするホスト型） | どのブラウザでも |
 
-ロジック（`src/lib/*`）は4つで共有していて、コピーは無い。CI がコピーの発生を
-検出して落とす（ブラウザ版はデスクトップの描画コードもそのまま動かす）。
+（CI がコピーの発生を検出して落とす。ブラウザ版はデスクトップの描画コードもそのまま動かす。）
 
 ## 画面
 
@@ -82,7 +102,8 @@ TimeTree 非公式クライアント。4つの形で同じものを届ける。
 
 ```sh
 npm run check     # 構造チェック + 挙動テスト（依存ゼロ）
-npm run build     # → dist/timeforest.user.js
+npm run build     # → dist/timeforest.user.js（依存ゼロ）
+cd client && npm install && cd ..   # ↓のデスクトップ系は先に client の依存を入れる
 npm run client    # デスクトップクライアントを起動
 npm run dist      # → client/dist/TimeForest-0.1.0-x64.exe（インストーラ）と .zip
 ```
@@ -158,6 +179,9 @@ OpenStreetMap のタイル利用ポリシーが要求する User-Agent を名乗
 
 ## 端末から使う（CLI）
 
+`tf` は動作中のデスクトップアプリに問い合わせる（起動していなければ自動で立ち上げる）ので、
+初回だけアプリの依存を入れておく: `cd client && npm install`。
+
 ```sh
 npm link          # tf をパスに置く（戻すなら npm unlink -g timeforest）
 ```
@@ -200,6 +224,9 @@ CLI は素の Node。Electron ではない。理由は3つとも測って決め�
 同じユーザーしか触れないので、認証は OS が既に済ませている。
 
 ## アシスタントから使う（MCP）
+
+CLI と同じく動作中のデスクトップアプリに問い合わせる（無ければ自動起動）。先に
+`cd client && npm install` でアプリの依存を入れておく。
 
 ```sh
 claude mcp add timeforest -- node /path/to/TimeForest/client/mcp.js
@@ -298,6 +325,14 @@ https://<あなたのデプロイ>/timeforest-app.user.js
 ```
 node build-app-userscript.js     # → dist/timeforest-app.user.js
 ```
+
+> **プリビルドの `timeforest-app.user.js`（Releases）は、既定で作者のデモ配信
+> `time-forest-five.vercel.app` を自動更新元（`@updateURL`）にしています。** これは
+> 作者が動かす公開デモで、インストールすると更新はそこから降り、あなたのセッションの
+> トークンはリクエスト毎にそこを**中継**します（サーバーには保存しません。仕組みは
+> [web/README.md](web/README.md) / [PRIVACY.md](PRIVACY.md)）。常用するなら
+> `TF_WEB_ORIGIN` を自分のデプロイに指して `node build-app-userscript.js` でビルドし、
+> 更新元もトークンの通り道も自分の管理下に置くことを勧めます。
 
 `/signin` などログイン前のページには触れない（本家のログインをそのまま使う）。
 地図だけは本家ページの CSP に阻まれるので、この版では出ない。
@@ -540,8 +575,23 @@ npm run dist:dir  # インストーラ無しで client/dist/win-unpacked/ に展
 含まれているかを検査する。** ここが漏れると「ソースからは動くのにパッケージ版
 だけ白画面」という、出荷してから気づく壊れ方をする。
 
-署名はしていないので Windows は警告を出す。zip 版も出しているのはそのため
-（どのみち警告が出るなら、解凍して実行できる方が筋が良い場面がある）。
+署名はしていないので、初回起動時に OS が警告を出す（Windows の SmartScreen、
+macOS の「開発元を確認できません」）。zip 版も出しているのはそのため（どのみち
+警告が出るなら、解凍して実行できる方が筋が良い場面がある）。
+
+**回避は安全側で。** macOS は Finder で対象を**右クリック →「開く」**（システム全体の
+Gatekeeper を切る `spctl` 系はやらないこと）。Windows は SmartScreen の「詳細情報」
+→「実行」。実行前に、各リリースに添付の `SHA256SUMS.txt` で正しいファイルか確かめられる:
+
+```sh
+# macOS / Linux — 添付の SHA256SUMS.txt と照合
+shasum -a 256 -c SHA256SUMS.txt
+# Windows (PowerShell) — ハッシュを表示して SHA256SUMS.txt と目視照合
+(Get-FileHash .\TimeForest-0.1.0-x64.exe -Algorithm SHA256).Hash
+```
+
+`SHA256SUMS.txt` はビルドと同じ CI で生成する。ダウンロードの破損・改ざんは検知
+できるが、リポジトリ/リリース自体が侵害されれば両方書き換わる点は原理的な限界。
 
 ### リリース（GitHub Actions）
 
@@ -554,6 +604,7 @@ npm run dist:dir  # インストーラ無しで client/dist/win-unpacked/ に展
   されていない拡張機能を読み込む」で使える）
 - **デスクトップアプリ** — Windows（.exe / .zip）・macOS（.dmg）・Linux（AppImage）を
   各 OS の runner でビルド
+- **チェックサム** — `SHA256SUMS.txt`（上記すべての成果物の SHA256）
 
 軽量な成果物（ユーザースクリプト・拡張 zip）は数秒で終わる。Electron は各 OS 分だけ
 重いので、リリースを切るときだけ走る（`workflow_dispatch` で成果物だけの試走も可）。
@@ -603,3 +654,5 @@ npm run dist:dir  # インストーラ無しで client/dist/win-unpacked/ に展
   [CONTRIBUTING.md](CONTRIBUTING.md) を参照。
 - 脆弱性の報告は公開 issue ではなく [SECURITY.md](SECURITY.md) の手順（GitHub の
   非公開報告）で。セッション/クッキーの扱いに関わるものは最優先で見る。
+- 拡張が扱うデータの取り扱い（作者はサーバーを持たず、データは端末内のみ）は
+  [PRIVACY.md](PRIVACY.md)。
