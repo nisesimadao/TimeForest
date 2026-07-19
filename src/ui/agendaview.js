@@ -162,7 +162,10 @@
    *  network, so it's instant on a cached re-open. */
   function buildDOM(ovl, data) {
     const { from, to, lo, hi } = range();
-    const membersById = new Map((data.members || []).map((m) => [m.id, m]));
+    // Key by user_id, NOT the membership-row id: author_id / attendees reference
+    // user_id (matches client/renderer/store.js and exportform.js). Keying by id
+    // silently misses every lookup — author/attendee names blank on shared calendars.
+    const membersById = new Map((data.members || []).map((m) => [m.user_id ?? m.id, m]));
     const multiMember = membersById.size > 1;   // naming the creator only helps on a shared calendar
     const occs = TTX.model
       .occurrences(data.raw, lo, hi, { id: data.calId, name: data.name, calendar_labels: data.labels }, { membersById })
