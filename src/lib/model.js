@@ -71,9 +71,11 @@
       authorName: (ctx?.membersById?.get(raw.author_id)?.name) || '',
       location: raw.location || '',
       // TimeTree's phone app pins places; the API returns the coordinates as
-      // STRINGS ("35.681236"), and its own web app ignores them entirely.
-      lat: raw.location_lat != null ? Number(raw.location_lat) : null,
-      lon: raw.location_lon != null ? Number(raw.location_lon) : null,
+      // STRINGS ("35.681236"), and its own web app ignores them entirely. Guard
+      // "" / non-numeric: Number("") is 0, which would pin an un-located event to
+      // null-island (0,0) and show a bogus "map" link. Only a finite number counts.
+      lat: raw.location_lat != null && raw.location_lat !== '' && Number.isFinite(Number(raw.location_lat)) ? Number(raw.location_lat) : null,
+      lon: raw.location_lon != null && raw.location_lon !== '' && Number.isFinite(Number(raw.location_lon)) ? Number(raw.location_lon) : null,
       note: raw.note || '',
       // `url` is written inside `attachment` but read back at BOTH levels —
       // the server mirrors it up. Read the top one; prefer the attachment if

@@ -30,6 +30,7 @@
     const bar = settings.parentElement;
     if (!bar || bar.querySelector(`[${MARK}]`)) return;
     const btn = settings.cloneNode(true);        // inherit TimeTree's icon-button styling
+    btn.removeAttribute('data-test-id');         // don't duplicate 設定's test-id (breaks 本家 selectors + E2E)
     btn.setAttribute(MARK, '1');
     btn.onclick = (e) => { e.preventDefault(); TTX.dark.cycle(); paint(btn); };
     paint(btn);

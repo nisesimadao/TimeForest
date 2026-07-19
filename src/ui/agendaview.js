@@ -69,7 +69,6 @@
 .ttx-ag-d-hint { margin-top: 12px; font-size: 11px; color: #a0a0a0; }
 .ttx-ag-d-edit { margin-top: 15px; width: 100%; padding: 10px 12px; border: none; border-radius: 10px; background: #06a374; color: #fff; font-size: 14px; font-weight: 600; cursor: pointer; font-family: inherit; }
 .ttx-ag-d-edit:hover { background: #058863; }
-.ttx-ag-toast { position: fixed; left: 50%; bottom: 44px; transform: translateX(-50%); z-index: 2147483020; background: rgba(28,28,30,0.95); color: #fff; padding: 10px 18px; border-radius: 10px; font-size: 13px; box-shadow: 0 10px 34px rgba(0,0,0,0.34); font-family: -apple-system, "Hiragino Sans", sans-serif; }
 :root.ttx-dark .${OVL} { background: #0f0f0f; }
 :root.ttx-dark .ttx-ag-day { border-color: #363636; }
 :root.ttx-dark .ttx-ag-day.today { background: #2a2616; }
@@ -543,11 +542,7 @@
     for (;;) { const v = fn(); if (v) return v; if (Date.now() - t0 > timeout) return null; await sleep(90); }
   }
 
-  function toast(msg) {
-    const t = el('div', 'ttx-ag-toast', msg);
-    document.body.appendChild(t);
-    setTimeout(() => t.remove(), 3200);
-  }
+  const toast = (msg) => TTX.ui.toast(msg);   // shared toast (ui-util.js)
 
   const EN_MONTH = { january: 1, february: 2, march: 3, april: 4, may: 5, june: 6, july: 7, august: 8, september: 9, october: 10, november: 11, december: 12 };
   /** The month currently on screen, read from the calendar-pagination label

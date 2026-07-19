@@ -12,6 +12,20 @@
   const ORIGIN = location.origin;
   const csrf = () => (document.querySelector('meta[name="csrf-token"]') || {}).content || '';
 
+  // Same-origin, so the token is the page's own <meta>. It can still rotate
+  // server-side mid-session; on a 400/401/403 we re-scrape /calendars for a fresh
+  // one — the self-heal the extension / desktop / proxy transports all do, which
+  // this form was previously the only one to lack.
+  let token = null;
+  async function freshCsrf() {
+    try {
+      const r = await fetch(ORIGIN + '/calendars', { credentials: 'include' });
+      const m = (await r.text()).match(/<meta[^>]+name=["']csrf-token["'][^>]+content=["']([^"']+)["']/i);
+      if (m) token = m[1];
+    } catch { /* keep whatever we had */ }
+    return token || csrf();
+  }
+
   const mq = window.matchMedia('(prefers-color-scheme: dark)');
   const isDark = (mode) => mode === 'dark' || (mode === 'system' && mq.matches);
   const themeCbs = [];
@@ -39,12 +53,14 @@
     api: {
       // Direct same-origin fetch — the login this page already has rides along.
       request: async (path, opts) => {
-        const res = await fetch(ORIGIN + path, {
+        const send = (tok) => fetch(ORIGIN + path, {
           method: (opts && opts.method) || 'GET',
           credentials: 'include',
-          headers: { 'content-type': 'application/json', 'x-csrf-token': csrf(), 'x-timetreea': 'web/2.1.0/ja' },
+          headers: { 'content-type': 'application/json', 'x-csrf-token': tok, 'x-timetreea': 'web/2.1.0/ja' },
           body: opts && opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
         });
+        let res = await send(token || csrf());
+        if (res.status === 400 || res.status === 401 || res.status === 403) res = await send(await freshCsrf());
         const text = await res.text();
         if (!res.ok) throw new Error(`API ${res.status} ${path} ${text.slice(0, 160)}`);
         return text ? JSON.parse(text) : null;

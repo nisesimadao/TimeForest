@@ -120,12 +120,21 @@
     err.textContent = msg;   // cleared next time the menu opens (populate wipes it)
   }
 
+  // A generation counter: rapid open→close→open (or forget→populate landing on
+  // an in-flight open) starts two populate()s on the same menu, and each does a
+  // clear-then-append around a sendMessage await. Without this the slower one
+  // paints over the newer, or the two interleave into a doubled/stale list.
+  let populateSeq = 0;
   async function populate(menu) {
+    const seq = ++populateSeq;
     menu.textContent = '';
     menu.appendChild(elem('div', 'ttx-acct-note', 'アカウント'));
-    let list = [];
-    try { list = (await sessionOp({ op: 'list' })) || []; }
-    catch (e) { menu.appendChild(elem('div', 'ttx-acct-empty', '読み込めませんでした')); return; }
+    let list = [], failed = false;
+    try { list = (await sessionOp({ op: 'list' })) || []; } catch (e) { failed = true; }
+    if (seq !== populateSeq) return;   // a newer populate now owns the menu
+    menu.textContent = '';
+    menu.appendChild(elem('div', 'ttx-acct-note', 'アカウント'));
+    if (failed) { menu.appendChild(elem('div', 'ttx-acct-empty', '読み込めませんでした')); return; }
     if (!list.length) menu.appendChild(elem('div', 'ttx-acct-empty', 'ログイン情報を取得中…'));
     else for (const a of list) menu.appendChild(accountRow(a, menu));
     menu.appendChild(elem('div', 'ttx-acct-hint',

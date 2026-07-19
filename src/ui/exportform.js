@@ -111,6 +111,19 @@
     else if (kind === 'ics') download(`${stem}.ics`, TTX.exporters.toICS(occs, { title }), 'text/calendar');
   }
 
+  // Dismiss (outside-click / Escape) is bound ONCE, not per injection. ensureButton
+  // re-runs whenever React drops+re-adds the toolbar; a listener added there would
+  // stack one detached-closure handler per re-render for the tab's life. There's
+  // only ever one .ttx-exp-menu, so a singleton can find it by query.
+  let dismissBound = false;
+  function bindDismiss() {
+    if (dismissBound) return;
+    dismissBound = true;
+    const close = () => { const m = document.querySelector('.ttx-exp-menu'); if (m) m.hidden = true; };
+    document.addEventListener('click', (e) => { if (!e.target.closest?.('.ttx-exp-wrap')) close(); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
+  }
+
   function ensureButton() {
     const search = document.querySelector('[data-test-id="search-field"]');
     if (!search) return;
@@ -132,12 +145,12 @@
       item.append(elem('span', null, label), elem('span', 'k', kind.toUpperCase()));
       item.onclick = async () => {
         menu.hidden = true;
-        try { await runExport(kind); } catch (e) { console.warn('[TTX] export failed', e); }
+        try { await runExport(kind); } catch (e) { console.warn('[TTX] export failed', e); TTX.ui.toast('エクスポートに失敗しました'); }
       };
       menu.appendChild(item);
     }
     btn.onclick = (e) => { e.stopPropagation(); menu.hidden = !menu.hidden; };
-    document.addEventListener('click', (e) => { if (!wrap.contains(e.target)) menu.hidden = true; });
+    bindDismiss();
     wrap.append(btn, menu);
     bar.appendChild(wrap);
   }

@@ -285,8 +285,27 @@ async function switchTo(id) {
   const prev = await readSessionCookie();
   await writeSessionCookie(target.sessionId);
   self.TTX.api.csrfToken(true).catch(() => {});     // worker's cached CSRF belonged to the old account
-  const me = await self.TTX.api.me().catch(() => null);
-  if (me?.id == null) {
+  // Verify the target session, distinguishing "signed out" from "offline". me()
+  // swallows both into null, so hit the endpoint directly: a dead token is an
+  // HTTP 401/403 RESPONSE, a network blip is a throw with no status. Telling a
+  // user to re-login (session-expired) when their wifi hiccuped is wrong — restore
+  // and report the network error so they just retry.
+  let live = null, transient = false;
+  try {
+    const j = await self.TTX.api.request('GET', '/api/v1/user');
+    live = j && j.user;
+  } catch (e) {
+    if (/\bAPI (401|403)\b/.test(String(e && e.message))) live = null;
+    else transient = true;
+  }
+  if (transient) {
+    if (prev?.value) await writeSessionCookie(prev.value);
+    self.TTX.api.csrfToken(true).catch(() => {});
+    const err = new Error('ネットワークエラーで切り替えを確認できませんでした。少し待って再試行してください。');
+    err.code = 'switch-network';
+    throw err;
+  }
+  if (live?.id == null) {
     if (prev?.value) await writeSessionCookie(prev.value);   // restore — don't strand the user
     self.TTX.api.csrfToken(true).catch(() => {});
     const err = new Error('このアカウントのセッションが切れています。TimeTree でログインし直すと、また切り替えられます。');
@@ -303,8 +322,16 @@ async function switchTo(id) {
  *  worker-side, so a stray message can't delete the session in use. */
 async function forgetAccount(id) {
   const cur = await readSessionCookie();
+  // Also refuse by IDENTITY, not just a cookie-value match: a server-side token
+  // rotation makes the stored sessionId ≠ the live cookie, which would otherwise
+  // let you delete the very account you're signed into. accts are keyed by the
+  // TimeTree user id, so me().id names the live account even after a rotation.
+  let liveId = null;
+  try { const me = await self.TTX.api.me(); liveId = me && me.id != null ? String(me.id) : null; } catch { /* offline: fall back to the cookie guard */ }
   return mutateAccounts((accts) => {
-    if (accts[id] && accts[id].sessionId === cur?.value) return false;
+    if (!accts[id]) return false;
+    if (accts[id].sessionId === cur?.value) return false;
+    if (liveId != null && String(accts[id].id) === liveId) return false;
     delete accts[id];
     return true;
   });

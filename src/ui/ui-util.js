@@ -30,6 +30,8 @@
     monitor: '<rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/>',
     user: '<path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>',
     map: '<path d="M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0"/><circle cx="12" cy="10" r="3"/>',
+    check: '<path d="M20 6 9 17l-5-5"/>',
+    x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
   };
 
   /** A 24-grid line icon at `size`px, stroke scaled to stay ~1.6px like Lucide. */
@@ -65,5 +67,27 @@
     return obs;
   }
 
-  TTX.ui = { glyph, observeBody };
+  /** A brief bottom-centre toast. Self-contained (injects its own style once) so
+   *  any injector can report a failure the same way — the shared alternative to
+   *  each feature swallowing errors to console or inventing its own banner. */
+  let toastStyled = false;
+  function toast(msg) {
+    if (!toastStyled) {
+      toastStyled = true;
+      const s = document.createElement('style');
+      s.id = 'ttx-toast-css';
+      s.textContent = '.ttx-toast{position:fixed;left:50%;bottom:44px;transform:translateX(-50%);'
+        + 'z-index:2147483020;background:rgba(28,28,30,0.95);color:#fff;padding:10px 18px;'
+        + 'border-radius:10px;font-size:13px;box-shadow:0 10px 34px rgba(0,0,0,0.34);'
+        + 'font-family:-apple-system,"Hiragino Sans","Noto Sans JP","Segoe UI",sans-serif;}';
+      document.head.appendChild(s);
+    }
+    const t = document.createElement('div');
+    t.className = 'ttx-toast';
+    t.textContent = msg;
+    document.body.appendChild(t);
+    setTimeout(() => t.remove(), 3200);
+  }
+
+  TTX.ui = { glyph, observeBody, toast };
 })();
