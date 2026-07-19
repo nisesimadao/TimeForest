@@ -114,3 +114,30 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: out/*
+
+  # --- checksums: one SHA256SUMS.txt over every attached asset ------------------
+  # Runs after both build jobs so it can hash the userscripts, the extension zip
+  # AND the desktop installers together. SECURITY.md points here for verifying an
+  # unsigned download hasn't been tampered with.
+  checksums:
+    name: checksums
+    needs: [bundles, desktop]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download every release artifact
+        uses: actions/download-artifact@v4
+        with:
+          path: dl
+
+      - name: Compute SHA256SUMS.txt
+        run: |
+          find dl -type f -exec sha256sum {} + \
+            | awk '{ name = $2; sub(/.*\//, "", name); print $1 "  " name }' \
+            | sort -k2 > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Attach to the Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: SHA256SUMS.txt
