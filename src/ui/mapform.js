@@ -51,7 +51,7 @@
     btn.type = 'button';                 // never submit the form
     btn.setAttribute(MARK, '1');
     btn.className = 'ttx-mapform-btn';
-    btn.append(TTX.ui.glyph('map', 15), document.createTextNode('地図で選ぶ'));   // glyph, not the 🗺 emoji
+    btn.append(TTX.ui.glyph('map', 15), document.createTextNode(TTX.i18n.t('地図で選ぶ', 'Pick on map')));   // glyph, not the 🗺 emoji
     btn.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
@@ -153,10 +153,10 @@
   async function ensureMaps() {
     if (await mapsOn()) return true;
     // eslint-disable-next-line no-alert
-    const yes = window.confirm(
-      '地図を使うと、表示する範囲を OpenStreetMap に問い合わせます'
-      + '（予定の内容は送りません）。有効にしますか？',
-    );
+    const yes = window.confirm(TTX.i18n.t(
+      '地図を使うと、表示する範囲を OpenStreetMap に問い合わせます（予定の内容は送りません）。有効にしますか？',
+      'Using maps queries OpenStreetMap for the area you view (never your event content). Enable?',
+    ));
     if (yes) await setMapsOn(true);
     return yes;
   }
@@ -173,11 +173,11 @@
 
     const scrim = elem('div', 'ttx-mf-scrim');
     const card = elem('div', 'ttx-mf-card');
-    card.appendChild(elem('div', 'ttx-mf-head', '場所を選ぶ'));
+    card.appendChild(elem('div', 'ttx-mf-head', TTX.i18n.t('場所を選ぶ', 'Pick a place')));
 
     const bar = elem('div', 'ttx-mf-bar');
     const q = elem('input', 'ttx-mf-q');
-    q.placeholder = '駅名・住所・店名で検索';
+    q.placeholder = TTX.i18n.t('駅名・住所・店名で検索', 'Search by station, address, or place');
     q.value = loc.value || '';
     bar.appendChild(q);
     card.appendChild(bar);
@@ -193,8 +193,8 @@
 
     const foot = elem('div', 'ttx-mf-foot');
     const coord = elem('div', 'ttx-mf-coord');
-    const cancel = elem('button', 'ttx-mf-btn', 'キャンセル');
-    const use = elem('button', 'ttx-mf-btn pri', 'この場所にする');
+    const cancel = elem('button', 'ttx-mf-btn', TTX.i18n.t('キャンセル', 'Cancel'));
+    const use = elem('button', 'ttx-mf-btn pri', TTX.i18n.t('この場所にする', 'Use this place'));
     foot.append(coord, elem('div', 'ttx-mf-sp'), cancel, use);
     card.appendChild(foot);
 

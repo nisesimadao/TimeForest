@@ -18,6 +18,7 @@
   const TTX = (window.TTX = window.TTX || {});
   const BTN = 'data-ttx-agenda-btn';
   const OVL = 'ttx-agenda-overlay';
+  const t = (ja, en) => TTX.i18n.t(ja, en);   // follow 本家's language
 
   const el = (tag, cls, text) => {
     const n = document.createElement(tag);
@@ -152,7 +153,7 @@
   async function fetchData() {
     const alias = currentAlias();
     const cal = await currentCalendar();
-    if (!cal) throw new Error('カレンダーが見つかりません');
+    if (!cal) throw new Error(t('カレンダーが見つかりません', 'Calendar not found'));
     const { lo, hi } = range();
     const [raw, labels, mem, members] = await Promise.all([
       TTX.api.allEvents(cal.id),
@@ -197,12 +198,12 @@
       for (const o of evs) {
         const ev = el('div', 'ttx-ag-ev');
         let time;
-        if (o.allDay || o.holiday) time = '終日';
+        if (o.allDay || o.holiday) time = t('終日', 'All day');
         else if (o.multiDay) {
           // a multi-day timed event: it only starts once and ends once
           if (key === o.startKey) time = o.startTime + '〜';
           else if (key === o.endKey) time = '〜' + o.endTime;
-          else time = '終日';
+          else time = t('終日', 'All day');
         } else time = o.startTime;
         ev.appendChild(el('div', 'ttx-ag-time', time));
         const bar = el('div', 'ttx-ag-bar');
@@ -211,14 +212,14 @@
         else if (o.holiday) bar.style.background = '#e0335b';
         ev.appendChild(bar);
         const main = el('div', 'ttx-ag-main');
-        main.appendChild(el('div', 'ttx-ag-title', o.title || '(無題)'));
+        main.appendChild(el('div', 'ttx-ag-title', o.title || t('(無題)', '(untitled)')));
         // The stuff the bare title never showed — what the month grid / a tap on the
         // event would tell you: where, who's going, who added it, whether it has a memo.
         if (!o.holiday) {
           const bits = [];
           if (o.location) bits.push(o.location);
-          if (o.attendees && o.attendees.length) bits.push(o.attendees.length + '人');
-          if (o.note) bits.push('メモ');
+          if (o.attendees && o.attendees.length) bits.push(o.attendees.length + t('人', ' people'));
+          if (o.note) bits.push(t('メモ', 'note'));
           if (multiMember && o.authorName) bits.push(o.authorName);
           if (bits.length) main.appendChild(el('div', 'ttx-ag-meta', bits.join('　·　')));
         }
@@ -236,7 +237,7 @@
       frag.appendChild(row);
     }
     ovl.textContent = '';
-    if (!shown) ovl.appendChild(el('div', 'ttx-ag-empty', 'この先60日に予定はありません'));
+    if (!shown) ovl.appendChild(el('div', 'ttx-ag-empty', t('この先60日に予定はありません', 'No events in the next 60 days')));
     else ovl.appendChild(frag);
     ovl.dataset.rendered = '1';
     ovl.dataset.alias = data.alias || '';   // which calendar this paint is for (see ensureShown)
@@ -277,7 +278,7 @@
     const head = el('div', 'ttx-ag-d-head');
     const dot = el('span', 'ttx-ag-d-dot');
     dot.style.background = lb ? TTX.api.colorHex(lb.color) : '#909090';
-    head.append(dot, el('span', 'ttx-ag-d-title', o.title || '(無題)'));
+    head.append(dot, el('span', 'ttx-ag-d-title', o.title || t('(無題)', '(untitled)')));
     card.appendChild(head);
 
     const row = (k, v) => {
@@ -289,31 +290,32 @@
       card.appendChild(r);
     };
 
+    const allDayTxt = t('終日', 'All day');
     const when = o.allDay
-      ? (o.startKey === o.endKey ? `${fmtDate(o.startKey)} 終日` : `${fmtDate(o.startKey)} 〜 ${fmtDate(o.endKey)} 終日`)
+      ? (o.startKey === o.endKey ? `${fmtDate(o.startKey)} ${allDayTxt}` : `${fmtDate(o.startKey)} 〜 ${fmtDate(o.endKey)} ${allDayTxt}`)
       : (o.startKey === o.endKey ? `${fmtDate(o.startKey)} ${o.startTime}〜${o.endTime}` : `${fmtDate(o.startKey)} ${o.startTime} 〜 ${fmtDate(o.endKey)} ${o.endTime}`);
-    row('日時', when);
-    row('カレンダー', calName);
-    if (lb && TTX.api.labelName) row('ラベル', TTX.api.labelName(lb));
+    row(t('日時', 'When'), when);
+    row(t('カレンダー', 'Calendar'), calName);
+    if (lb && TTX.api.labelName) row(t('ラベル', 'Label'), TTX.api.labelName(lb));
     if (o.location) {
       const v = el('div', 'ttx-ag-d-v', o.location);
       if (Number.isFinite(o.lat) && Number.isFinite(o.lon)) {
-        const a = el('a', 'ttx-ag-d-link', '　地図で開く');
+        const a = el('a', 'ttx-ag-d-link', t('　地図で開く', '  Open in map'));
         a.href = `https://www.openstreetmap.org/?mlat=${o.lat}&mlon=${o.lon}#map=17/${o.lat}/${o.lon}`;
         a.target = '_blank'; a.rel = 'noopener';
         v.appendChild(a);
       }
-      row('場所', v);
+      row(t('場所', 'Place'), v);
     }
     if (o.attendees && o.attendees.length) {
-      row('参加者', o.attendees.map((a) => membersById.get(a && a.id != null ? a.id : a)?.name || (a && a.name) || '？').join('、'));
+      row(t('参加者', 'Attendees'), o.attendees.map((a) => membersById.get(a && a.id != null ? a.id : a)?.name || (a && a.name) || '？').join(t('、', ', ')));
     }
     if (o.authorName) {
       const who = el('div', 'ttx-ag-d-author');
       who.append(avatar(membersById.get(o.authorId), 22), el('span', null, o.authorName));
-      row('作成者', who);
+      row(t('作成者', 'Creator'), who);
     }
-    if (o.note) row('メモ', el('div', 'ttx-ag-d-note', o.note));
+    if (o.note) row(t('メモ', 'Note'), el('div', 'ttx-ag-d-note', o.note));
     if (o.url) {
       const a = el('a', 'ttx-ag-d-link', o.url);
       a.href = o.url; a.target = '_blank'; a.rel = 'noopener';
@@ -321,7 +323,7 @@
     }
     // Editing stays 100% TimeTree: this drives the app's own UI rather than
     // reimplement its editor — opens the native event sidebar and its 編集 form.
-    const editBtn = el('button', 'ttx-ag-d-edit', '本家で編集');
+    const editBtn = el('button', 'ttx-ag-d-edit', t('本家で編集', 'Edit in TimeTree'));
     editBtn.onclick = () => { if (closeDetail) closeDetail(); openInHonke(o, true); };
     card.appendChild(editBtn);
 
@@ -346,12 +348,12 @@
       const alias = currentAlias();
       const hit = !!cache && cache.alias === alias;   // cache is for the calendar on screen
       if (hit) buildDOM(ovl, cache);
-      else { ovl.dataset.rendered = ''; ovl.textContent = ''; ovl.appendChild(el('div', 'ttx-ag-load', '読み込み中…')); }
+      else { ovl.dataset.rendered = ''; ovl.textContent = ''; ovl.appendChild(el('div', 'ttx-ag-load', t('読み込み中…', 'Loading…'))); }
       let fresh = null;
       try {
         fresh = await fetchData();
       } catch (e) {
-        if (!hit && seq === renderSeq) { ovl.textContent = ''; ovl.appendChild(el('div', 'ttx-ag-empty', '読み込めませんでした：' + (e.message || e))); ovl.dataset.rendered = '1'; }
+        if (!hit && seq === renderSeq) { ovl.textContent = ''; ovl.appendChild(el('div', 'ttx-ag-empty', t('読み込めませんでした：', 'Could not load: ') + (e.message || e))); ovl.dataset.rendered = '1'; }
         return;
       }
       if (seq !== renderSeq) return;                   // a newer render superseded this one
@@ -680,14 +682,14 @@
     // calendar. Gated on our own data-ttx-* attribute, which TimeTree never sets,
     // so it is inert in production.
     if (document.documentElement.hasAttribute('data-ttx-test-noedit')) edit = false;
-    if (!ensureMonthly()) { toast('本家のマンスリーを開けませんでした'); return; }
-    if (!(await waitFor(() => document.querySelector('[data-test-id="monthly-calendar"]'), 3000))) { toast('本家のマンスリーを開けませんでした'); return; }
-    if (!(await navToMonth(+o.startKey.slice(0, 4), +o.startKey.slice(5, 7)))) { toast('本家グリッドで対象月を開けませんでした'); return; }
+    if (!ensureMonthly()) { toast(t('本家のマンスリーを開けませんでした', 'Could not open the monthly view')); return; }
+    if (!(await waitFor(() => document.querySelector('[data-test-id="monthly-calendar"]'), 3000))) { toast(t('本家のマンスリーを開けませんでした', 'Could not open the monthly view')); return; }
+    if (!(await navToMonth(+o.startKey.slice(0, 4), +o.startKey.slice(5, 7)))) { toast(t('本家グリッドで対象月を開けませんでした', 'Could not reach that month in the grid')); return; }
     await sleep(220);
     const chip = await waitFor(() => findChip(o), 1600);
-    if (!chip) { toast('該当の予定が本家グリッドに見つかりませんでした'); return; }
+    if (!chip) { toast(t('該当の予定が本家グリッドに見つかりませんでした', 'Could not find that event in the grid')); return; }
     chip.click();
-    if (!(await waitFor(() => document.querySelector('[data-test-id="event-detail"]'), 3000))) { toast('本家の予定を開けませんでした'); return; }
+    if (!(await waitFor(() => document.querySelector('[data-test-id="event-detail"]'), 3000))) { toast(t('本家の予定を開けませんでした', 'Could not open the event')); return; }
     if (edit) await openEditorInHonke();
   }
 

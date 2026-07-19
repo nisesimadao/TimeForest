@@ -134,18 +134,18 @@
     const wrap = elem('div', 'ttx-exp-wrap');
     wrap.setAttribute(MARK, '1');
     const btn = elem('button', 'ttx-exp-btn');   // glyph + label (not the ⬇ emoji)
-    btn.append(TTX.ui.glyph('download', 15), elem('span', null, 'エクスポート'));
+    btn.append(TTX.ui.glyph('download', 15), elem('span', null, TTX.i18n.t('エクスポート', 'Export')));
     btn.type = 'button';
     const menu = elem('div', 'ttx-exp-menu');
     menu.hidden = true;
-    menu.appendChild(elem('div', 'ttx-exp-note', '今月の予定を書き出し'));
-    for (const [kind, label] of [['md', 'Markdown'], ['csv', 'CSV'], ['json', 'JSON'], ['ics', 'ICS (カレンダー)']]) {
+    menu.appendChild(elem('div', 'ttx-exp-note', TTX.i18n.t('今月の予定を書き出し', 'Export this month')));
+    for (const [kind, label] of [['md', 'Markdown'], ['csv', 'CSV'], ['json', 'JSON'], ['ics', TTX.i18n.t('ICS (カレンダー)', 'ICS (calendar)')]]) {
       const item = elem('button', 'ttx-exp-item');
       item.type = 'button';
       item.append(elem('span', null, label), elem('span', 'k', kind.toUpperCase()));
       item.onclick = async () => {
         menu.hidden = true;
-        try { await runExport(kind); } catch (e) { console.warn('[TTX] export failed', e); TTX.ui.toast('エクスポートに失敗しました'); }
+        try { await runExport(kind); } catch (e) { console.warn('[TTX] export failed', e); TTX.ui.toast(TTX.i18n.t('エクスポートに失敗しました', 'Export failed')); }
       };
       menu.appendChild(item);
     }

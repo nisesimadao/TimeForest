@@ -100,4 +100,23 @@
   }
 
   TTX.ui = { glyph, observeBody, toast };
+
+  // Injected UI follows 本家's language. Detected from the page itself — its own
+  // view toggle / toolbar text is a more reliable signal than a possibly-unset
+  // <html lang>. Cached only once a confident signal exists; until then it
+  // defaults to Japanese (the app's primary language) WITHOUT caching, so an
+  // injector that runs a beat before 本家's toolbar renders re-checks next call.
+  // t(ja, en) is the one-liner every injector uses instead of hardcoding one language.
+  let _ja = null;
+  function ja() {
+    if (_ja !== null) return _ja;
+    const lang = (document.documentElement.lang || '').toLowerCase();
+    if (lang.startsWith('ja')) return (_ja = true);
+    if (lang.startsWith('en')) return (_ja = false);
+    const txt = [...document.querySelectorAll('button, a')].map((b) => b.textContent || '').join(' ');
+    if (/マンスリー|ウィークリー|設定|今日/.test(txt)) return (_ja = true);
+    if (/Monthly|Weekly|Settings|Today/.test(txt)) return (_ja = false);
+    return true;   // no signal yet — default JP, don't cache
+  }
+  TTX.i18n = { ja, t: (jaStr, enStr) => (ja() ? jaStr : enStr) };
 })();

@@ -19,7 +19,8 @@
     const d = TTX.dark;
     if (!d) return;
     btn.replaceChildren(TTX.ui.glyph(d.ICON[d.mode] || 'monitor', 20));   // monochrome icon, not an emoji
-    btn.title = 'テーマ：' + (d.LABEL[d.mode] || d.mode);
+    const EN = { system: 'System', light: 'Light', dark: 'Dark' };
+    btn.title = TTX.i18n.t('テーマ：' + (d.LABEL[d.mode] || d.mode), 'Theme: ' + (EN[d.mode] || d.mode));
     btn.setAttribute('aria-label', btn.title);
   }
 

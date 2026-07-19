@@ -28,7 +28,9 @@
 
   function paint(btn) {
     btn.replaceChildren(TTX.ui.glyph(on ? 'bell' : 'bell-off', 20));   // monochrome icon, not an emoji
-    btn.title = on ? '通知：オン（この端末で Chrome 起動中に鳴らす）' : '通知：オフ';
+    btn.title = on
+      ? TTX.i18n.t('通知：オン（この端末で Chrome 起動中に鳴らす）', 'Notifications: on (rings while Chrome runs on this device)')
+      : TTX.i18n.t('通知：オフ', 'Notifications: off');
     btn.setAttribute('aria-label', btn.title);
   }
 

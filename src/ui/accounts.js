@@ -89,13 +89,13 @@
     pick.onclick = async () => {
       if (a.active) return;
       const nm = pick.querySelector('.nm');
-      nm.textContent = '切り替え中…';
+      nm.textContent = TTX.i18n.t('切り替え中…', 'Switching…');
       try { await sessionOp({ op: 'switch', id: a.id }); } // worker verifies + swaps the cookie + reloads
       catch (e) {
         // Most likely the stored session expired (switching accounts means logging
         // out of one, which the server invalidates). Say so, rather than fail mute.
         nm.textContent = a.name;
-        showError(menu, e.message || '切り替えできませんでした');
+        showError(menu, e.message || TTX.i18n.t('切り替えできませんでした', 'Could not switch'));
         console.warn('[TTX] account switch failed', e);
       }
     };
@@ -105,8 +105,8 @@
       const forget = elem('button', 'ttx-acct-forget');
       forget.appendChild(TTX.ui.glyph('x', 15));   // monochrome, not a font ×
       forget.type = 'button';
-      forget.title = 'このアカウントを一覧から削除';
-      forget.setAttribute('aria-label', a.name + ' を一覧から削除');
+      forget.title = TTX.i18n.t('このアカウントを一覧から削除', 'Remove this account from the list');
+      forget.setAttribute('aria-label', TTX.i18n.t(a.name + ' を一覧から削除', 'Remove ' + a.name + ' from the list'));
       forget.onclick = async (e) => {
         e.stopPropagation();
         try { await sessionOp({ op: 'forget', id: a.id }); } catch (err) { console.warn('[TTX] forget failed', err); }
@@ -131,17 +131,18 @@
   async function populate(menu) {
     const seq = ++populateSeq;
     menu.textContent = '';
-    menu.appendChild(elem('div', 'ttx-acct-note', 'アカウント'));
+    menu.appendChild(elem('div', 'ttx-acct-note', TTX.i18n.t('アカウント', 'Accounts')));
     let list = [], failed = false;
     try { list = (await sessionOp({ op: 'list' })) || []; } catch (e) { failed = true; }
     if (seq !== populateSeq) return;   // a newer populate now owns the menu
     menu.textContent = '';
-    menu.appendChild(elem('div', 'ttx-acct-note', 'アカウント'));
-    if (failed) { menu.appendChild(elem('div', 'ttx-acct-empty', '読み込めませんでした')); return; }
-    if (!list.length) menu.appendChild(elem('div', 'ttx-acct-empty', 'ログイン情報を取得中…'));
+    menu.appendChild(elem('div', 'ttx-acct-note', TTX.i18n.t('アカウント', 'Accounts')));
+    if (failed) { menu.appendChild(elem('div', 'ttx-acct-empty', TTX.i18n.t('読み込めませんでした', 'Could not load'))); return; }
+    if (!list.length) menu.appendChild(elem('div', 'ttx-acct-empty', TTX.i18n.t('ログイン情報を取得中…', 'Fetching login…')));
     else for (const a of list) menu.appendChild(accountRow(a, menu));
-    menu.appendChild(elem('div', 'ttx-acct-hint',
-      '別のアカウントでログインすると自動でここに追加され、次からはパスワードなしで切り替えられます。'));
+    menu.appendChild(elem('div', 'ttx-acct-hint', TTX.i18n.t(
+      '別のアカウントでログインすると自動でここに追加され、次からはパスワードなしで切り替えられます。',
+      'Sign in with another account and it is added here automatically — switch without a password next time.')));
   }
 
   async function toggleMenu(menu) {
@@ -165,8 +166,8 @@
     const btn = settings.cloneNode(true);     // inherit TimeTree's icon-button styling
     btn.removeAttribute('data-test-id');
     btn.replaceChildren(TTX.ui.glyph('user', 20));   // monochrome icon, not an emoji
-    btn.title = 'アカウント';
-    btn.setAttribute('aria-label', 'アカウント');
+    btn.title = TTX.i18n.t('アカウント', 'Accounts');
+    btn.setAttribute('aria-label', TTX.i18n.t('アカウント', 'Accounts'));
     const menu = elem('div', 'ttx-acct-menu');
     menu.hidden = true;
     btn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); toggleMenu(menu); };
