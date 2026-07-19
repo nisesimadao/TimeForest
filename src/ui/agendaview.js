@@ -30,7 +30,7 @@
 /* Colours are TimeTree's own (its themed CSS tokens, light → dark), not Apple
    approximations, so the agenda matches the month grid it covers. */
 .${OVL} {
-  position: absolute; inset: 0; z-index: 20; overflow-y: auto;
+  position: fixed; z-index: 100; overflow-y: auto;   /* placed over the calendar box; see place() */
   background: #fff; padding: 8px 0 40px;
   font-family: -apple-system, "Hiragino Sans", "Noto Sans JP", "Segoe UI", sans-serif;
 }
@@ -82,12 +82,35 @@
   let renderSeq = 0;      // generation counter — only the newest render writes cache / paints
 
   // ---- overlay ----
+  // The calendar box the agenda covers. `calendarOutline-mainUi` is present in BOTH
+  // monthly and weekly (monthly's `calendar-main` is NOT — keying on it left the
+  // agenda unable to open from weekly), and it sits below the toolbar (top≈60 vs the
+  // view tabs' bottom≈46), so covering it never hides the tabs.
+  const calBox = () => document.querySelector('[data-test-id="calendarOutline-mainUi"]');
+
+  /** Size/position the body-level, position:fixed overlay onto the calendar box.
+   *  false when there's nothing to cover (a non-calendar page). */
+  function place(ovl) {
+    const box = calBox();
+    if (!box) return false;
+    const r = box.getBoundingClientRect();
+    if (r.width < 1 || r.height < 1) return false;
+    ovl.style.top = r.top + 'px';
+    ovl.style.left = r.left + 'px';
+    ovl.style.width = r.width + 'px';
+    ovl.style.height = r.height + 'px';
+    return true;
+  }
+
+  // Mount on document.body, NOT inside the calendar container. TimeTree re-renders
+  // the calendar subtree constantly (the weekly grid especially), and a foreign
+  // child there gets detached mid-render — which left the agenda stuck on
+  // 「読み込み中」 in weekly (measured). A body-level node React never owns can't be
+  // detached; place() keeps it aligned to the calendar box.
   function overlay() {
-    const main = document.querySelector('[data-test-id="calendar-main"]');
-    if (!main) return null;
     let ovl = document.querySelector('.' + OVL);
-    if (ovl && ovl.parentElement !== main) main.appendChild(ovl);   // React detached it — re-attach same node
-    if (!ovl) { ovl = el('div', OVL); ovl.hidden = !visible; main.appendChild(ovl); }
+    if (!ovl) { ovl = el('div', OVL); ovl.hidden = !visible; document.body.appendChild(ovl); }
+    if (!place(ovl)) { ovl.hidden = true; return null; }
     return ovl;
   }
 
@@ -288,7 +311,9 @@
     visible = true;
     applyState();                    // captures `underlying` before greying the natives out
     const ovl = overlay();
-    if (!ovl) { visible = false; applyState(); return; }
+    // Couldn't mount (no container): RESTORE the view tabs we just greyed, or they
+    // stay dead until the user clicks マンスリー. hide(null) re-lights `underlying`.
+    if (!ovl) return hide(null);
     ovl.hidden = false;
     await render(ovl);               // cache shows instantly; a background refresh follows
   }
@@ -322,18 +347,24 @@
     else if (NAV_TEXT.includes(txt) || NAV_ARIA.includes(aria)) hide(null);
   }
 
+  // Keep the body-level overlay aligned to the calendar box when the window resizes
+  // (the observer catches DOM-driven layout shifts; resize fires no mutation).
+  const onResize = () => { if (!visible) return; const o = document.querySelector('.' + OVL); if (o) place(o); };
+
   let observer = null;
   function start() {
     if (observer) return;
     document.addEventListener('click', onNativeViewClick, true);
-    // rAF-coalesced: the agenda overlay lives inside React-owned calendar-main, and
-    // on a busy calendar reacting to every subtree mutation synchronously let the
-    // re-attach fight React fast enough to hang the tab (the weekly→agenda freeze).
+    window.addEventListener('resize', onResize);
+    // rAF-coalesced: each mutation would otherwise re-run ensureButton/ensureShown
+    // synchronously, and on a busy calendar the weekly grid's constant re-renders
+    // could drive that fast enough to jank the tab.
     observer = TTX.ui.observeBody(() => { ensureButton(); if (visible) ensureShown(); });
   }
   function stop() {
     observer?.disconnect(); observer = null;
     document.removeEventListener('click', onNativeViewClick, true);
+    window.removeEventListener('resize', onResize);
   }
 
   TTX.agendaview = { start, stop, toggle, _internals: { render, currentCalendar } };
