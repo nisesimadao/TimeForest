@@ -44,17 +44,35 @@
 .ttx-ag-day.sat .ttx-ag-dnum .wd { color: #2f6fed; }
 .ttx-ag-day.sun .ttx-ag-dnum .wd, .ttx-ag-day.hol .ttx-ag-dnum .wd { color: #e0335b; }
 .ttx-ag-evs { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.ttx-ag-ev { display: flex; align-items: baseline; gap: 9px; padding: 4px 6px; border-radius: 7px; }
+.ttx-ag-ev { display: flex; align-items: flex-start; gap: 9px; padding: 5px 6px; border-radius: 7px; }
+.ttx-ag-ev.clickable { cursor: pointer; }
 .ttx-ag-ev:hover { background: #f4f4f4; }
-.ttx-ag-time { flex: 0 0 90px; font-size: 12px; color: #8f8f8f; font-variant-numeric: tabular-nums; }
+.ttx-ag-time { flex: 0 0 90px; font-size: 12px; color: #8f8f8f; font-variant-numeric: tabular-nums; padding-top: 1px; }
 .ttx-ag-bar { flex: 0 0 4px; align-self: stretch; border-radius: 2px; background: #909090; }
-.ttx-ag-title { flex: 1; font-size: 14px; color: #212121; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ttx-ag-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.ttx-ag-title { font-size: 14px; color: #212121; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ttx-ag-meta { font-size: 12px; color: #8f8f8f; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* detail card */
+.ttx-ag-dscrim { position: fixed; inset: 0; z-index: 2147483001; background: rgba(0,0,0,0.28); display: flex; align-items: center; justify-content: center; }
+.ttx-ag-detail { background: #fff; color: #212121; width: min(420px, calc(100vw - 40px)); max-height: 80vh; overflow-y: auto; border-radius: 14px; box-shadow: 0 18px 60px rgba(0,0,0,0.32); padding: 18px 20px; }
+.ttx-ag-d-head { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+.ttx-ag-d-dot { flex: 0 0 10px; width: 10px; height: 10px; border-radius: 3px; }
+.ttx-ag-d-title { font-size: 17px; font-weight: 700; overflow-wrap: anywhere; }
+.ttx-ag-d-row { display: flex; gap: 12px; padding: 5px 0; font-size: 13px; }
+.ttx-ag-d-k { flex: 0 0 68px; color: #8f8f8f; }
+.ttx-ag-d-v { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.ttx-ag-d-note { white-space: pre-wrap; }
+.ttx-ag-d-link { color: #06a374; text-decoration: none; }
+.ttx-ag-d-hint { margin-top: 12px; font-size: 11px; color: #a0a0a0; }
 :root.ttx-dark .${OVL} { background: #0f0f0f; }
 :root.ttx-dark .ttx-ag-day { border-color: #363636; }
 :root.ttx-dark .ttx-ag-day.today { background: #2a2616; }
 :root.ttx-dark .ttx-ag-dnum, :root.ttx-dark .ttx-ag-title { color: #fff; }
-:root.ttx-dark .ttx-ag-load, :root.ttx-dark .ttx-ag-empty, :root.ttx-dark .ttx-ag-time { color: #606060; }
-:root.ttx-dark .ttx-ag-ev:hover { background: #2c2c2c; }`;
+:root.ttx-dark .ttx-ag-load, :root.ttx-dark .ttx-ag-empty, :root.ttx-dark .ttx-ag-time, :root.ttx-dark .ttx-ag-meta { color: #707070; }
+:root.ttx-dark .ttx-ag-ev:hover { background: #2c2c2c; }
+:root.ttx-dark .ttx-ag-detail { background: #1c1c1e; color: #f2f2f5; }
+:root.ttx-dark .ttx-ag-d-title { color: #fff; }
+:root.ttx-dark .ttx-ag-d-k, :root.ttx-dark .ttx-ag-d-hint { color: #8a8a8a; }`;
 
   function ensureCss() {
     if (document.getElementById('ttx-ag-css')) return;
@@ -130,20 +148,23 @@
     const cal = await currentCalendar();
     if (!cal) throw new Error('カレンダーが見つかりません');
     const { lo, hi } = range();
-    const [raw, labels, mem] = await Promise.all([
+    const [raw, labels, mem, members] = await Promise.all([
       TTX.api.allEvents(cal.id),
       TTX.api.labels(cal.id),
       TTX.api.memorialdays(lo, hi).catch(() => []),   // public holidays, like the month grid shows
+      TTX.api.members(cal.id).catch(() => []),         // to name the creator of each event
     ]);
-    return { alias, calId: cal.id, name: cal.name, raw, labels, mem };
+    return { alias, calId: cal.id, name: cal.name, raw, labels, mem, members };
   }
 
   /** Compute occurrences and paint the list from a data object — pure DOM, no
    *  network, so it's instant on a cached re-open. */
   function buildDOM(ovl, data) {
     const { from, to, lo, hi } = range();
+    const membersById = new Map((data.members || []).map((m) => [m.id, m]));
+    const multiMember = membersById.size > 1;   // naming the creator only helps on a shared calendar
     const occs = TTX.model
-      .occurrences(data.raw, lo, hi, { id: data.calId, name: data.name, calendar_labels: data.labels }, {})
+      .occurrences(data.raw, lo, hi, { id: data.calId, name: data.name, calendar_labels: data.labels }, { membersById })
       .concat(TTX.model.holidayOccurrences(data.mem));
     const byDay = TTX.model.groupByDay(occs, from, to);
     const labelById = new Map((data.labels || []).map((l) => [l.id, l]));
@@ -180,7 +201,23 @@
         if (lb) bar.style.background = TTX.api.colorHex(lb.color);
         else if (o.holiday) bar.style.background = '#e0335b';
         ev.appendChild(bar);
-        ev.appendChild(el('div', 'ttx-ag-title', o.title || '(無題)'));
+        const main = el('div', 'ttx-ag-main');
+        main.appendChild(el('div', 'ttx-ag-title', o.title || '(無題)'));
+        // The stuff the bare title never showed — what the month grid / a tap on the
+        // event would tell you: where, who's going, who added it, whether it has a memo.
+        if (!o.holiday) {
+          const bits = [];
+          if (o.location) bits.push(o.location);
+          if (o.attendees && o.attendees.length) bits.push(o.attendees.length + '人');
+          if (o.note) bits.push('メモ');
+          if (multiMember && o.authorName) bits.push(o.authorName);
+          if (bits.length) main.appendChild(el('div', 'ttx-ag-meta', bits.join('　·　')));
+        }
+        ev.appendChild(main);
+        if (!o.holiday) {                       // holidays aren't real events — nothing to open
+          ev.classList.add('clickable');
+          ev.onclick = () => openDetail(o, lb, data.name, membersById);
+        }
         list.appendChild(ev);
       }
       row.append(date, list);
@@ -190,6 +227,67 @@
     if (!shown) ovl.appendChild(el('div', 'ttx-ag-empty', 'この先60日に予定はありません'));
     else ovl.appendChild(frag);
     ovl.dataset.rendered = '1';
+  }
+
+  const fmtDate = (key) => `${+key.slice(5, 7)}/${+key.slice(8)}(${WD[new Date(key + 'T00:00:00Z').getUTCDay()]})`;
+
+  /** A read-only detail card for an agenda event — everything the bare row can't
+   *  show (where / who / memo / url). Editing still happens in TimeTree itself, so
+   *  the card names that rather than pretend to be an editor. */
+  function openDetail(o, lb, calName, membersById) {
+    document.querySelector('.ttx-ag-dscrim')?.remove();
+    const scrim = el('div', 'ttx-ag-dscrim');
+    const card = el('div', 'ttx-ag-detail');
+
+    const head = el('div', 'ttx-ag-d-head');
+    const dot = el('span', 'ttx-ag-d-dot');
+    dot.style.background = lb ? TTX.api.colorHex(lb.color) : '#909090';
+    head.append(dot, el('span', 'ttx-ag-d-title', o.title || '(無題)'));
+    card.appendChild(head);
+
+    const row = (k, v) => {
+      if (v == null || v === '') return;
+      const r = el('div', 'ttx-ag-d-row');
+      const vv = typeof v === 'string' ? el('div', 'ttx-ag-d-v', v) : v;
+      if (typeof v !== 'string') vv.classList.add('ttx-ag-d-v');
+      r.append(el('div', 'ttx-ag-d-k', k), vv);
+      card.appendChild(r);
+    };
+
+    const when = o.allDay
+      ? (o.startKey === o.endKey ? `${fmtDate(o.startKey)} 終日` : `${fmtDate(o.startKey)} 〜 ${fmtDate(o.endKey)} 終日`)
+      : (o.startKey === o.endKey ? `${fmtDate(o.startKey)} ${o.startTime}〜${o.endTime}` : `${fmtDate(o.startKey)} ${o.startTime} 〜 ${fmtDate(o.endKey)} ${o.endTime}`);
+    row('日時', when);
+    row('カレンダー', calName);
+    if (lb && TTX.api.labelName) row('ラベル', TTX.api.labelName(lb));
+    if (o.location) {
+      const v = el('div', 'ttx-ag-d-v', o.location);
+      if (Number.isFinite(o.lat) && Number.isFinite(o.lon)) {
+        const a = el('a', 'ttx-ag-d-link', '　地図で開く');
+        a.href = `https://www.openstreetmap.org/?mlat=${o.lat}&mlon=${o.lon}#map=17/${o.lat}/${o.lon}`;
+        a.target = '_blank'; a.rel = 'noopener';
+        v.appendChild(a);
+      }
+      row('場所', v);
+    }
+    if (o.attendees && o.attendees.length) {
+      row('参加者', o.attendees.map((a) => membersById.get(a && a.id != null ? a.id : a)?.name || (a && a.name) || '？').join('、'));
+    }
+    if (o.authorName) row('作成者', o.authorName);
+    if (o.note) row('メモ', el('div', 'ttx-ag-d-note', o.note));
+    if (o.url) {
+      const a = el('a', 'ttx-ag-d-link', o.url);
+      a.href = o.url; a.target = '_blank'; a.rel = 'noopener';
+      row('URL', a);
+    }
+    card.appendChild(el('div', 'ttx-ag-d-hint', '編集はアジェンダを閉じて本家の予定から'));
+
+    scrim.appendChild(card);
+    document.body.appendChild(scrim);
+    const close = () => { scrim.remove(); document.removeEventListener('keydown', onKey); };
+    const onKey = (e) => { if (e.key === 'Escape') close(); };
+    scrim.onclick = (e) => { if (e.target === scrim) close(); };
+    document.addEventListener('keydown', onKey);
   }
 
   /** Show the cached list instantly, then refresh in the background — so a
