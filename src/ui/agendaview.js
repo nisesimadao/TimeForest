@@ -240,6 +240,7 @@
     if (!shown) ovl.appendChild(el('div', 'ttx-ag-empty', 'この先60日に予定はありません'));
     else ovl.appendChild(frag);
     ovl.dataset.rendered = '1';
+    ovl.dataset.alias = data.alias || '';   // which calendar this paint is for (see ensureShown)
   }
 
   const fmtDate = (key) => `${+key.slice(5, 7)}/${+key.slice(8)}(${WD[new Date(key + 'T00:00:00Z').getUTCDay()]})`;
@@ -372,7 +373,14 @@
     const ovl = overlay();
     if (!ovl) return;
     ovl.hidden = false;
-    if (ovl.dataset.rendered || rendering) return;
+    if (rendering) return;
+    // Already showing the calendar that's on screen — nothing to do. But TimeTree
+    // switches calendars by changing /calendars/<alias> with NO reload, and this
+    // body-level overlay (React doesn't own it) survives that; without the alias
+    // check a switch would leave A's events showing while the URL is B — and then
+    // a row click would drive openInHonke against B's grid. So on a mismatch, fall
+    // through and re-render for the calendar now on screen.
+    if (ovl.dataset.rendered && ovl.dataset.alias === currentAlias()) return;
     if (cache && cache.alias === currentAlias()) buildDOM(ovl, cache);
     else render(ovl);
   }
@@ -399,7 +407,18 @@
     const base = A.filter((c) => B.includes(c));
     const aMods = A.filter((c) => !B.includes(c));
     const bMods = B.filter((c) => !A.includes(c));
-    const aActive = getComputedStyle(a).backgroundColor !== 'rgba(0, 0, 0, 0)';
+    // Which one is lit? Prefer the explicit aria-selected; else the tab with the
+    // solid (non-transparent) background is active. Assuming "a" is lit whenever
+    // its bg is merely non-transparent breaks if the INACTIVE tab has a subtle
+    // fill, so compare the two and only decide when exactly one is solid.
+    const solid = (c) => c && c !== 'rgba(0, 0, 0, 0)' && c !== 'transparent';
+    const aAria = a.getAttribute('aria-selected'), bAria = b.getAttribute('aria-selected');
+    let aActive;
+    if (aAria === 'true' || bAria === 'true') aActive = aAria === 'true';
+    else {
+      const aS = solid(getComputedStyle(a).backgroundColor), bS = solid(getComputedStyle(b).backgroundColor);
+      aActive = aS && !bS ? true : bS && !aS ? false : true;   // ambiguous → マンスリー (the default view)
+    }
     clsCache = { base, activeMods: aActive ? aMods : bMods, inactiveMods: aActive ? bMods : aMods };
   }
 
@@ -558,13 +577,17 @@
     for (let i = 0; i < 30; i++) {
       const cur = shownMonth();
       if (!cur) return false;
-      const delta = (y * 12 + mo) - (cur.y * 12 + cur.m);
-      if (delta === 0) return true;
-      const aria = delta > 0 ? ['翌月', 'Next month'] : ['前月', 'Previous month'];
+      const at = cur.y * 12 + cur.m;
+      const target = y * 12 + mo;
+      if (at === target) return true;
+      const aria = at < target ? ['翌月', 'Next month'] : ['前月', 'Previous month'];
       const btn = [...document.querySelectorAll('button')].find((b) => aria.includes(b.getAttribute('aria-label') || ''));
       if (!btn) return false;
       btn.click();
-      await sleep(340);
+      // Wait for the label to ACTUALLY change rather than race a fixed delay — a
+      // slow re-render would otherwise be re-read as the old month and clicked
+      // again, overshooting and oscillating. Give up the step if it never moves.
+      if (!(await waitFor(() => { const s = shownMonth(); return s && (s.y * 12 + s.m) !== at; }, 1800))) return false;
     }
     const c = shownMonth();
     return !!c && (c.y * 12 + c.m) === (y * 12 + mo);
@@ -572,40 +595,68 @@
 
   const ownText = (n) => [...n.childNodes].filter((c) => c.nodeType === 3).map((c) => c.textContent.trim()).join('');
 
-  /** The day-of-month of the grid cell a chip sits in: the numeric date label
-   *  directly above it in the same column. 0 when undetermined. Lets us pick the
-   *  right occurrence when a title repeats (daily/recurring events). */
-  function chipDay(chip, nums) {
-    const r = chip.getBoundingClientRect();
-    const cx = r.left + r.width / 2;
-    let best = null;
-    for (const nd of nums) {
-      if (nd.y > r.top + 2) continue;            // the date number sits above its events
-      if (Math.abs(nd.x - cx) > 95) continue;    // same column
-      if (!best || nd.y > best.y) best = nd;      // nearest one above
+  /** The grid's date-number cells: {d, x (left), y (top), dim}. `dim` marks an
+   *  adjacent-month day — TimeTree renders the tail of the previous month and the
+   *  head of the next, faded — so a repeated day-number can prefer the in-month one. */
+  function dateCells(grid) {
+    const out = [];
+    for (const n of grid.querySelectorAll('*')) {
+      const t = ownText(n);
+      if (!/^\d{1,2}$/.test(t)) continue;
+      const r = n.getBoundingClientRect();
+      if (r.width <= 0 || r.height <= 0) continue;
+      out.push({ d: +t, x: r.left, y: r.top, dim: parseFloat(getComputedStyle(n).opacity) < 0.9 });
     }
-    return best ? best.d : 0;
+    return out;
   }
 
-  /** The month-grid chip for occurrence o, matched by title within its date cell.
-   *  null when the event isn't on the grid (e.g. filtered calendar). */
+  /** The date cell a chip sits in — the numeric label nearest above it in the same
+   *  column — or null. Keys off the chip's LEFT edge (so a multi-day bar resolves to
+   *  its START cell) with a column-relative tolerance (so zoom can't bleed into the
+   *  neighbouring column). */
+  function chipCell(chip, cells, colW) {
+    const r = chip.getBoundingClientRect();
+    const x = r.left + 6;
+    const tol = Math.max(28, colW * 0.5);
+    let best = null;
+    for (const c of cells) {
+      if (c.y > r.top + 2) continue;             // the date number sits above its events
+      if (Math.abs(c.x - x) > tol) continue;      // same column
+      if (!best || c.y > best.y) best = c;         // nearest one above
+    }
+    return best;
+  }
+
+  /** The month-grid chip for occurrence o. Matched by title AND the day-cell it
+   *  sits in — title alone is ambiguous for daily/recurring events, and a lone
+   *  title match on the WRONG day must not open a different event. Same-title,
+   *  same-day collisions are split by start time, then by preferring the in-month
+   *  cell. null when the event isn't on the grid (filtered calendar, overflow). */
   function findChip(o) {
     const grid = document.querySelector('[data-test-id="monthly-calendar"]');
     if (!grid || !o.title) return null;
     const day = +o.startKey.slice(8, 10);
-    const nums = [];
-    for (const n of grid.querySelectorAll('*')) {
-      if (!/^\d{1,2}$/.test(ownText(n))) continue;
-      const r = n.getBoundingClientRect();
-      if (r.width > 0 && r.height > 0) nums.push({ d: +ownText(n), x: r.left + r.width / 2, y: r.top });
-    }
+    const cells = dateCells(grid);
+    const colW = grid.getBoundingClientRect().width / 7;
     const chips = [...grid.querySelectorAll('button')].filter((b) => {
       const t = (b.textContent || '').trim(); const r = b.getBoundingClientRect();
-      return t && !/^\d{1,2}$/.test(t) && r.height >= 8 && r.height <= 30 && r.width >= 24 && r.top >= 120;
+      return t && !/^\d{1,2}$/.test(t) && r.height >= 8 && r.height <= 34 && r.width >= 20 && r.top >= 118;
     });
-    const matches = chips.filter((b) => (b.textContent || '').includes(o.title));
-    if (matches.length <= 1) return matches[0] || null;
-    return matches.find((b) => chipDay(b, nums) === day) || matches[0];
+    let matches = chips
+      .map((b) => ({ b, cell: chipCell(b, cells, colW) }))
+      .filter((m) => m.cell && m.cell.d === day && (m.b.textContent || '').includes(o.title));
+    if (!matches.length) return null;             // wrong day / not on grid — DON'T open a stray event
+    if (matches.length > 1 && !o.allDay && o.startTime) {
+      // chip shows "9:00" / "15:20"; o.startTime is zero-padded "09:00".
+      const hm = o.startTime, hm2 = o.startTime.replace(/^0(?=\d:)/, '');
+      const timed = matches.filter((m) => { const t = m.b.textContent || ''; return t.includes(hm) || t.includes(hm2); });
+      if (timed.length) matches = timed;
+    }
+    if (matches.length > 1) {
+      const inMonth = matches.filter((m) => !m.cell.dim);   // adjacent-month day carries the same number
+      if (inMonth.length) matches = inMonth;
+    }
+    return matches[0].b;
   }
 
   /** From an open event-detail sidebar, advance to the native edit form via
@@ -630,6 +681,9 @@
    *  click so E2E never opens a real edit form.) */
   async function openInHonke(o, edit) {
     hide(null);                                   // drop the agenda overlay so the grid is clickable
+    // Test seam: read-only E2E must never open a real edit form on a live family
+    // calendar. Gated on our own data-ttx-* attribute, which TimeTree never sets,
+    // so it is inert in production.
     if (document.documentElement.hasAttribute('data-ttx-test-noedit')) edit = false;
     if (!ensureMonthly()) { toast('本家のマンスリーを開けませんでした'); return; }
     if (!(await waitFor(() => document.querySelector('[data-test-id="monthly-calendar"]'), 3000))) { toast('本家のマンスリーを開けませんでした'); return; }
