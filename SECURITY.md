@@ -1,50 +1,63 @@
 # セキュリティポリシー
 
-TimeForest は TimeTree の**非公式**サードパーティクライアントです。ここは
-TimeForest（このリポジトリのコード）の脆弱性についての窓口であり、TimeTree
-本体のセキュリティ窓口ではありません。TimeTree 本体の問題は TimeTree に直接
-報告してください。
+TimeForest は TimeTree の非公式サードパーティクライアントです。
+この文書は TimeForest のコードに関する脆弱性の報告方法を説明します。
+TimeTree 本体の問題は、TimeTree の公式窓口へ報告してください。
 
 ## 報告方法
 
-脆弱性を見つけたら、**公開 issue を立てず**、GitHub の非公開報告を使ってください：
+脆弱性を見つけた場合は公開 Issue を作成せず、GitHub の非公開報告を利用してください。
 
-1. リポジトリの **Security** タブ →「**Report a vulnerability**」
-2. 再現手順・影響範囲・可能なら PoC を添えてください
+1. リポジトリの **Security** タブを開きます。
+2. **Report a vulnerability** を選択します。
+3. 再現手順、影響範囲、可能であれば PoC を添えてください。
 
-数日以内に一次応答し、修正の可否と方針を返します。個人プロジェクトなので
-SLA は保証できませんが、セッションやクッキーの扱いに関わる問題は最優先で見ます。
+個人プロジェクトのため SLA は設定していません。
+セッションや Cookie の扱いに関係する問題は優先して確認します。
 
-## セキュリティモデル（何を守っているか）
+## セキュリティモデル
 
-TimeForest はパスワードを一切受け取りません。ログインは常に TimeTree 自身の
-ログインページで行われ、各形態は TimeTree が発行したセッションだけを扱います。
+TimeForest はパスワードを受け取りません。
+ログインは TimeTree 自身のログインページで行い、各クライアントは TimeTree が発行したセッションを利用します。
 
-- **Chrome 拡張** — セッションはブラウザのクッキー（`_session_id`）。クッキーに
-  触れるのは Service Worker だけで、コンテンツスクリプトには渡しません。書き込み
-  API は Service Worker 経由で、`declarativeNetRequest` で自身のリクエストの Origin
-  を timetreeapp.com に書き換えます（対象ドメイン＋xhr に限定）。権限は最小限
-  （`storage`/`tabs`/`cookies`/`alarms`/`notifications`/`declarativeNetRequest`）で、
-  すべて実際に使用しています。
-- **デスクトップ（Electron）** — アカウントごとに独立したパーティション
-  （Chromium のクッキー壷、userData 下で DPAPI 暗号化）。認証付き fetch は main
-  プロセスでのみ行い、レンダラは preload の狭いブリッジ（`window.host`）越しに
-  `/api/*` の JSON しか要求できません。任意 URL・シェル・ファイルには触れません。
-- **ホスト型 Web クライアント** — セッショントークンはサーバに保存しません。
-  呼び出し元自身の httpOnly クッキーに乗り、リクエスト毎に読んで転送し、忘れます。
-  バックエンドプロキシは `/api/v*/` の JSON のみを固定ホスト timetreeapp.com へ
-  中継し、リダイレクトは追いません（認証済み HTML の反射を防ぐ）。
-- **ユーザースクリプト** — timetreeapp.com 上で同一オリジンに動くため、ページ
-  自身のログインに乗るだけです。プロキシもトークン受け渡しもありません。
+### Chrome 拡張
+
+セッションはブラウザの `_session_id` Cookie を利用します。
+Cookie を直接扱うのは Service Worker だけで、コンテンツスクリプトへ値を渡しません。
+
+書き込み API は Service Worker を経由します。
+`declarativeNetRequest` は、拡張自身の対象リクエストについて Origin を `timetreeapp.com` に合わせる目的で使用し、対象ドメインと XHR に限定しています。
+
+### デスクトップ（Electron）
+
+アカウントごとに独立した Electron partition を使用し、Cookie を分離します。
+認証付き API リクエストは main process から行います。
+
+renderer が利用する preload bridge（`window.host`）は、TimeTree の `/api/*` に必要な JSON 操作へ範囲を限定しています。
+任意 URL の取得、shell 実行、任意ファイルアクセス用の API は公開していません。
+
+### ホスト型 Web クライアント
+
+TimeTree の session token はサーバーの永続ストレージへ保存しません。
+呼び出し元の httpOnly Cookie からリクエストごとに読み取り、TimeTree へ転送します。
+
+backend proxy は許可した `/api/v*/` の JSON API を固定ホスト `timetreeapp.com` へ中継します。
+redirect は追跡しません。
+
+### ユーザースクリプト
+
+`timetreeapp.com` 上の同一オリジンで動作し、TimeTree Web の既存セッションを使用します。
+この形態では TimeForest の外部 proxy へ session token を渡しません。
 
 ## 対象範囲
 
-- **対象**: このリポジトリのコード（拡張 / デスクトップ / web / ユーザースクリプト /
-  バックエンドプロキシ）。
-- **対象外**: TimeTree 本体、および OpenStreetMap / Nominatim（地図タイル・検索）。
+**対象**：このリポジトリの Chrome 拡張、デスクトップクライアント、Web クライアント、ユーザースクリプト、backend proxy。
 
-## 配布物について
+**対象外**：TimeTree 本体、OpenStreetMap、Nominatim などの外部サービス。
 
-デスクトップのビルドは**未署名**です。Windows / macOS は初回起動時に警告を
-出します（README 参照）。改ざん検知のため、各リリースには成果物の SHA256 を
-併記しています。
+## 配布物
+
+現在のデスクトップ配布物はコード署名していません。
+Windows または macOS が初回起動時に警告を表示する場合があります。
+
+各 Release には配布ファイルの SHA-256 checksum を含め、ダウンロード後の破損や差し替えを確認できるようにしています。
