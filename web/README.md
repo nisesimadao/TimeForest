@@ -1,88 +1,109 @@
-# TimeForest — ブラウザ版（ホスト型 3P クライアント）
+# TimeForest — ホスト型 Web クライアント
 
-デスクトップクライアントの UI（`client/renderer/*`）を**そのままブラウザで**動かす。
-拡張を入れず、URL を開くだけで別 UI から TimeTree を操作できる。
+この版は、デスクトップクライアントの `client/renderer/*` をブラウザで動かします。
+拡張機能やデスクトップアプリをインストールせず、デプロイ先の URL から TimeTree を操作できます。
 
-## なぜバックエンドが要るか
+## バックエンドが必要な理由
 
-ブラウザの別オリジンのページから `timetreeapp.com` の API は **CORS で叩けない**
-（TimeTree は他オリジンに `Access-Control-Allow-Origin` を返さない）。サーバーには
-その制約が無い（CORS はブラウザの規則）ので、同一オリジンの薄いプロキシが
-`/api/tt/*` を `timetreeapp.com/api/*` にサーバー側で中継する。ローカルのスパイクで
-実測した必要要素は **`_session_id` クッキー + スクレイプした csrf-token +
-`x-timetreea`** の3つだけ。
+別オリジンの Web ページから `timetreeapp.com` の API へ直接アクセスすると、ブラウザの CORS 制約を受けます。
+そのため、同一オリジンの薄いバックエンドが `/api/tt/*` を `timetreeapp.com/api/*` へ中継します。
 
-## 認証（トークンはサーバーに残さない）
+現在の認証付きリクエストでは、主に次の情報を使用します。
 
-`timetreeapp.com` に自分でログイン → 開発者ツール → Application → Cookies →
-`_session_id` の値をコピーし、接続画面に貼る。値は **この端末のブラウザの httpOnly
-クッキー**（このオリジン側）に入り、リクエストごとに関数が読んで TimeTree へ転送し、
-それ以外どこにも保存しない。パスワードはこのアプリを一切通らない。
+- `_session_id` Cookie
+- TimeTree ページから取得した CSRF token
+- `x-timetreea` header
 
-> 自己ホスト・単一利用者が基本。トークンはリクエストごとに読んで転送し保存しないが、
-> 自分のデプロイを不特定多数に開放すると（一時的にせよ）他人のセッションを通すことに
-> なるので、常用は各自のデプロイで。作者は動作確認用の公開デモ
-> `time-forest-five.vercel.app` を1つ動かしていて、プリビルドのモバイル版
-> ユーザースクリプトの自動更新元も兼ねる（[ルート README](../README.md) 参照）。
+## 認証
 
-## ローカルで動かす
+1. `timetreeapp.com` へ自分でログインします。
+2. 開発者ツールの Application → Cookies から `_session_id` を確認します。
+3. TimeForest の接続画面へ値を入力します。
 
-```sh
-node web/build.js            # web/dist を組み立てる（自己完結の配信物）
-node web/dev-server.js       # http://localhost:8787（web/dist だけを配信）
+入力した値は、この TimeForest デプロイの httpOnly Cookie に保存します。
+サーバー側のデータベースやファイルには永続化せず、TimeTree への API リクエストを中継するときだけ読み取ります。
+パスワードは TimeForest を通りません。
+
+> 自己ホストまたは少人数で管理するデプロイを推奨します。
+> 公開デプロイでは、保存しない構成であっても他人の TimeTree セッションがプロキシを通過します。
+> Releases のモバイル向けユーザースクリプトは作者のデモ配信を既定の更新元としているため、常用する場合は自分のデプロイ先を設定してビルドしてください。
+
+## ローカル実行
+
+```bash
+node web/build.js
+node web/dev-server.js
 ```
 
-依存ゼロ（Node 組み込みのみ）。`web/dev-server.js` は Vercel と同じ物を出す
-—`web/dist` の静的配信 + `/api/connect|disconnect|whoami` + `/api/tt/*`
-（`web/proxy-core.js`・`web/cookie.js` を Vercel 関数と共有）。ループバックのみに
-bind。
+`web/dev-server.js` は `http://localhost:8787` で待ち受け、`web/dist` の静的ファイルと次の API を提供します。
 
-## Vercel にデプロイ（GitHub 連携）
+- `/api/connect`
+- `/api/disconnect`
+- `/api/whoami`
+- `/api/tt/*`
 
-このリポジトリを push した状態で、Vercel ダッシュボードの **Add New → Project** から
-この GitHub リポジトリを Import するだけ。CLI（`vercel deploy`）でも同じ。
+実装は `web/proxy-core.js` と `web/cookie.js` を Vercel Functions と共有します。
+ローカルサーバーは loopback interface のみに bind します。
 
-- **Root Directory**：リポジトリ直下（デフォルトのまま）。`vercel.json` / `api/` /
-  `web/` がそこにあるので、サブディレクトリの指定は不要。
-- **Framework Preset**：Other（`vercel.json` で `framework: null` 指定済み）。
-- **Build Command / Output Directory**：`vercel.json` が指定済み
-  （`node web/build.js` → `web/dist`）。触らなくてよい。
+## Vercel へのデプロイ
 
-リポジトリ直下には拡張・デスクトップ・スクリプトも同居しているが、**配信されるのは
-`web/dist` だけ**（`outputDirectory`）で、アップロードからは `.vercelignore` が
-`.local/`・`docs/` などを外す。`web/build.js` は Vercel 上で `src/lib`・
-`client/renderer`・`icons/` を読むので、それらは `.vercelignore` に入れない
-（`scripts/check.js` が build 入力の除外を検査するので、デプロイ時にビルドが
-「ファイルが無い」で落ちない）。
+Vercel Dashboard の **Add New → Project** から、この GitHub リポジトリを import します。
+CLI から `vercel deploy` を実行しても同じ構成を利用できます。
 
-デプロイ後、初回アクセスは接続画面が出る。`timetreeapp.com` の `_session_id` を
-貼れば繋がる。
+設定は次の通りです。
 
-構成の詳細：
+- **Root Directory**：リポジトリルート。
+- **Framework Preset**：Other。
+- **Build Command / Output Directory**：`vercel.json` の設定を使用します。
 
-- ビルド：`web/build.js` が `web/dist` に自己完結の配信物を組む（`index.html`・
-  `host-web.js`・`lib/*`＝src/lib のコピー・`renderer/*`＝client/renderer のコピー）。
-  `outputDirectory` は `web/dist` なので、**配信されるのは web/dist だけ**。リポジトリの
-  他ファイル（`.local/`・ソース）はどのパスでも取得できない。コピーは commit されず
-  デプロイ時に生成されるので「lib のコピーを持たない」規則も保たれる。
-- サーバーレス関数：`api/tt.js`（`vercel.json` の rewrite で `/api/tt/*` を受ける。
-  `/api/v*` のみ中継・リダイレクト非追従・`..` トラバーサル拒否）、
-  `api/connect.js`・`api/disconnect.js`（同一オリジンの JSON POST のみ）、
-  `api/whoami.js`。いずれも `web/proxy-core.js` + `web/cookie.js` を共有。
-- `.vercelignore` が `.local/`（認証情報）やセッションメモ等をアップロードからも外す。
+`web/build.js` は `src/lib`、`client/renderer`、`icons` を読み、自己完結した `web/dist` を生成します。
+Vercel が公開するのは `web/dist` だけです。
+`.local/` や開発用文書は `.vercelignore` でアップロード対象から外します。
 
-## いまの状態
+`scripts/check.js` は、Web build に必要なファイルを `.vercelignore` が誤って除外していないことも検査します。
 
-- ローカル E2E：接続 → プロキシ経由の実同期 → デスクトップ UI がブラウザで描画
-  （9/0）、書き込み（作成・更新・削除、4/0）、地図（タイル・検索、5/0）、フル UI
-  （月/週/アジェンダ・コマンドパレット・予定詳細、pageerror ゼロ、6/0）。
-- 地図：`api/map/tile`・`api/map/search` がサーバー側で OSM/Nominatim を UA 付きで
-  取得（タイルは data: URI 化）。ページは同一オリジンしか触らず CSP は閉じたまま。
-- 複数アカウント：`tt_accounts`（httpOnly, `[{id,name,token}]`）に接続済みアカウントを
-  持ち、`tt_session` を差し替えて切替（`api/accounts` の list/switch/forget）。トークンは
-  クライアントに返さない。別アカウントで接続すると自動で追加。アクティブなアカウントを
-  削除すると残りにフォールバック（無ければサインアウト）。別タブでの切替は
-  BroadcastChannel で他タブを reload。UI はデスクトップのアカウントメニューがそのまま動く。
-- 既知の制約：アカウント削除の × はアカウントが2つ以上の時だけ出る（renderer 共有仕様）。
-  接続中が1つだけの状態からのサインアウト UI は未配線（`api/disconnect` は用意済み）。
-  実切替（A→B）の E2E は捨てアカが単一のため機構検証（`scripts/verify-api.js`）で担保。
+## 構成
+
+### ビルド
+
+`web/build.js` が次の内容を `web/dist` へ配置します。
+
+- `index.html`
+- `host-web.js`
+- `src/lib/*` を元にした `lib/*`
+- `client/renderer/*` を元にした `renderer/*`
+
+これらのコピーは build output であり、Git には commit しません。
+
+### API
+
+- `api/tt.js`：`/api/tt/*` を受け、許可した TimeTree API path へ中継します。
+- `api/connect.js` / `api/disconnect.js`：接続情報を httpOnly Cookie へ設定または削除します。
+- `api/whoami.js`：現在接続しているアカウント情報を返します。
+- `api/map/tile` / `api/map/search`：OpenStreetMap / Nominatim をサーバー側から取得します。
+
+TimeTree proxy は `/api/v*` の JSON API だけを対象にし、固定した `timetreeapp.com` へ送信します。
+リダイレクトは追跡せず、path traversal を拒否します。
+
+## 複数アカウント
+
+接続済みアカウントは httpOnly Cookie に保持します。
+クライアントへ session token 自体は返しません。
+
+アカウントの一覧、切り替え、削除は `api/accounts` 系 API から行います。
+別タブでアカウントを切り替えた場合は BroadcastChannel を使い、他のタブを再読み込みします。
+
+現在、アカウント削除の操作は renderer 側の仕様により 2 アカウント以上ある場合だけ表示します。
+`api/disconnect` は実装済みですが、接続中のアカウントが 1 件だけの場合のサインアウト UI は未配線です。
+
+## 検証
+
+ローカル E2E では、次の経路を確認しています。
+
+- 接続と TimeTree API の同期。
+- 予定の作成、更新、削除。
+- OpenStreetMap タイルと検索。
+- 月 / 週 / アジェンダ表示、コマンドパレット、予定詳細。
+- ページエラーが発生しないこと。
+
+実行手順と検証スクリプトは、ルートの [README](../README.md) と [CONTRIBUTING.md](../CONTRIBUTING.md) を参照してください。
